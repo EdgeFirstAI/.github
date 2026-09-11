@@ -1,4 +1,4 @@
-# Caller skeleton — SHA is the v1.0.0 workflow tree (merge of #4).
+# Caller skeleton — pin uses: and shared-sha to the same EdgeFirstAI/.github commit.
 
 name: Nightly
 
@@ -9,15 +9,15 @@ on:
 
 jobs:
   changed:
-    uses: EdgeFirstAI/.github/.github/workflows/nightly-gate.yml@22209a4a84fba9ffe1abec06df9ee43bf163561b  # unreleased shared-sha
+    uses: EdgeFirstAI/.github/.github/workflows/nightly-gate.yml@eec0cb31b6576a47735099b91e39a9bdb5fbde3a
 
   nightly:
     needs: changed
     if: needs.changed.outputs.run == 'true'
-    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@22209a4a84fba9ffe1abec06df9ee43bf163561b  # unreleased shared-sha
+    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@eec0cb31b6576a47735099b91e39a9bdb5fbde3a
     with:
       lanes: all
       nightly: true
       runner-class-linux: hosted
-      shared-sha: 22209a4a84fba9ffe1abec06df9ee43bf163561b
+      shared-sha: eec0cb31b6576a47735099b91e39a9bdb5fbde3a
     secrets: inherit

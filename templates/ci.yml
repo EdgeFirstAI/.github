@@ -1,5 +1,5 @@
 # Caller skeleton — copy into the product repository as .github/workflows/ci.yml
-# SHA is the v1.0.0 workflow tree (merge of #4). Dependabot bumps it later.
+# Pin uses: and shared-sha to the same EdgeFirstAI/.github commit.
 
 name: CI
 
@@ -36,8 +36,8 @@ jobs:
       full: ${{ steps.mode.outputs.full }}
       hardware: ${{ steps.mode.outputs.hardware }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36  # v3.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d  # v4.0.3
         id: f
         with:
           filters: |
@@ -79,20 +79,20 @@ jobs:
   quick:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@22209a4a84fba9ffe1abec06df9ee43bf163561b  # unreleased shared-sha
+    uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@eec0cb31b6576a47735099b91e39a9bdb5fbde3a
     with:
       python: false
-      shared-sha: 22209a4a84fba9ffe1abec06df9ee43bf163561b
+      shared-sha: eec0cb31b6576a47735099b91e39a9bdb5fbde3a
 
   full:
     needs: changes
     if: needs.changes.outputs.full == 'true' || needs.changes.outputs.hardware == 'true'
-    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@22209a4a84fba9ffe1abec06df9ee43bf163561b  # unreleased shared-sha
+    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@eec0cb31b6576a47735099b91e39a9bdb5fbde3a
     with:
       lanes: ${{ needs.changes.outputs.full == 'true' && 'all' || 'hardware' }}
       boards: nxp-imx8mp-latest
       runner-class-linux: hosted
-      shared-sha: 22209a4a84fba9ffe1abec06df9ee43bf163561b
+      shared-sha: eec0cb31b6576a47735099b91e39a9bdb5fbde3a
     secrets: inherit
 
   ci-gate:

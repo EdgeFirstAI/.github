@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ignores `body_file`, so v1.0.0 published with an empty body.
 - Dependabot scans workflows and composites in one `directories` list with a
   single `actions` group, so weekly bumps land as one PR instead of one per
-  composite.
+  composite. Caller templates pin
+  `eec0cb31b6576a47735099b91e39a9bdb5fbde3a` (action bumps on main).
 - Shared workflows take a required `shared-sha` input (same commit as the
   `uses:` pin) to check out composites. `github.workflow_sha` is not a git
   commit and `github.workflow_ref` is the caller workflow.
