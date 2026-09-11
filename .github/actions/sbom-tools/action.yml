@@ -54,7 +54,7 @@ runs:
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
       with:
         path: venv
-        key: scancode-${{ runner.os }}-32.4.1
+        key: scancode-${{ runner.os }}-32.4.1-click8.1
 
     - name: Install scancode
       if: inputs.mode == 'full'
@@ -63,7 +63,7 @@ runs:
         if [[ ! -x venv/bin/scancode ]]; then
           python3 -m venv venv
           venv/bin/pip install --upgrade pip
-          venv/bin/pip install 'scancode-toolkit==32.4.1'
+          venv/bin/pip install 'scancode-toolkit==32.4.1' 'click>=8.1,<8.2'
         fi
         venv/bin/scancode --version
 
