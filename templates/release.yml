@@ -17,11 +17,12 @@ permissions:
 
 jobs:
   release:
-    uses: EdgeFirstAI/.github/.github/workflows/release-rust.yml@ca1dd553f352cbdf0d80c0abe2d52237c6964f25  # v1.0.0
+    uses: EdgeFirstAI/.github/.github/workflows/release-rust.yml@22209a4a84fba9ffe1abec06df9ee43bf163561b  # unreleased shared-sha
     with:
       dry-run: false
       publish-crates: true
       build-wheels: true
+      shared-sha: 22209a4a84fba9ffe1abec06df9ee43bf163561b
     secrets: inherit
 
   # PyPI Trusted Publishing cannot use a reusable workflow in another repository
