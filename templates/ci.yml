@@ -79,18 +79,20 @@ jobs:
   quick:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@ca1dd553f352cbdf0d80c0abe2d52237c6964f25  # v1.0.0
+    uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@22209a4a84fba9ffe1abec06df9ee43bf163561b  # unreleased shared-sha
     with:
       python: false
+      shared-sha: 22209a4a84fba9ffe1abec06df9ee43bf163561b
 
   full:
     needs: changes
     if: needs.changes.outputs.full == 'true' || needs.changes.outputs.hardware == 'true'
-    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@ca1dd553f352cbdf0d80c0abe2d52237c6964f25  # v1.0.0
+    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@22209a4a84fba9ffe1abec06df9ee43bf163561b  # unreleased shared-sha
     with:
       lanes: ${{ needs.changes.outputs.full == 'true' && 'all' || 'hardware' }}
       boards: nxp-imx8mp-latest
       runner-class-linux: hosted
+      shared-sha: 22209a4a84fba9ffe1abec06df9ee43bf163561b
     secrets: inherit
 
   ci-gate:

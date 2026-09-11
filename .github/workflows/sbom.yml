@@ -28,6 +28,10 @@ on:
       upload-name:
         type: string
         default: sbom
+      shared-sha:
+        description: 40-char commit SHA of EdgeFirstAI/.github; must match the uses pin
+        type: string
+        required: true
 
 jobs:
   sbom:
@@ -46,7 +50,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           repository: EdgeFirstAI/.github
-          ref: ${{ github.workflow_sha }}
+          ref: ${{ inputs.shared-sha }}
           path: .ef-ci
           persist-credentials: false
 

@@ -9,14 +9,15 @@ on:
 
 jobs:
   changed:
-    uses: EdgeFirstAI/.github/.github/workflows/nightly-gate.yml@ca1dd553f352cbdf0d80c0abe2d52237c6964f25  # v1.0.0
+    uses: EdgeFirstAI/.github/.github/workflows/nightly-gate.yml@22209a4a84fba9ffe1abec06df9ee43bf163561b  # unreleased shared-sha
 
   nightly:
     needs: changed
     if: needs.changed.outputs.run == 'true'
-    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@ca1dd553f352cbdf0d80c0abe2d52237c6964f25  # v1.0.0
+    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@22209a4a84fba9ffe1abec06df9ee43bf163561b  # unreleased shared-sha
     with:
       lanes: all
       nightly: true
       runner-class-linux: hosted
+      shared-sha: 22209a4a84fba9ffe1abec06df9ee43bf163561b
     secrets: inherit

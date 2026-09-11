@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- GitHub Release notes use `body_path`; `softprops/action-gh-release` v2.5.0
+  ignores `body_file`, so v1.0.0 published with an empty body.
+- Composite-action Dependabot configs group all action bumps per directory.
+- Shared workflows take a required `shared-sha` input (same commit as the
+  `uses:` pin) to check out composites. `github.workflow_sha` is not a git
+  commit and `github.workflow_ref` is the caller workflow.
+
 ## [1.0.0] - 2026-09-11
 
 ### Added

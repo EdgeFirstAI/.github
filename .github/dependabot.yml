@@ -11,15 +11,27 @@ updates:
     directory: /.github/actions/setup-rust
     schedule:
       interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
   - package-ecosystem: github-actions
     directory: /.github/actions/setup-python-uv
     schedule:
       interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
   - package-ecosystem: github-actions
     directory: /.github/actions/sbom-tools
     schedule:
       interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
   - package-ecosystem: github-actions
     directory: /.github/actions/board-run
     schedule:
       interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

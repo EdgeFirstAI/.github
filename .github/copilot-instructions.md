@@ -70,16 +70,18 @@ Pin the **commit SHA** of `EdgeFirstAI/.github` and record the tag in a comment:
 ```yaml
 jobs:
   quick:
-    uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@ca1dd553f352cbdf0d80c0abe2d52237c6964f25  # v1.0.0
+    uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@22209a4a84fba9ffe1abec06df9ee43bf163561b
     with:
       python: true
+      shared-sha: 22209a4a84fba9ffe1abec06df9ee43bf163561b
   full:
     if: needs.changes.outputs.full == 'true'
-    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@ca1dd553f352cbdf0d80c0abe2d52237c6964f25  # v1.0.0
+    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@22209a4a84fba9ffe1abec06df9ee43bf163561b
     with:
       lanes: all
       boards: nxp-imx8mp-latest
       runner-class-linux: hosted
+      shared-sha: 22209a4a84fba9ffe1abec06df9ee43bf163561b
     secrets: inherit
 ```
 
@@ -89,11 +91,11 @@ Repository-specific steps (ANGLE, LFS testdata, OpenCV, `vcan0`) become
 
 Inputs that matter:
 
-- `rust-quick`: `python`, `timeout-minutes` (hal: 15), `cross-targets`, `runner`
-- `rust-full`: `lanes` (`all` \| `host` \| `hardware`), `boards`, `nightly`,
+- `rust-quick`: `shared-sha` (required, same as `uses:`), `python`, `timeout-minutes` (hal: 15), `cross-targets`, `runner`
+- `rust-full`: `shared-sha` (required), `lanes` (`all` \| `host` \| `hardware`), `boards`, `nightly`,
   `runner-class-linux` / `-linux-arm` / `-macos` / `-windows`
-- `sbom`: `mode` `dependency` \| `full`
-- `release-rust`: `dry-run`, `publish-crates`, `build-wheels`
+- `sbom`: `shared-sha` (required), `mode` `dependency` \| `full`
+- `release-rust`: `shared-sha` (required), `dry-run`, `publish-crates`, `build-wheels`
 
 Every job in the shared workflows has `timeout-minutes`. Every third-party
 action is SHA-pinned. Do not reintroduce unpinned tags or jobs without a timeout.

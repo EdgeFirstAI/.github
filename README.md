@@ -30,11 +30,14 @@ The organisation profile README lives in [`profile/`](profile/README.md).
 ## Pinning
 
 ```yaml
-uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@ca1dd553f352cbdf0d80c0abe2d52237c6964f25  # v1.0.0
+uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@22209a4a84fba9ffe1abec06df9ee43bf163561b
+with:
+  shared-sha: 22209a4a84fba9ffe1abec06df9ee43bf163561b
 ```
 
-Dependabot `github-actions` in each product repo bumps the SHA. CI rejects
-tag refs such as `@v1.0.0`.
+The `uses:` pin and `shared-sha` must be the same commit. `github.workflow_sha`
+is not a git object. Dependabot bumps both. CI rejects tag refs such as
+`@v1.0.0`.
 
 ## Tiers and labels
 
