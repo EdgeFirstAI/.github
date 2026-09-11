@@ -275,7 +275,7 @@ jobs:
         if: ${{ !inputs.dry-run }}
         with:
           tag_name: ${{ needs.prepare.outputs.tag }}
-          body_file: RELEASE_NOTES.md
+          body_path: RELEASE_NOTES.md
           files: dist/*
           make_latest: ${{ steps.latest.outputs.make_latest }}
           fail_on_unmatched_files: false

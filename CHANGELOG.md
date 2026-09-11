@@ -7,7 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.0.0] - 2026-09-11
+### Fixed
+
+- GitHub Release notes use `body_path`; `softprops/action-gh-release` v2.5.0
+  ignores `body_file`, so v1.0.0 published with an empty body.
+- Composite-action Dependabot configs group all action bumps per directory.
 
 ### Added
 
