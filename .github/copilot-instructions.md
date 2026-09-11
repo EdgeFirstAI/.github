@@ -70,18 +70,18 @@ Pin the **commit SHA** of `EdgeFirstAI/.github` and record the tag in a comment:
 ```yaml
 jobs:
   quick:
-    uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@22209a4a84fba9ffe1abec06df9ee43bf163561b
+    uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@eec0cb31b6576a47735099b91e39a9bdb5fbde3a
     with:
       python: true
-      shared-sha: 22209a4a84fba9ffe1abec06df9ee43bf163561b
+      shared-sha: eec0cb31b6576a47735099b91e39a9bdb5fbde3a
   full:
     if: needs.changes.outputs.full == 'true'
-    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@22209a4a84fba9ffe1abec06df9ee43bf163561b
+    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@eec0cb31b6576a47735099b91e39a9bdb5fbde3a
     with:
       lanes: all
       boards: nxp-imx8mp-latest
       runner-class-linux: hosted
-      shared-sha: 22209a4a84fba9ffe1abec06df9ee43bf163561b
+      shared-sha: eec0cb31b6576a47735099b91e39a9bdb5fbde3a
     secrets: inherit
 ```
 

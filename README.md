@@ -30,9 +30,9 @@ The organisation profile README lives in [`profile/`](profile/README.md).
 ## Pinning
 
 ```yaml
-uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@22209a4a84fba9ffe1abec06df9ee43bf163561b
-with:
-  shared-sha: 22209a4a84fba9ffe1abec06df9ee43bf163561b
+uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@eec0cb31b6576a47735099b91e39a9bdb5fbde3a
+  with:
+  shared-sha: eec0cb31b6576a47735099b91e39a9bdb5fbde3a
 ```
 
 The `uses:` pin and `shared-sha` must be the same commit. `github.workflow_sha`
