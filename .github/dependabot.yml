@@ -1,37 +1,15 @@
 version: 2
 updates:
+  # One scan covers workflows plus every composite action. Without a shared
+  # directories list Dependabot opens one grouped PR per directory (and one
+  # version-update job each), which is what flooded inboxes after v1.0.0.
   - package-ecosystem: github-actions
-    directory: /
+    directories:
+      - /
+      - /.github/actions/*
     schedule:
       interval: weekly
-    groups:
-      actions:
-        patterns: ["*"]
-  - package-ecosystem: github-actions
-    directory: /.github/actions/setup-rust
-    schedule:
-      interval: weekly
-    groups:
-      actions:
-        patterns: ["*"]
-  - package-ecosystem: github-actions
-    directory: /.github/actions/setup-python-uv
-    schedule:
-      interval: weekly
-    groups:
-      actions:
-        patterns: ["*"]
-  - package-ecosystem: github-actions
-    directory: /.github/actions/sbom-tools
-    schedule:
-      interval: weekly
-    groups:
-      actions:
-        patterns: ["*"]
-  - package-ecosystem: github-actions
-    directory: /.github/actions/board-run
-    schedule:
-      interval: weekly
+    open-pull-requests-limit: 1
     groups:
       actions:
         patterns: ["*"]
