@@ -1,0 +1,537 @@
+name: rust-full
+
+on:
+  workflow_call:
+    inputs:
+      lanes:
+        description: all, hardware, or host
+        type: string
+        default: all
+      boards:
+        description: Comma-separated self-hosted board labels
+        type: string
+        default: ""
+      nightly:
+        type: boolean
+        default: false
+      python:
+        type: boolean
+        default: false
+      lfs:
+        type: boolean
+        default: false
+      runner-class-linux:
+        description: hosted, fleet, or larger
+        type: string
+        default: hosted
+      runner-class-linux-arm:
+        type: string
+        default: hosted
+      runner-class-macos:
+        type: string
+        default: hosted
+      runner-class-windows:
+        type: string
+        default: hosted
+      timeout-minutes:
+        type: number
+        default: 30
+      board-timeout-minutes:
+        type: number
+        default: 30
+      project-name:
+        type: string
+        default: ${{ github.event.repository.name }}
+      nextest-args:
+        type: string
+        default: --workspace --locked
+      board-command:
+        description: Override board execution (otherwise nextest archive)
+        type: string
+        default: ""
+      sonar:
+        type: boolean
+        default: true
+      skip-macos:
+        type: boolean
+        default: false
+      skip-windows:
+        type: boolean
+        default: false
+      scancode:
+        type: boolean
+        default: true
+    secrets:
+      SONAR_TOKEN:
+        required: false
+
+jobs:
+  setup:
+    name: Lane setup
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      linux: ${{ steps.map.outputs.linux }}
+      linux_arm: ${{ steps.map.outputs.linux_arm }}
+      macos: ${{ steps.map.outputs.macos }}
+      windows: ${{ steps.map.outputs.windows }}
+      do_host: ${{ steps.map.outputs.do_host }}
+      do_arm: ${{ steps.map.outputs.do_arm }}
+      do_macos: ${{ steps.map.outputs.do_macos }}
+      do_windows: ${{ steps.map.outputs.do_windows }}
+      do_hardware: ${{ steps.map.outputs.do_hardware }}
+      do_nightly: ${{ steps.map.outputs.do_nightly }}
+      board_matrix: ${{ steps.map.outputs.board_matrix }}
+      same_repo: ${{ steps.map.outputs.same_repo }}
+    steps:
+      - id: map
+        env:
+          LANES: ${{ inputs.lanes }}
+          BOARDS: ${{ inputs.boards }}
+          CLASS_LINUX: ${{ inputs.runner-class-linux }}
+          CLASS_ARM: ${{ inputs.runner-class-linux-arm }}
+          CLASS_MAC: ${{ inputs.runner-class-macos }}
+          CLASS_WIN: ${{ inputs.runner-class-windows }}
+          SKIP_MAC: ${{ inputs.skip-macos }}
+          SKIP_WIN: ${{ inputs.skip-windows }}
+          NIGHTLY: ${{ inputs.nightly }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          map_class() {
+            local class="$1" kind="$2"
+            case "$class" in
+              hosted)
+                case "$kind" in
+                  linux) echo '"ubuntu-24.04"' ;;
+                  linux-arm) echo '"ubuntu-24.04-arm"' ;;
+                  macos) echo '"macos-latest"' ;;
+                  windows) echo '"windows-latest"' ;;
+                esac
+                ;;
+              fleet)
+                case "$kind" in
+                  linux) echo '["self-hosted","linux","x64","build"]' ;;
+                  linux-arm) echo '["self-hosted","linux","arm64","build"]' ;;
+                  macos) echo '["self-hosted","macos","arm64","metal"]' ;;
+                  windows) echo '["self-hosted","windows","x64","d3d11"]' ;;
+                esac
+                ;;
+              larger)
+                case "$kind" in
+                  linux) echo '"ubuntu-22.04-xlarge"' ;;
+                  linux-arm) echo '"ubuntu-22.04-arm-xlarge"' ;;
+                  macos) echo '"macos-latest-xlarge"' ;;
+                  windows) echo '"windows-latest-8-cores"' ;;
+                esac
+                ;;
+              *)
+                echo "::error::unknown runner-class '$class' (use hosted|fleet|larger)" >&2
+                exit 1
+                ;;
+            esac
+          }
+
+          do_host=false
+          do_hardware=false
+          case "$LANES" in
+            all) do_host=true; do_hardware=true ;;
+            host) do_host=true ;;
+            hardware) do_hardware=true ;;
+            *) echo "::error::lanes must be all|host|hardware" >&2; exit 1 ;;
+          esac
+
+          same_repo=false
+          if [[ "$EVENT" != pull_request || "$PR_HEAD_REPO" == "$REPO" ]]; then
+            same_repo=true
+          fi
+
+          board_matrix='[]'
+          if [[ -n "${BOARDS// /}" && "$do_hardware" == true && "$same_repo" == true ]]; then
+            board_matrix="$(python3 -c 'import json,os; boards=[b.strip() for b in os.environ["BOARDS"].split(",") if b.strip()]; print(json.dumps([{"runner": b} for b in boards]))')"
+          else
+            do_hardware=false
+          fi
+
+          do_arm=false
+          if [[ "$do_host" == true || "$do_hardware" == true ]]; then
+            do_arm=true
+          fi
+          do_macos=false
+          do_windows=false
+          if [[ "$do_host" == true && "$SKIP_MAC" != true ]]; then do_macos=true; fi
+          if [[ "$do_host" == true && "$SKIP_WIN" != true ]]; then do_windows=true; fi
+
+          {
+            echo "linux=$(map_class "$CLASS_LINUX" linux)"
+            echo "linux_arm=$(map_class "$CLASS_ARM" linux-arm)"
+            echo "macos=$(map_class "$CLASS_MAC" macos)"
+            echo "windows=$(map_class "$CLASS_WIN" windows)"
+            echo "do_host=$do_host"
+            echo "do_arm=$do_arm"
+            echo "do_macos=$do_macos"
+            echo "do_windows=$do_windows"
+            echo "do_hardware=$do_hardware"
+            echo "do_nightly=$NIGHTLY"
+            echo "same_repo=$same_repo"
+            echo "board_matrix<<EOF"
+            echo "$board_matrix"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  linux:
+    name: Full linux
+    needs: setup
+    if: needs.setup.outputs.do_host == 'true'
+    runs-on: ${{ fromJSON(needs.setup.outputs.linux) }}
+    timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          lfs: ${{ inputs.lfs }}
+          fetch-depth: 0
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: EdgeFirstAI/.github
+          ref: ${{ github.workflow_sha }}
+          path: .ef-ci
+          persist-credentials: false
+
+      - uses: ./.ef-ci/.github/actions/setup-rust
+        with:
+          components: rustfmt, clippy, llvm-tools-preview
+          tools: nextest,cargo-llvm-cov
+          cache-key: full-x86_64
+
+      - name: Tests with coverage
+        run: |
+          cargo llvm-cov nextest --lcov --output-path coverage-linux.lcov \
+            ${{ inputs.nextest-args }} --profile ci || \
+          cargo llvm-cov nextest --lcov --output-path coverage-linux.lcov \
+            ${{ inputs.nextest-args }}
+
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        with:
+          name: coverage-linux
+          path: coverage-linux.lcov
+          if-no-files-found: error
+          retention-days: 7
+
+  linux-arm:
+    name: Full linux-arm
+    needs: setup
+    if: needs.setup.outputs.do_arm == 'true'
+    runs-on: ${{ fromJSON(needs.setup.outputs.linux_arm) }}
+    timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          lfs: ${{ inputs.lfs }}
+          fetch-depth: 1
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: EdgeFirstAI/.github
+          ref: ${{ github.workflow_sha }}
+          path: .ef-ci
+          persist-credentials: false
+
+      - uses: ./.ef-ci/.github/actions/setup-rust
+        with:
+          components: rustfmt, clippy, llvm-tools-preview
+          tools: nextest,cargo-llvm-cov
+          cache-key: full-aarch64
+
+      - name: Tests with coverage
+        if: needs.setup.outputs.do_host == 'true'
+        run: |
+          cargo llvm-cov nextest --lcov --output-path coverage-linux-arm.lcov \
+            ${{ inputs.nextest-args }}
+
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        if: needs.setup.outputs.do_host == 'true'
+        with:
+          name: coverage-linux-arm
+          path: coverage-linux-arm.lcov
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Archive instrumented tests
+        if: needs.setup.outputs.do_hardware == 'true'
+        env:
+          RUSTFLAGS: "-C instrument-coverage"
+          LLVM_PROFILE_FILE: "%p-%m.profraw"
+        run: |
+          cargo nextest archive --archive-file nextest-archive.tar.zst ${{ inputs.nextest-args }}
+          mkdir -p llvm-cov-target
+          cp -a target/llvm-cov-target llvm-cov-target 2>/dev/null || \
+            cp -a target llvm-cov-target-fallback || true
+
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        if: needs.setup.outputs.do_hardware == 'true'
+        with:
+          name: nextest-archive-aarch64
+          path: nextest-archive.tar.zst
+          if-no-files-found: error
+          retention-days: 1
+
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        if: needs.setup.outputs.do_hardware == 'true'
+        with:
+          name: rust-llvm-cov-aarch64
+          path: llvm-cov-target
+          if-no-files-found: warn
+          retention-days: 1
+
+  macos:
+    name: Full macOS
+    needs: setup
+    if: needs.setup.outputs.do_macos == 'true'
+    runs-on: ${{ fromJSON(needs.setup.outputs.macos) }}
+    timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          lfs: ${{ inputs.lfs }}
+          fetch-depth: 1
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: EdgeFirstAI/.github
+          ref: ${{ github.workflow_sha }}
+          path: .ef-ci
+          persist-credentials: false
+
+      - uses: ./.ef-ci/.github/actions/setup-rust
+        with:
+          components: rustfmt, clippy, llvm-tools-preview
+          tools: nextest,cargo-llvm-cov
+          cache-key: full-macos
+
+      - run: cargo llvm-cov nextest --lcov --output-path coverage-macos.lcov ${{ inputs.nextest-args }}
+
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        with:
+          name: coverage-macos
+          path: coverage-macos.lcov
+          if-no-files-found: error
+          retention-days: 7
+
+  windows:
+    name: Full Windows
+    needs: setup
+    if: needs.setup.outputs.do_windows == 'true'
+    runs-on: ${{ fromJSON(needs.setup.outputs.windows) }}
+    timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          lfs: ${{ inputs.lfs }}
+          fetch-depth: 1
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: EdgeFirstAI/.github
+          ref: ${{ github.workflow_sha }}
+          path: .ef-ci
+          persist-credentials: false
+
+      - uses: ./.ef-ci/.github/actions/setup-rust
+        with:
+          components: rustfmt, clippy, llvm-tools-preview
+          tools: nextest,cargo-llvm-cov
+          cache-key: full-windows
+
+      - shell: bash
+        run: cargo llvm-cov nextest --lcov --output-path coverage-windows.lcov ${{ inputs.nextest-args }}
+
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        with:
+          name: coverage-windows
+          path: coverage-windows.lcov
+          if-no-files-found: error
+          retention-days: 7
+
+  board:
+    name: Board ${{ matrix.runner }}
+    needs: [setup, linux-arm]
+    if: needs.setup.outputs.do_hardware == 'true' && needs.setup.outputs.same_repo == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ fromJSON(inputs.board-timeout-minutes) }}
+    concurrency:
+      group: board-${{ matrix.runner }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.setup.outputs.board_matrix) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 1
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: EdgeFirstAI/.github
+          ref: ${{ github.workflow_sha }}
+          path: .ef-ci
+          persist-credentials: false
+
+      - uses: ./.ef-ci/.github/actions/board-run
+        with:
+          command: ${{ inputs.board-command }}
+          archive-artifact: nextest-archive-aarch64
+          profraw-artifact: coverage-hardware-${{ matrix.runner }}
+
+  process-hardware-coverage:
+    name: Merge board coverage
+    needs: [setup, linux-arm, board]
+    if: always() && needs.setup.outputs.do_hardware == 'true' && needs.linux-arm.result == 'success' && (needs.board.result == 'success' || needs.board.result == 'failure')
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: EdgeFirstAI/.github
+          ref: ${{ github.workflow_sha }}
+          path: .ef-ci
+          persist-credentials: false
+      - uses: ./.ef-ci/.github/actions/setup-rust
+        with:
+          components: llvm-tools-preview
+          tools: cargo-llvm-cov
+          cache-key: full-aarch64-merge
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5.0.0
+        with:
+          pattern: coverage-hardware-*
+          path: coverage-hardware
+          merge-multiple: true
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5.0.0
+        with:
+          name: rust-llvm-cov-aarch64
+          path: target/llvm-cov-target
+          continue-on-error: true
+      - name: Merge profraw
+        run: |
+          cargo llvm-cov report --lcov --output-path coverage-hardware.lcov || true
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        with:
+          name: coverage-hardware
+          path: coverage-hardware.lcov
+          if-no-files-found: warn
+          retention-days: 7
+
+  scancode:
+    name: Full SBOM
+    needs: setup
+    if: ${{ inputs.scancode }}
+    uses: ./.github/workflows/sbom.yml
+    with:
+      mode: full
+      project-name: ${{ inputs.project-name }}
+      timeout-minutes: 20
+
+  nightly-extra:
+    name: Nightly extras
+    needs: setup
+    if: ${{ inputs.nightly }}
+    runs-on: ${{ fromJSON(needs.setup.outputs.linux) }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: EdgeFirstAI/.github
+          ref: ${{ github.workflow_sha }}
+          path: .ef-ci
+          persist-credentials: false
+      - uses: ./.ef-ci/.github/actions/setup-rust
+        with:
+          tools: cargo-hack,cargo-audit
+          cache-key: nightly-extras
+      - run: cargo hack check --feature-powerset --depth 2 --locked
+      - run: cargo audit
+
+  verify-version:
+    name: verify-version
+    needs: setup
+    if: startsWith(github.head_ref, 'release/') || startsWith(github.ref_name, 'release/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Tag matches manifest
+        env:
+          HEAD_REF: ${{ github.head_ref || github.ref_name }}
+        run: |
+          version="${HEAD_REF#release/}"
+          version="${version#v}"
+          if [[ -f Cargo.toml ]]; then
+            manifest="$(grep -E '^version\s*=' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')"
+            if [[ "$manifest" != "$version" ]]; then
+              echo "::error::Cargo.toml version $manifest != $version"
+              exit 1
+            fi
+          fi
+          if [[ -f VERSION ]]; then
+            file_ver="$(tr -d '[:space:]' < VERSION)"
+            if [[ "$file_ver" != "$version" ]]; then
+              echo "::error::VERSION $file_ver != $version"
+              exit 1
+            fi
+          fi
+          echo "version $version matches"
+
+  sonar:
+    name: SonarCloud
+    needs: [setup, linux, linux-arm, macos, windows, process-hardware-coverage]
+    if: always() && inputs.sonar == true && (needs.linux.result == 'success' || needs.linux.result == 'skipped')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5.0.0
+        continue-on-error: true
+        with:
+          pattern: coverage-*
+          path: coverage
+          merge-multiple: true
+      - name: Merge lcov
+        run: |
+          mkdir -p coverage
+          mapfile -t files < <(find coverage -name '*.lcov' -o -name 'coverage*.lcov' | sort)
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "No lcov files; Sonar will use last baseline"
+            exit 0
+          fi
+          cat "${files[@]}" > coverage/lcov.info
+      - uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f  # v8.2.1
+        if: hashFiles('sonar-project.properties') != ''
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

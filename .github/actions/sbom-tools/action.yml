@@ -1,0 +1,84 @@
+name: SBOM tools
+description: Install SBOM tooling and run the org license policy
+inputs:
+  mode:
+    description: dependency (cyclonedx + policy) or full (plus scancode)
+    required: false
+    default: dependency
+  project-name:
+    description: PROJECT_NAME for generate_sbom.sh
+    required: true
+  project-type:
+    description: library, application, or framework
+    required: false
+    default: library
+  version-file:
+    description: File to read the version from
+    required: false
+    default: Cargo.toml
+  source-dirs:
+    description: Directories for the scancode pass
+    required: false
+    default: src tests crates
+  output-dir:
+    description: Directory to write sbom.json
+    required: false
+    default: sbom
+  notice-file:
+    description: NOTICE path
+    required: false
+    default: NOTICE
+  upload-name:
+    description: Artifact name; empty skips upload
+    required: false
+    default: sbom
+runs:
+  using: composite
+  steps:
+    - name: Install cargo-cyclonedx
+      if: hashFiles('Cargo.toml') != ''
+      uses: taiki-e/install-action@47be02f2de8a32619316956f6117e150bdc6763f  # v2.62.44
+      with:
+        tool: cargo-cyclonedx
+
+    - name: Cache scancode venv
+      if: inputs.mode == 'full'
+      uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+      with:
+        path: venv
+        key: scancode-${{ runner.os }}-32.4.1
+
+    - name: Install scancode
+      if: inputs.mode == 'full'
+      shell: bash
+      run: |
+        if [[ ! -x venv/bin/scancode ]]; then
+          python3 -m venv venv
+          venv/bin/pip install --upgrade pip
+          venv/bin/pip install 'scancode-toolkit==32.4.1'
+        fi
+        venv/bin/scancode --version
+
+    - name: Generate SBOM and check policy
+      shell: bash
+      env:
+        PROJECT_NAME: ${{ inputs.project-name }}
+        PROJECT_TYPE: ${{ inputs.project-type }}
+        VERSION_FILE: ${{ inputs.version-file }}
+        SOURCE_DIRS: ${{ inputs.source-dirs }}
+        SBOM_MODE: ${{ inputs.mode }}
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+        NOTICE_FILE: ${{ inputs.notice-file }}
+        SCRIPT_DIR: ${{ github.action_path }}/../../scripts
+      run: |
+        chmod +x "$SCRIPT_DIR/generate_sbom.sh"
+        "$SCRIPT_DIR/generate_sbom.sh"
+
+    - name: Upload SBOM
+      if: inputs.upload-name != ''
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+      with:
+        name: ${{ inputs.upload-name }}
+        path: ${{ inputs.output-dir }}/sbom.json
+        if-no-files-found: error
+        retention-days: ${{ inputs.mode == 'full' && 7 || 1 }}

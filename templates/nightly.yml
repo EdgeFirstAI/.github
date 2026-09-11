@@ -1,0 +1,20 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  changed:
+    uses: EdgeFirstAI/.github/.github/workflows/nightly-gate.yml@v1.0.0
+
+  nightly:
+    needs: changed
+    if: needs.changed.outputs.run == 'true'
+    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@v1.0.0
+    with:
+      lanes: all
+      nightly: true
+      runner-class-linux: hosted
+    secrets: inherit

@@ -1,0 +1,62 @@
+name: usage-report
+
+on:
+  schedule:
+    - cron: "17 12 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  report:
+    name: Actions usage snapshot
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Collect usage
+        env:
+          GH_TOKEN: ${{ secrets.ORG_BILLING_TOKEN || secrets.ORG_AUDIT_TOKEN || github.token }}
+          GH_PAGER: ""
+        run: |
+          set -euo pipefail
+          mkdir -p usage
+          date -u +%Y-%m-%dT%H:%M:%SZ > usage/generated_at.txt
+          gh api orgs/EdgeFirstAI/actions/cache/usage > usage/cache.json || echo '{}' > usage/cache.json
+          gh api orgs/EdgeFirstAI/settings/billing/actions > usage/actions-billing.json || echo '{}' > usage/actions-billing.json
+          gh api "/organizations/EdgeFirstAI/settings/billing/usage" > usage/billing-usage.json || echo '{}' > usage/billing-usage.json
+          python3 - <<'PY'
+          import json, pathlib, datetime
+          root = pathlib.Path("usage")
+          billing = json.loads((root / "actions-billing.json").read_text() or "{}")
+          lines = [
+              f"# EdgeFirstAI Actions usage {datetime.date.today().isoformat()}",
+              "",
+              "Larger-runner minutes should trend to zero except recorded `runner-class: larger` exceptions (hal, packaging).",
+              "",
+              "```json",
+              json.dumps(billing, indent=2)[:4000],
+              "```",
+              "",
+              "Source: org billing API. Cross-check the Actions usage-metrics page (100-day window).",
+          ]
+          pathlib.Path("usage-summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        with:
+          name: usage-snapshot
+          path: usage
+          retention-days: 90
+      - name: Comment tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.ORG_BILLING_TOKEN || secrets.ORG_AUDIT_TOKEN || github.token }}
+        run: |
+          title="CI weekly Actions usage snapshot"
+          existing="$(gh issue list --repo EdgeFirstAI/.github --search "$title in:title" --state open --json number --jq '.[0].number' || true)"
+          if [[ -z "$existing" || "$existing" == "null" ]]; then
+            gh issue create --repo EdgeFirstAI/.github --title "$title" --body-file usage-summary.md
+          else
+            gh issue comment "$existing" --repo EdgeFirstAI/.github --body-file usage-summary.md
+          fi

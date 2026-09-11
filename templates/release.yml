@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    uses: EdgeFirstAI/.github/.github/workflows/release-rust.yml@v1.0.0
+    with:
+      dry-run: false
+      publish-crates: true
+      build-wheels: true
+    secrets: inherit
+
+  # PyPI Trusted Publishing cannot use a reusable workflow in another repository
+  # (job_workflow_ref). Keep this job in the product repo. Re-check
+  # pypi/warehouse#11096 / PR 20083; if merged, fold this into release-rust.yml.
+  publish-pypi:
+    needs: release
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: pypi
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5.0.0
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e  # v1.13.0
+        with:
+          packages-dir: dist

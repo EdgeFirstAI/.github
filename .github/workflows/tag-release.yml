@@ -1,0 +1,75 @@
+name: tag-release
+
+# Shared implementation of the byte-identical per-repo tag-release.yml.
+# The caller owns the pull_request: closed trigger. This workflow must never
+# interpolate github.event.pull_request.head.ref into bash via ${{ }} — that
+# would be shell injection. HEAD_REF is passed through env instead.
+#
+# Creates an annotated tag object (not a lightweight ref) so `git describe`
+# sees the release. Unsigned: signing needs a runner-held key.
+
+on:
+  workflow_call:
+    secrets:
+      RELEASE_TAG_TOKEN:
+        required: true
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+jobs:
+  tag:
+    name: Create annotated tag
+    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Derive version from branch name
+        id: version
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          version="${HEAD_REF#release/}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Branch '$HEAD_REF' is not a valid release/X.Y.Z branch"
+            exit 1
+          fi
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Create release tag
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TAG_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.version.outputs.tag }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::RELEASE_TAG_TOKEN secret is not set — cannot create release tag."
+            exit 1
+          fi
+
+          # POST git/refs alone creates a lightweight tag. Annotated tags are
+          # created first via git/tags, then the ref is pointed at the tag object.
+          MESSAGE=$(printf 'Release %s\n\n%s' "$TAG" "$PR_URL")
+          TAG_SHA=$(jq -n \
+            --arg tag "$TAG" \
+            --arg message "$MESSAGE" \
+            --arg object "$MERGE_SHA" \
+            --arg name "github-actions[bot]" \
+            --arg email "support@edgefirst.ai" \
+            --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{tag: $tag, message: $message, object: $object, type: "commit",
+              tagger: {name: $name, email: $email, date: $date}}' \
+            | gh api "repos/${REPO}/git/tags" --input - --jq '.sha')
+
+          if [ -z "$TAG_SHA" ]; then
+            echo "::error::Failed to create annotated tag object for ${TAG}."
+            exit 1
+          fi
+
+          gh api "repos/${REPO}/git/refs" \
+            -f ref="refs/tags/${TAG}" \
+            -f sha="${TAG_SHA}"

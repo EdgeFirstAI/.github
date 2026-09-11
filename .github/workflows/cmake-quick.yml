@@ -1,0 +1,60 @@
+name: cmake-quick
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        default: ubuntu-24.04
+      timeout-minutes:
+        type: number
+        default: 15
+      build-dir:
+        type: string
+        default: build
+      configure-args:
+        type: string
+        default: -DCMAKE_BUILD_TYPE=Release
+      ctest-args:
+        type: string
+        default: --output-on-failure
+      ccache-key:
+        type: string
+        default: cmake-quick
+
+jobs:
+  quick:
+    name: Quick
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
+    permissions:
+      contents: read
+    env:
+      CMAKE_GENERATOR: Ninja
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+    steps:
+      - name: Checkout caller
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 1
+
+      - name: Install ninja and ccache
+        run: sudo apt-get update && sudo apt-get install -y ninja-build ccache cmake
+
+      - name: ccache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ~/.cache/ccache
+          key: ${{ inputs.ccache-key }}-${{ runner.os }}-${{ hashFiles('**/CMakeLists.txt', '**/*.cmake') }}
+          restore-keys: |
+            ${{ inputs.ccache-key }}-${{ runner.os }}-
+
+      - name: Configure
+        run: cmake -S . -B ${{ inputs.build-dir }} ${{ inputs.configure-args }}
+
+      - name: Build
+        run: cmake --build ${{ inputs.build-dir }} --parallel
+
+      - name: Test
+        run: ctest --test-dir ${{ inputs.build-dir }} ${{ inputs.ctest-args }}
