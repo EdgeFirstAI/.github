@@ -37,7 +37,7 @@ runs:
   steps:
     - name: Install cargo-cyclonedx
       if: hashFiles('Cargo.toml') != ''
-      uses: taiki-e/install-action@47be02f2de8a32619316956f6117e150bdc6763f  # v2.62.44
+      uses: taiki-e/install-action@d438492cf8a250514fa2d34b30bc3c0dc37c65ff  # v2.87.8
       with:
         tool: cargo-cyclonedx
 
@@ -51,7 +51,7 @@ runs:
 
     - name: Cache scancode venv
       if: inputs.mode == 'full'
-      uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
       with:
         path: venv
         key: scancode-${{ runner.os }}-32.4.1
@@ -84,7 +84,7 @@ runs:
 
     - name: Upload SBOM
       if: inputs.upload-name != ''
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
       with:
         name: ${{ inputs.upload-name }}
         path: ${{ inputs.output-dir }}/sbom.json
