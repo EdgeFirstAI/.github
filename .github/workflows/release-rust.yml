@@ -97,6 +97,7 @@ jobs:
       mode: full
       project-name: ${{ inputs.project-name }}
       timeout-minutes: 20
+      shared-sha: ${{ inputs.shared-sha }}
 
   wheels:
     name: Build wheels

@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `uses:` pin) to check out composites. `github.workflow_sha` is not a git
   commit and `github.workflow_ref` is the caller workflow.
 
+## [1.0.0] - 2026-09-11
+
 ### Added
 
 - Reusable workflows: `rust-quick`, `rust-full`, `python-quick`, `cmake-quick`,
