@@ -30,12 +30,11 @@ The organisation profile README lives in [`profile/`](profile/README.md).
 ## Pinning
 
 ```yaml
-uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@<sha>  # v1.0.0
+uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@ca1dd553f352cbdf0d80c0abe2d52237c6964f25  # v1.0.0
 ```
 
-Dependabot `github-actions` in each product repo bumps the SHA. Caller
-templates ship a 40-character placeholder SHA that must be replaced before
-use; CI rejects tag refs such as `@v1.0.0`.
+Dependabot `github-actions` in each product repo bumps the SHA. CI rejects
+tag refs such as `@v1.0.0`.
 
 ## Tiers and labels
 

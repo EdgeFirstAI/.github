@@ -70,12 +70,12 @@ Pin the **commit SHA** of `EdgeFirstAI/.github` and record the tag in a comment:
 ```yaml
 jobs:
   quick:
-    uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@<sha>  # v1.0.0
+    uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@ca1dd553f352cbdf0d80c0abe2d52237c6964f25  # v1.0.0
     with:
       python: true
   full:
     if: needs.changes.outputs.full == 'true'
-    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@<sha>  # v1.0.0
+    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@ca1dd553f352cbdf0d80c0abe2d52237c6964f25  # v1.0.0
     with:
       lanes: all
       boards: nxp-imx8mp-latest

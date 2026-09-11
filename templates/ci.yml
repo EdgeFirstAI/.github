@@ -1,6 +1,5 @@
 # Caller skeleton — copy into the product repository as .github/workflows/ci.yml
-# Replace the 40-character SHA with the EdgeFirstAI/.github release commit and
-# keep the tag in the comment.
+# SHA is the v1.0.0 workflow tree (merge of #4). Dependabot bumps it later.
 
 name: CI
 
@@ -80,14 +79,14 @@ jobs:
   quick:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@0000000000000000000000000000000000000000  # v1.0.0 — replace with release SHA
+    uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@ca1dd553f352cbdf0d80c0abe2d52237c6964f25  # v1.0.0
     with:
       python: false
 
   full:
     needs: changes
     if: needs.changes.outputs.full == 'true' || needs.changes.outputs.hardware == 'true'
-    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@0000000000000000000000000000000000000000  # v1.0.0 — replace with release SHA
+    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@ca1dd553f352cbdf0d80c0abe2d52237c6964f25  # v1.0.0
     with:
       lanes: ${{ needs.changes.outputs.full == 'true' && 'all' || 'hardware' }}
       boards: nxp-imx8mp-latest
