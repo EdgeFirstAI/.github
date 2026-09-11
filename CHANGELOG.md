@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shared workflows take a required `shared-sha` input (same commit as the
   `uses:` pin) to check out composites. `github.workflow_sha` is not a git
   commit and `github.workflow_ref` is the caller workflow.
+- Full scancode writes native JSON and converts it to CycloneDX; ScanCode
+  32.4.1's `--cyclonedx` plugin conflicts `--full-root` with `--strip-root`.
 
 ## [1.0.0] - 2026-09-11
 
