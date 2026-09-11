@@ -75,7 +75,7 @@ out = pathlib.Path(sys.argv[1])
 components = []
 seen = set()
 for path in pathlib.Path(".").rglob("*.cdx.json"):
-    if ".ef-ci" in path.parts or "target" in path.parts:
+    if any(part in {".ef-ci", "target", "venv", ".venv", "node_modules", "sbom"} for part in path.parts):
         continue
     doc = json.loads(path.read_text(encoding="utf-8"))
     for component in doc.get("components") or []:
@@ -139,11 +139,16 @@ generate_source_sbom() {
     args=(.)
   fi
 
+  # ScanCode 32.4.1's --cyclonedx plugin sets --full-root internally and then
+  # conflicts with --strip-root. Native JSON does not.
+  local scan_json="${OUTPUT_DIR}/scancode.json"
   "$scancode_bin" \
     --license --copyright --package \
-    --cyclonedx "$SRC_SBOM" \
+    --json-pp "$scan_json" \
     --processes "${SCANCODE_PROCESSES:-4}" \
     "${args[@]}"
+
+  python3 "$SCRIPT_DIR/scancode_packages_to_cyclonedx.py" "$scan_json" "$SRC_SBOM"
 }
 
 merge_sboms() {
@@ -164,7 +169,11 @@ components = []
 seen = set()
 for bom in (dep, src):
     for component in bom.get("components") or []:
-        key = (component.get("name"), component.get("version"), component.get("bom-ref"))
+        key = (
+            component.get("purl")
+            or component.get("bom-ref")
+            or (component.get("name"), component.get("version"))
+        )
         if key in seen:
             continue
         seen.add(key)

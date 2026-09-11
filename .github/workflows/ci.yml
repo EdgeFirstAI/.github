@@ -103,6 +103,8 @@ jobs:
               sys.exit(1)
           print("all runs-on jobs have timeout-minutes")
           PY
+      - name: scancode CycloneDX mapping
+        run: python3 .github/scripts/scancode_packages_to_cyclonedx.py --self-test
 
   ci-gate:
     if: always()

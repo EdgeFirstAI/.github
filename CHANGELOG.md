@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shared workflows take a required `shared-sha` input (same commit as the
   `uses:` pin) to check out composites. `github.workflow_sha` is not a git
   commit and `github.workflow_ref` is the caller workflow.
+- Full scancode writes native JSON and converts it to CycloneDX, and pins
+  Click 8.2. ScanCode 32.4.1 plus Click 8.5 treats `--full-root` and
+  `--strip-root` as both set. The converter keeps ScanCode's PURL `bom-ref`
+  plus group, author, copyright, description, hashes and external
+  references so cargo-cyclonedx and source scans dedupe. Dependency SBOM
+  merge ignores `venv/` so ScanCode's bundled `*.cdx.json` fixtures are
+  not treated as crate components.
 
 ## [1.0.0] - 2026-09-11
 
