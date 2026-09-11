@@ -1,0 +1,66 @@
+name: python-quick
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        default: ubuntu-24.04
+      timeout-minutes:
+        type: number
+        default: 10
+      python-version:
+        type: string
+        default: "3.12"
+      pytest-args:
+        type: string
+        default: -q
+      extra-sync-args:
+        type: string
+        default: ""
+      project-name:
+        type: string
+        default: ${{ github.event.repository.name }}
+
+jobs:
+  quick:
+    name: Quick
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout caller
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 1
+
+      - name: Checkout shared CI
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: EdgeFirstAI/.github
+          ref: ${{ github.workflow_sha }}
+          path: .ef-ci
+          persist-credentials: false
+
+      - name: Setup Python / uv
+        uses: ./.ef-ci/.github/actions/setup-python-uv
+        with:
+          python-version: ${{ inputs.python-version }}
+          extra-args: ${{ inputs.extra-sync-args }}
+
+      - name: ruff
+        run: |
+          uvx ruff format --check .
+          uvx ruff check .
+
+      - name: pytest
+        run: uv run pytest ${{ inputs.pytest-args }}
+
+      - name: Dependency license policy
+        uses: ./.ef-ci/.github/actions/sbom-tools
+        with:
+          mode: dependency
+          project-name: ${{ inputs.project-name }}
+          version-file: pyproject.toml
+          upload-name: sbom-dependency

@@ -1,0 +1,82 @@
+name: Board run
+description: Execute a nextest archive (or custom command) on a board and collect profraw
+inputs:
+  archive-artifact:
+    description: Artifact name produced by the aarch64 instrument job
+    required: false
+    default: nextest-archive-aarch64
+  archive-file:
+    description: Path of the archive inside the artifact
+    required: false
+    default: nextest-archive.tar.zst
+  command:
+    description: If set, run this instead of cargo nextest run --archive-file
+    required: false
+    default: ""
+  profraw-artifact:
+    description: Artifact name for uploaded profraw files
+    required: false
+    default: coverage-hardware
+  profraw-dir:
+    description: Directory to collect LLVM profraw into
+    required: false
+    default: coverage/profraw
+  extra-args:
+    description: Extra arguments for cargo nextest run
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Download nextest archive
+      if: inputs.command == ''
+      uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5.0.0
+      with:
+        name: ${{ inputs.archive-artifact }}
+        path: board-archive
+
+    - name: Install nextest
+      if: inputs.command == ''
+      uses: taiki-e/install-action@47be02f2de8a32619316956f6117e150bdc6763f  # v2.62.44
+      with:
+        tool: nextest
+
+    - name: Run on-target tests
+      shell: bash
+      env:
+        LLVM_PROFILE_FILE: ${{ github.workspace }}/${{ inputs.profraw-dir }}/board-%p-%m.profraw
+        BOARD_COMMAND: ${{ inputs.command }}
+        EXTRA_ARGS: ${{ inputs.extra-args }}
+        ARCHIVE_FILE: ${{ inputs.archive-file }}
+        PROFRAW_DIR: ${{ inputs.profraw-dir }}
+      run: |
+        set -euo pipefail
+        mkdir -p "$PROFRAW_DIR"
+        if [[ -n "$BOARD_COMMAND" ]]; then
+          bash -lc "$BOARD_COMMAND"
+        else
+          archive="$(find board-archive -name "$(basename "$ARCHIVE_FILE")" | head -1)"
+          if [[ -z "$archive" ]]; then
+            archive="$(find board-archive -type f | head -1)"
+          fi
+          if [[ -z "$archive" ]]; then
+            echo "error: nextest archive not found in board-archive/" >&2
+            exit 1
+          fi
+          cargo nextest run --archive-file "$archive" $EXTRA_ARGS
+        fi
+
+    - name: Upload profraw
+      if: always()
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+      with:
+        name: ${{ inputs.profraw-artifact }}
+        path: ${{ inputs.profraw-dir }}
+        if-no-files-found: warn
+        retention-days: 1
+
+    - name: Cleanup board workspace
+      if: always()
+      shell: bash
+      run: |
+        rm -rf board-archive "${{ inputs.profraw-dir }}" || true

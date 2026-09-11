@@ -1,0 +1,37 @@
+name: Setup Python (uv)
+description: Install uv with cache and optionally sync a lockfile
+inputs:
+  python-version:
+    description: Python version for uv
+    required: false
+    default: "3.12"
+  sync:
+    description: Run uv sync --locked when a lockfile exists
+    required: false
+    default: "true"
+  extra-args:
+    description: Extra arguments for uv sync
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Install uv
+      uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4  # v10.1.0
+      with:
+        python-version: ${{ inputs.python-version }}
+        enable-cache: true
+
+    - name: uv sync
+      if: inputs.sync == 'true'
+      shell: bash
+      run: |
+        if [[ -f uv.lock || -f pyproject.toml ]]; then
+          if [[ -f uv.lock ]]; then
+            uv sync --locked ${{ inputs.extra-args }}
+          else
+            uv sync ${{ inputs.extra-args }}
+          fi
+        else
+          echo "No pyproject.toml / uv.lock; skipping uv sync"
+        fi

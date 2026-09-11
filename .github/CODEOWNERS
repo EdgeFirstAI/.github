@@ -1,0 +1,10 @@
+# Reviewers for the shared CI source of truth.
+# Catch-all is omitted so this file is safe if GitHub treats the .github
+# repository as org-wide default community health files.
+.github/workflows/ @sebastient
+.github/actions/ @sebastient
+.github/scripts/ @sebastient
+.github/rulesets/ @sebastient
+.github/runners/ @sebastient
+.github/copilot-instructions.md @sebastient
+templates/ @sebastient

@@ -1,0 +1,54 @@
+name: Setup Rust
+description: Install the repo toolchain, restore cargo cache, and optional tools
+inputs:
+  components:
+    description: rustup components
+    required: false
+    default: rustfmt, clippy
+  targets:
+    description: Extra rustup targets, comma-separated
+    required: false
+    default: ""
+  tools:
+    description: taiki-e/install-action tool list (nextest, cargo-llvm-cov, ...)
+    required: false
+    default: ""
+  cache-key:
+    description: Swatinem rust-cache shared-key (one per profile/target)
+    required: true
+  save-cache:
+    description: "If true, save the cache. Default: only on main."
+    required: false
+    default: ""
+  workspaces:
+    description: rust-cache workspaces argument
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Cargo environment
+      shell: bash
+      run: |
+        echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
+        echo "CARGO_NET_RETRY=10" >> "$GITHUB_ENV"
+        echo "CARGO_TERM_COLOR=always" >> "$GITHUB_ENV"
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7  # stable
+      with:
+        components: ${{ inputs.components }}
+        targets: ${{ inputs.targets }}
+
+    - name: Cache cargo
+      uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1  # v2.8.1
+      with:
+        shared-key: ${{ inputs.cache-key }}
+        save-if: ${{ inputs.save-cache == 'true' || (inputs.save-cache == '' && github.ref == 'refs/heads/main') }}
+        workspaces: ${{ inputs.workspaces }}
+
+    - name: Install cargo tools
+      if: inputs.tools != ''
+      uses: taiki-e/install-action@47be02f2de8a32619316956f6117e150bdc6763f  # v2.62.44
+      with:
+        tool: ${{ inputs.tools }}

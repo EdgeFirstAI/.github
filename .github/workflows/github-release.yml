@@ -1,0 +1,38 @@
+name: GitHub Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+concurrency:
+  group: github-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Notes from CHANGELOG
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          version="${REF#refs/tags/v}"
+          python3 - "$version" <<'PY'
+          import re, sys, pathlib
+          version = sys.argv[1]
+          text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
+          pattern = rf"^## \[?{re.escape(version)}\]?[^\n]*\n(.*?)(?=^## |\Z)"
+          match = re.search(pattern, text, re.M | re.S)
+          body = match.group(1).strip() if match else f"Shared CI workflows v{version}"
+          pathlib.Path("RELEASE_NOTES.md").write_text(body + "\n", encoding="utf-8")
+          PY
+      - uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b  # v2.5.0
+        with:
+          body_file: RELEASE_NOTES.md
+          generate_release_notes: false

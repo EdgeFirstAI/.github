@@ -1,0 +1,102 @@
+name: runner-audit
+
+on:
+  schedule:
+    - cron: "27 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  audit:
+    name: Flag billed runner labels
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Scan org workflows
+        env:
+          GH_TOKEN: ${{ secrets.ORG_AUDIT_TOKEN || github.token }}
+          GH_PAGER: ""
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, re, subprocess, sys, pathlib, base64
+
+          org = "EdgeFirstAI"
+          billed = re.compile(r"(xlarge|-8core|-8-cores|macos-latest-xlarge|windows-latest-8)", re.I)
+          allowed = re.compile(r"runner-class:\s*larger")
+          runs_on = re.compile(r"^\s*runs-on:\s*(.+)$")
+          findings = []
+
+          raw = subprocess.check_output(
+              ["gh", "api", f"orgs/{org}/repos?per_page=100", "--paginate"],
+              text=True,
+          )
+          chunks = []
+          decoder = json.JSONDecoder()
+          idx = 0
+          raw_s = raw.strip()
+          while idx < len(raw_s):
+              obj, end = decoder.raw_decode(raw_s[idx:])
+              chunks.append(obj)
+              idx += end
+              while idx < len(raw_s) and raw_s[idx].isspace():
+                  idx += 1
+          names = []
+          for chunk in chunks:
+              names.extend(r["name"] for r in chunk if not r.get("archived"))
+
+          for name in sorted(set(names)):
+              try:
+                  tree = subprocess.check_output(
+                      ["gh", "api", f"repos/{org}/{name}/git/trees/HEAD?recursive=1"],
+                      text=True,
+                      stderr=subprocess.DEVNULL,
+                  )
+              except subprocess.CalledProcessError:
+                  continue
+              paths = [
+                  item["path"]
+                  for item in json.loads(tree).get("tree", [])
+                  if item["path"].startswith(".github/workflows/") and item["path"].endswith((".yml", ".yaml"))
+              ]
+              for path in paths:
+                  content = subprocess.check_output(
+                      ["gh", "api", f"repos/{org}/{name}/contents/{path}", "--jq", ".content"],
+                      text=True,
+                  )
+                  text = base64.b64decode(content).decode("utf-8", errors="replace")
+                  if allowed.search(text):
+                      continue
+                  for line in text.splitlines():
+                      match = runs_on.match(line)
+                      if match and billed.search(match.group(1)):
+                          findings.append(f"- `{org}/{name}` `{path}`")
+                          break
+
+          body = "# Larger-runner audit\n\n"
+          if findings:
+              body += "These workflow files have `runs-on` billed runner labels without `runner-class: larger`:\n\n"
+              body += "\n".join(findings) + "\n"
+          else:
+              body += "No unreviewed billed runner labels found.\n"
+          pathlib.Path("audit.md").write_text(body, encoding="utf-8")
+          print(body)
+          if findings:
+              sys.exit(10)
+          PY
+      - name: Open or update tracking issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.ORG_AUDIT_TOKEN || github.token }}
+        run: |
+          title="CI runner-class audit: billed labels without runner-class: larger"
+          existing="$(gh issue list --repo EdgeFirstAI/.github --search "$title in:title" --json number --jq '.[0].number' || true)"
+          if [[ -n "$existing" && "$existing" != "null" ]]; then
+            gh issue comment "$existing" --repo EdgeFirstAI/.github --body-file audit.md
+          else
+            gh issue create --repo EdgeFirstAI/.github --title "$title" --body-file audit.md
+          fi

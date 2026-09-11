@@ -1,0 +1,22 @@
+# Caller skeleton — replace the SHA with the EdgeFirstAI/.github release commit.
+
+name: Nightly
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  changed:
+    uses: EdgeFirstAI/.github/.github/workflows/nightly-gate.yml@0000000000000000000000000000000000000000  # v1.0.0 — replace with release SHA
+
+  nightly:
+    needs: changed
+    if: needs.changed.outputs.run == 'true'
+    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@0000000000000000000000000000000000000000  # v1.0.0 — replace with release SHA
+    with:
+      lanes: all
+      nightly: true
+      runner-class-linux: hosted
+    secrets: inherit

@@ -1,0 +1,14 @@
+# Caller skeleton — replace the SHA with the EdgeFirstAI/.github release commit.
+
+name: Tag Release
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+jobs:
+  tag:
+    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/')
+    uses: EdgeFirstAI/.github/.github/workflows/tag-release.yml@0000000000000000000000000000000000000000  # v1.0.0 — replace with release SHA
+    secrets: inherit

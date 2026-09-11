@@ -1,0 +1,281 @@
+name: release-rust
+
+# Builds distribution artifacts and publishes crates via OIDC trusted publishing.
+# PyPI Trusted Publishing cannot use reusable workflows (job_workflow_ref must
+# live in the publisher repo; warehouse#11096 / PR 20083). This workflow uploads
+# wheels as artifacts; the caller's release.yml keeps a publish-pypi job.
+
+on:
+  workflow_call:
+    inputs:
+      dry-run:
+        description: Build and attach artifacts but do not publish or create a GitHub Release
+        type: boolean
+        default: false
+      publish-crates:
+        type: boolean
+        default: true
+      build-wheels:
+        type: boolean
+        default: false
+      build-c-archive:
+        type: boolean
+        default: false
+      crate-packages:
+        description: Space-separated -p arguments for cargo publish; empty publishes the workspace root
+        type: string
+        default: ""
+      project-name:
+        type: string
+        default: ${{ github.event.repository.name }}
+      changelog:
+        type: string
+        default: CHANGELOG.md
+    secrets:
+      SONAR_TOKEN:
+        required: false
+
+concurrency:
+  group: release-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Verify tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - id: version
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          tag="${REF#refs/tags/}"
+          version="${tag#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Ref $REF is not a vX.Y.Z tag"
+            exit 1
+          fi
+          if [[ -f Cargo.toml ]]; then
+            manifest="$(grep -E '^version\s*=' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')"
+            if [[ "$manifest" != "$version" ]]; then
+              echo "::error::Cargo.toml version $manifest != tag $version"
+              exit 1
+            fi
+          fi
+          if [[ -f pyproject.toml ]] && grep -qE '^version\s*=' pyproject.toml; then
+            pyv="$(grep -E '^version\s*=' pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')"
+            if [[ "$pyv" != "$version" ]]; then
+              echo "::error::pyproject.toml version $pyv != tag $version"
+              exit 1
+            fi
+          fi
+          if [[ -f VERSION ]]; then
+            file_ver="$(tr -d '[:space:]' < VERSION)"
+            if [[ "$file_ver" != "$version" ]]; then
+              echo "::error::VERSION $file_ver != tag $version"
+              exit 1
+            fi
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  sbom:
+    name: Release SBOM
+    needs: prepare
+    uses: ./.github/workflows/sbom.yml
+    with:
+      mode: full
+      project-name: ${{ inputs.project-name }}
+      timeout-minutes: 20
+
+  wheels:
+    name: Build wheels
+    needs: prepare
+    if: ${{ inputs.build-wheels }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64
+          - os: ubuntu-24.04-arm
+            target: aarch64
+          - os: macos-latest
+            target: macos
+          - os: windows-latest
+            target: windows
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: EdgeFirstAI/.github
+          ref: ${{ github.workflow_sha }}
+          path: .ef-ci
+          persist-credentials: false
+      - uses: ./.ef-ci/.github/actions/setup-python-uv
+      - uses: ./.ef-ci/.github/actions/setup-rust
+        with:
+          cache-key: release-wheel-${{ matrix.target }}
+          tools: ""
+      - name: maturin build
+        run: |
+          uvx maturin build --release --out dist
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        with:
+          name: wheels-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  crates:
+    name: Publish crates.io
+    needs: [prepare, sbom]
+    if: ${{ inputs.publish-crates }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: crates-io
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: EdgeFirstAI/.github
+          ref: ${{ github.workflow_sha }}
+          path: .ef-ci
+          persist-credentials: false
+      - uses: ./.ef-ci/.github/actions/setup-rust
+        with:
+          cache-key: release-crates
+      - name: crates.io trusted publishing
+        if: ${{ !inputs.dry-run }}
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18  # v1.0.5
+        id: auth
+      - name: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          DRY_RUN: ${{ inputs.dry-run }}
+          PACKAGES: ${{ inputs.crate-packages }}
+        run: |
+          args=(--locked --no-verify)
+          extra=()
+          if [[ "$DRY_RUN" == true ]]; then
+            extra+=(--dry-run)
+          fi
+          if [[ -n "$PACKAGES" ]]; then
+            for pkg in $PACKAGES; do
+              cargo publish -p "$pkg" "${args[@]}" "${extra[@]}"
+            done
+          else
+            cargo publish "${args[@]}" "${extra[@]}"
+          fi
+
+  c-archive:
+    name: C archive
+    needs: prepare
+    if: ${{ inputs.build-c-archive }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: EdgeFirstAI/.github
+          ref: ${{ github.workflow_sha }}
+          path: .ef-ci
+          persist-credentials: false
+      - uses: ./.ef-ci/.github/actions/setup-rust
+        with:
+          cache-key: release-c-archive
+      - name: Package C API
+        run: |
+          mkdir -p dist
+          if [[ -f Makefile ]] && grep -q c-archive Makefile; then
+            make c-archive
+          else
+            cargo build --release --locked
+            tar -C target/release -czf "dist/${{ inputs.project-name }}-${{ needs.prepare.outputs.version }}-aarch64.tar.gz" .
+          fi
+          ls -la dist
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        with:
+          name: c-archive
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  github-release:
+    name: GitHub Release
+    needs: [prepare, sbom, wheels, crates, c-archive]
+    if: always() && needs.prepare.result == 'success' && needs.sbom.result == 'success' && (needs.wheels.result == 'success' || needs.wheels.result == 'skipped') && (needs.crates.result == 'success' || needs.crates.result == 'skipped') && (needs.c-archive.result == 'success' || needs.c-archive.result == 'skipped')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5.0.0
+        continue-on-error: true
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Require SBOM
+        run: |
+          mkdir -p dist
+          found="$(find dist -name sbom.json | head -1 || true)"
+          if [[ -z "$found" ]]; then
+            echo "::error::sbom.json is required on every GitHub Release"
+            exit 1
+          fi
+          tmp="$(mktemp)"
+          cp "$found" "$tmp"
+          mv "$tmp" dist/sbom.json
+      - name: Extract changelog
+        id: notes
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          CHANGELOG: ${{ inputs.changelog }}
+        run: |
+          python3 - "$CHANGELOG" "$VERSION" <<'PY'
+          import re, sys, pathlib
+          path, version = sys.argv[1], sys.argv[2]
+          text = pathlib.Path(path).read_text(encoding="utf-8") if pathlib.Path(path).exists() else ""
+          pattern = rf"^## \[?{re.escape(version)}\]?[^\n]*\n(.*?)(?=^## |\Z)"
+          match = re.search(pattern, text, re.M | re.S)
+          body = match.group(1).strip() if match else f"Release v{version}"
+          pathlib.Path("RELEASE_NOTES.md").write_text(body + "\n", encoding="utf-8")
+          PY
+      - name: Latest tag?
+        id: latest
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tags="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/v" --jq '.[].ref' | sed 's@refs/tags/v@@' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true)"
+          newest="$(printf '%s\n%s\n' "$tags" "$VERSION" | sort -V | tail -1)"
+          if [[ "$newest" == "$VERSION" ]]; then
+            echo "make_latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "make_latest=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b  # v2.5.0
+        if: ${{ !inputs.dry-run }}
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          body_file: RELEASE_NOTES.md
+          files: dist/*
+          make_latest: ${{ steps.latest.outputs.make_latest }}
+          fail_on_unmatched_files: false
