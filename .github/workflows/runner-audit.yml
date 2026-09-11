@@ -23,26 +23,18 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json, os, re, subprocess, sys, tempfile, pathlib
+          import json, os, re, subprocess, sys, pathlib, base64
 
           org = "EdgeFirstAI"
           billed = re.compile(r"(xlarge|-8core|-8-cores|macos-latest-xlarge|windows-latest-8)", re.I)
           allowed = re.compile(r"runner-class:\s*larger")
+          runs_on = re.compile(r"^\s*runs-on:\s*(.+)$")
           findings = []
 
-          repos = json.loads(subprocess.check_output(
-              ["gh", "api", f"orgs/{org}/repos", "--paginate", "--jq", "."],
-              text=True,
-          ))
-          # --paginate with jq . may return concatenated arrays; handle both
-          if isinstance(repos, dict):
-              repos = [repos]
-          names = []
           raw = subprocess.check_output(
               ["gh", "api", f"orgs/{org}/repos?per_page=100", "--paginate"],
               text=True,
           )
-          # gh concatenates JSON arrays when paginating
           chunks = []
           decoder = json.JSONDecoder()
           idx = 0
@@ -53,6 +45,7 @@ jobs:
               idx += end
               while idx < len(raw_s) and raw_s[idx].isspace():
                   idx += 1
+          names = []
           for chunk in chunks:
               names.extend(r["name"] for r in chunk if not r.get("archived"))
 
@@ -75,14 +68,18 @@ jobs:
                       ["gh", "api", f"repos/{org}/{name}/contents/{path}", "--jq", ".content"],
                       text=True,
                   )
-                  import base64
                   text = base64.b64decode(content).decode("utf-8", errors="replace")
-                  if billed.search(text) and not allowed.search(text):
-                      findings.append(f"- `{org}/{name}` `{path}`")
+                  if allowed.search(text):
+                      continue
+                  for line in text.splitlines():
+                      match = runs_on.match(line)
+                      if match and billed.search(match.group(1)):
+                          findings.append(f"- `{org}/{name}` `{path}`")
+                          break
 
           body = "# Larger-runner audit\n\n"
           if findings:
-              body += "These workflow files mention billed runner labels without `runner-class: larger`:\n\n"
+              body += "These workflow files have `runs-on` billed runner labels without `runner-class: larger`:\n\n"
               body += "\n".join(findings) + "\n"
           else:
               body += "No unreviewed billed runner labels found.\n"

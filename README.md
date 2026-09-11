@@ -33,7 +33,9 @@ The organisation profile README lives in [`profile/`](profile/README.md).
 uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@<sha>  # v1.0.0
 ```
 
-Dependabot `github-actions` in each product repo bumps the SHA.
+Dependabot `github-actions` in each product repo bumps the SHA. Caller
+templates ship a 40-character placeholder SHA that must be replaced before
+use; CI rejects tag refs such as `@v1.0.0`.
 
 ## Tiers and labels
 

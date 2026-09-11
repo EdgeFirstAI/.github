@@ -1,5 +1,6 @@
 # Caller skeleton — copy into the product repository as .github/workflows/ci.yml
-# Replace <sha> with the EdgeFirstAI/.github commit and keep the tag in the comment.
+# Replace the 40-character SHA with the EdgeFirstAI/.github release commit and
+# keep the tag in the comment.
 
 name: CI
 
@@ -50,31 +51,45 @@ jobs:
               - '.github/**'
       - id: mode
         env:
-          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          LABEL_NAME: ${{ github.event.label.name }}
+          DISPATCH_FULL: ${{ inputs.full }}
+          DISPATCH_HARDWARE: ${{ inputs.hardware }}
         run: |
-          full=false; hardware=false
-          case "${{ github.event_name }}" in
+          full=false
+          hardware=false
+          case "$EVENT_NAME" in
             merge_group) full=true ;;
-            workflow_dispatch) full=${{ inputs.full }}; hardware=${{ inputs.hardware }} ;;
+            workflow_dispatch)
+              full="$DISPATCH_FULL"
+              hardware="$DISPATCH_HARDWARE"
+              ;;
+            pull_request)
+              if [[ "$EVENT_ACTION" == labeled ]]; then
+                case "$LABEL_NAME" in
+                  ci:full) full=true ;;
+                  ci:hardware) hardware=true ;;
+                esac
+              fi
+              ;;
           esac
-          case ",$LABELS," in *,ci:full,*) full=true ;; esac
-          case ",$LABELS," in *,ci:hardware,*) hardware=true ;; esac
           echo "full=$full" >> "$GITHUB_OUTPUT"
           echo "hardware=$hardware" >> "$GITHUB_OUTPUT"
 
   quick:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@v1.0.0
+    uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@0000000000000000000000000000000000000000  # v1.0.0 — replace with release SHA
     with:
       python: false
 
   full:
     needs: changes
     if: needs.changes.outputs.full == 'true' || needs.changes.outputs.hardware == 'true'
-    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@v1.0.0
+    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@0000000000000000000000000000000000000000  # v1.0.0 — replace with release SHA
     with:
-      lanes: ${{ needs.changes.outputs.hardware == 'true' && 'hardware' || 'all' }}
+      lanes: ${{ needs.changes.outputs.full == 'true' && 'all' || 'hardware' }}
       boards: nxp-imx8mp-latest
       runner-class-linux: hosted
     secrets: inherit

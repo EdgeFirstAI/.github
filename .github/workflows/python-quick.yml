@@ -18,6 +18,9 @@ on:
       extra-sync-args:
         type: string
         default: ""
+      project-name:
+        type: string
+        default: ${{ github.event.repository.name }}
 
 jobs:
   quick:
@@ -53,3 +56,11 @@ jobs:
 
       - name: pytest
         run: uv run pytest ${{ inputs.pytest-args }}
+
+      - name: Dependency license policy
+        uses: ./.ef-ci/.github/actions/sbom-tools
+        with:
+          mode: dependency
+          project-name: ${{ inputs.project-name }}
+          version-file: pyproject.toml
+          upload-name: sbom-dependency

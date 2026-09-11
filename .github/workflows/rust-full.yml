@@ -147,6 +147,13 @@ jobs:
           if [[ "$EVENT" != pull_request || "$PR_HEAD_REPO" == "$REPO" ]]; then
             same_repo=true
           fi
+          if [[ "$same_repo" != true ]]; then
+            echo "::notice::fork PR: forcing hosted runners (fleet/larger are same-repo only)"
+            CLASS_LINUX=hosted
+            CLASS_ARM=hosted
+            CLASS_MAC=hosted
+            CLASS_WIN=hosted
+          fi
 
           board_matrix='[]'
           if [[ -n "${BOARDS// /}" && "$do_hardware" == true && "$same_repo" == true ]]; then
@@ -266,13 +273,12 @@ jobs:
       - name: Archive instrumented tests
         if: needs.setup.outputs.do_hardware == 'true'
         env:
+          CARGO_TARGET_DIR: target/llvm-cov-target
           RUSTFLAGS: "-C instrument-coverage"
           LLVM_PROFILE_FILE: "%p-%m.profraw"
         run: |
           cargo nextest archive --archive-file nextest-archive.tar.zst ${{ inputs.nextest-args }}
-          mkdir -p llvm-cov-target
-          cp -a target/llvm-cov-target llvm-cov-target 2>/dev/null || \
-            cp -a target llvm-cov-target-fallback || true
+          test -d target/llvm-cov-target
 
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
         if: needs.setup.outputs.do_hardware == 'true'
@@ -286,8 +292,8 @@ jobs:
         if: needs.setup.outputs.do_hardware == 'true'
         with:
           name: rust-llvm-cov-aarch64
-          path: llvm-cov-target
-          if-no-files-found: warn
+          path: target/llvm-cov-target
+          if-no-files-found: error
           retention-days: 1
 
   macos:
@@ -423,24 +429,32 @@ jobs:
           path: coverage-hardware
           merge-multiple: true
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5.0.0
+        continue-on-error: true
         with:
           name: rust-llvm-cov-aarch64
           path: target/llvm-cov-target
-          continue-on-error: true
       - name: Merge profraw
         run: |
-          cargo llvm-cov report --lcov --output-path coverage-hardware.lcov || true
+          set -euo pipefail
+          mkdir -p target/llvm-cov-target
+          mapfile -t profs < <(find coverage-hardware -name '*.profraw' | sort)
+          if [[ ${#profs[@]} -eq 0 ]]; then
+            echo "::error::no board .profraw files downloaded"
+            exit 1
+          fi
+          cp "${profs[@]}" target/llvm-cov-target/
+          cargo llvm-cov report --lcov --output-path coverage-hardware.lcov
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
         with:
           name: coverage-hardware
           path: coverage-hardware.lcov
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 7
 
   scancode:
     name: Full SBOM
     needs: setup
-    if: ${{ inputs.scancode }}
+    if: ${{ inputs.scancode && inputs.lanes != 'hardware' }}
     uses: ./.github/workflows/sbom.yml
     with:
       mode: full
@@ -505,7 +519,7 @@ jobs:
   sonar:
     name: SonarCloud
     needs: [setup, linux, linux-arm, macos, windows, process-hardware-coverage]
-    if: always() && inputs.sonar == true && (needs.linux.result == 'success' || needs.linux.result == 'skipped')
+    if: always() && inputs.sonar == true && needs.setup.outputs.do_host == 'true' && needs.linux.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

@@ -66,7 +66,7 @@ jobs:
         uses: ./.ef-ci/.github/actions/setup-rust
         with:
           components: rustfmt, clippy
-          targets: ${{ inputs.skip-cross-clippy && '' || inputs.cross-targets }}
+          targets: ${{ !inputs.skip-cross-clippy && inputs.cross-targets || '' }}
           tools: nextest,cargo-cyclonedx
           cache-key: ${{ inputs.cache-key }}
 

@@ -1,3 +1,5 @@
+# Caller skeleton — replace the SHA with the EdgeFirstAI/.github release commit.
+
 name: Release
 
 on:
@@ -15,7 +17,7 @@ permissions:
 
 jobs:
   release:
-    uses: EdgeFirstAI/.github/.github/workflows/release-rust.yml@v1.0.0
+    uses: EdgeFirstAI/.github/.github/workflows/release-rust.yml@0000000000000000000000000000000000000000  # v1.0.0 — replace with release SHA
     with:
       dry-run: false
       publish-crates: true
@@ -27,7 +29,7 @@ jobs:
   # pypi/warehouse#11096 / PR 20083; if merged, fold this into release-rust.yml.
   publish-pypi:
     needs: release
-    if: ${{ !cancelled() }}
+    if: ${{ needs.release.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: pypi

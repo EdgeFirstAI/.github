@@ -24,23 +24,42 @@ jobs:
           set -euo pipefail
           mkdir -p usage
           date -u +%Y-%m-%dT%H:%M:%SZ > usage/generated_at.txt
-          gh api orgs/EdgeFirstAI/actions/cache/usage > usage/cache.json || echo '{}' > usage/cache.json
-          gh api orgs/EdgeFirstAI/settings/billing/actions > usage/actions-billing.json || echo '{}' > usage/actions-billing.json
-          gh api "/organizations/EdgeFirstAI/settings/billing/usage" > usage/billing-usage.json || echo '{}' > usage/billing-usage.json
+          gh api orgs/EdgeFirstAI/actions/cache/usage > usage/cache.json
+          gh api "organizations/EdgeFirstAI/settings/billing/usage/summary" > usage/usage-summary.json
           python3 - <<'PY'
           import json, pathlib, datetime
           root = pathlib.Path("usage")
-          billing = json.loads((root / "actions-billing.json").read_text() or "{}")
+          summary = json.loads((root / "usage-summary.json").read_text(encoding="utf-8"))
+          cache = json.loads((root / "cache.json").read_text(encoding="utf-8"))
+          items = summary.get("usageItems") or []
+          period = summary.get("timePeriod") or {}
           lines = [
               f"# EdgeFirstAI Actions usage {datetime.date.today().isoformat()}",
               "",
+              f"Period: {period.get('year', '')}-{period.get('month', '')}.",
               "Larger-runner minutes should trend to zero except recorded `runner-class: larger` exceptions (hal, packaging).",
               "",
-              "```json",
-              json.dumps(billing, indent=2)[:4000],
-              "```",
+              "| Product | SKU | Net qty | Unit | Net amount |",
+              "| --- | --- | --- | --- | --- |",
+          ]
+          if not items:
+              lines.append("| _(none)_ |  |  |  |  |")
+          else:
+              for item in sorted(items, key=lambda row: (row.get("product") or "", row.get("sku") or "")):
+                  lines.append(
+                      "| {product} | {sku} | {qty} | {unit} | {amount} |".format(
+                          product=item.get("product") or "",
+                          sku=item.get("sku") or "",
+                          qty=item.get("netQuantity", ""),
+                          unit=item.get("unitType") or "",
+                          amount=item.get("netAmount", ""),
+                      )
+                  )
+          lines += [
               "",
-              "Source: org billing API. Cross-check the Actions usage-metrics page (100-day window).",
+              f"Actions cache: {json.dumps(cache)[:1500]}",
+              "",
+              "Source: `GET /organizations/{org}/settings/billing/usage/summary`.",
           ]
           pathlib.Path("usage-summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
           PY

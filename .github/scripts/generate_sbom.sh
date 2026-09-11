@@ -96,8 +96,21 @@ with out.open("w", encoding="utf-8") as handle:
     handle.write("\n")
 print(f"merged {len(components)} components into {out}")
 PY
-  elif [[ -f pyproject.toml ]] && command -v cyclonedx-py >/dev/null 2>&1; then
-    cyclonedx-py environment -o "$DEP_SBOM"
+  elif [[ -f pyproject.toml ]]; then
+    if command -v uv >/dev/null 2>&1; then
+      uv run --with 'cyclonedx-bom==7.3.0' cyclonedx-py environment \
+        --spec-version 1.5 --output-format JSON -o "$DEP_SBOM" --pyproject pyproject.toml
+    elif command -v cyclonedx-py >/dev/null 2>&1; then
+      env_path=()
+      if [[ -d .venv ]]; then
+        env_path=(.venv)
+      fi
+      cyclonedx-py environment --spec-version 1.5 --output-format JSON \
+        -o "$DEP_SBOM" --pyproject pyproject.toml "${env_path[@]}"
+    else
+      echo "error: cyclonedx-py or uv is required when pyproject.toml exists" >&2
+      exit 1
+    fi
   else
     echo '{"bomFormat":"CycloneDX","specVersion":"1.5","components":[]}' > "$DEP_SBOM"
   fi
@@ -134,9 +147,9 @@ generate_source_sbom() {
 }
 
 merge_sboms() {
-  python3 - "$DEP_SBOM" "$SRC_SBOM" "$MERGED_SBOM" "$PROJECT_NAME" "$VERSION" <<'PY'
+  python3 - "$DEP_SBOM" "$SRC_SBOM" "$MERGED_SBOM" "$PROJECT_NAME" "$VERSION" "$PROJECT_TYPE" <<'PY'
 import json, sys
-dep_path, src_path, out_path, name, version = sys.argv[1:6]
+dep_path, src_path, out_path, name, version, project_type = sys.argv[1:7]
 
 def load(path):
     try:
@@ -161,7 +174,7 @@ doc = {
     "bomFormat": "CycloneDX",
     "specVersion": dep.get("specVersion") or src.get("specVersion") or "1.5",
     "metadata": {
-        "component": {"type": "library", "name": name, "version": version},
+        "component": {"type": project_type, "name": name, "version": version},
     },
     "components": components,
 }
@@ -189,11 +202,22 @@ if [[ ! -f "$MERGED_SBOM" ]]; then
   exit 1
 fi
 
+python3 - "$MERGED_SBOM" "$PROJECT_NAME" "$VERSION" "$PROJECT_TYPE" <<'PY'
+import json, sys
+path, name, version, project_type = sys.argv[1:5]
+with open(path, encoding="utf-8") as handle:
+    doc = json.load(handle)
+metadata = doc.setdefault("metadata", {})
+component = metadata.setdefault("component", {})
+component["name"] = name
+component["version"] = version
+component["type"] = project_type
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(doc, handle, indent=2)
+    handle.write("\n")
+PY
+
 python3 "$SCRIPT_DIR/check_license_policy.py" "$MERGED_SBOM"
-if [[ -f "$NOTICE_FILE" ]]; then
-  python3 "$SCRIPT_DIR/validate_notice.py" "$MERGED_SBOM" --notice "$NOTICE_FILE"
-else
-  echo "WARNING: $NOTICE_FILE not present; skipping NOTICE validation"
-fi
+python3 "$SCRIPT_DIR/validate_notice.py" "$MERGED_SBOM" --notice "$NOTICE_FILE"
 
 echo "Wrote $MERGED_SBOM"

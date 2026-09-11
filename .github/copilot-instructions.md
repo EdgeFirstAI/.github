@@ -30,7 +30,7 @@ from the root; changing directory loses assistant context.
 
 | Tier | When | What |
 | --- | --- | --- |
-| **Quick** | every non-draft PR push | fmt, lint, check, host tests, dependency license policy. Target under 10 minutes (hal 15). |
+| **Quick** | every non-draft PR push | fmt, lint, check, host tests, dependency license policy (NOTICE required; C/C++ graphs wait for Full scancode). Target under 10 minutes (hal 15). |
 | **Full** | `ci:full` or `ci:hardware` label, `workflow_dispatch`, or merge queue | platform matrix, boards, coverage, scancode. Once per PR, not once per push. |
 | **Nightly** | schedule, only if `main` moved | Full plus slow suites. Quiet days cost nothing. |
 
@@ -54,7 +54,8 @@ Apply in order; stop at the first fit:
 1. **hosted** — `ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-latest`,
    `windows-latest`. Default for Quick and for Full lanes under 20 minutes.
 2. **fleet** — self-hosted groups `boards`, `build-x86`, `gpu-cuda`, `mac`,
-   `windows`. Full and Nightly only. Never fork PRs.
+   `windows`. Full and Nightly only. Never fork PRs; the shared Full workflow
+   forces `hosted` when `head.repo` is not this repository.
 3. **larger** — GitHub `-xlarge` / `-8core`. Exception only, via the caller
    input `runner-class-*: larger` with a comment naming the reason and review
    date. Group `larger-runners` is restricted to `hal` and `packaging`.
@@ -108,7 +109,8 @@ action is SHA-pinned. Do not reintroduce unpinned tags or jobs without a timeout
    from CHANGELOG). Maintenance tags never displace semver `latest`.
 5. **Never tag by hand.** The one exception is a maintenance line cut from an
    older tag (`release/X.Y.Z` not merged to `main`); maintainers may create that
-   tag through the tag ruleset bypass.
+   tag through the OrganizationAdmin tag-ruleset bypass
+   (`RELEASE_TAG_TOKEN` must be a token owned by an org admin).
 
 ### PyPI trusted publishing
 

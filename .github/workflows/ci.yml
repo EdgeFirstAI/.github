@@ -56,18 +56,35 @@ jobs:
         run: actionlint -color
       - name: SHA-pin check
         run: |
-          set -euo pipefail
-          fails=0
-          while IFS= read -r line; do
-            if echo "$line" | grep -Eq 'uses:[[:space:]]+[^./].*@(v[0-9]|main|master|stable)[[:space:]]*$'; then
-              echo "unpinned: $line"
-              fails=1
-            fi
-          done < <(grep -R --line-number -E 'uses:' .github/workflows .github/actions || true)
-          if [[ "$fails" -ne 0 ]]; then
-            echo "::error::Third-party actions must be SHA-pinned with a version comment"
-            exit 1
-          fi
+          python3 - <<'PY'
+          import pathlib, re, sys
+          uses = re.compile(r"^\s*uses:\s*(.+)$")
+          sha = re.compile(r"^[0-9a-fA-F]{40}$")
+          roots = [pathlib.Path(".github"), pathlib.Path("templates")]
+          fails = []
+          for root in roots:
+              if not root.exists():
+                  continue
+              for path in sorted(root.rglob("*.yml")):
+                  for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                      match = uses.match(line)
+                      if not match:
+                          continue
+                      ref = match.group(1).split("#", 1)[0].strip().strip("'\"")
+                      if ref.startswith("./") or ref.startswith(".ef-ci/") or ref.startswith("./.ef-ci/"):
+                          continue
+                      if "@" not in ref:
+                          fails.append(f"{path}:{lineno}: missing pin: {line.strip()}")
+                          continue
+                      pin = ref.rsplit("@", 1)[-1]
+                      if not sha.fullmatch(pin):
+                          fails.append(f"{path}:{lineno}: unpinned: {line.strip()}")
+          if fails:
+              print("Third-party and reusable workflow refs must be 40-character SHAs:")
+              print("\n".join(fails))
+              sys.exit(1)
+          print("all scanned uses: refs are SHA-pinned")
+          PY
       - name: timeout-minutes check
         run: |
           python3 - <<'PY'
