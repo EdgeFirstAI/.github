@@ -34,9 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   selection paginates; SBOM copy no longer no-ops onto itself.
 - Runner audit only inspects `runs-on` and paginates org repos; usage-report
   uses the current billing usage-summary API.
-- Caller templates pin a SHA placeholder and run Full once per label, with
-  `ci:full` taking precedence over `ci:hardware`. PyPI publish requires the
-  reusable release job to succeed.
+- Caller templates pin `ca1dd553f352cbdf0d80c0abe2d52237c6964f25` (`v1.0.0`
+  workflow tree) and run Full once per label, with `ci:full` taking
+  precedence over `ci:hardware`. PyPI publish requires the reusable release
+  job to succeed.
 
 [Unreleased]: https://github.com/EdgeFirstAI/.github/compare/v1.0.0...HEAD
 [1.0.0]: https://github.com/EdgeFirstAI/.github/releases/tag/v1.0.0
