@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `uses:` pin) to check out composites. `github.workflow_sha` is not a git
   commit and `github.workflow_ref` is the caller workflow.
 - Full scancode writes native JSON and converts it to CycloneDX, and pins
-  `click` below 8.2. ScanCode 32.4.1 plus Click 8.5 treats `--full-root` and
+  Click 8.2. ScanCode 32.4.1 plus Click 8.5 treats `--full-root` and
   `--strip-root` as both set.
 
 ## [1.0.0] - 2026-09-11
