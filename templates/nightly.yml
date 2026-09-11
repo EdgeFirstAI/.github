@@ -1,4 +1,4 @@
-# Caller skeleton — replace the SHA with the EdgeFirstAI/.github release commit.
+# Caller skeleton — SHA is the v1.0.0 workflow tree (merge of #4).
 
 name: Nightly
 
@@ -9,12 +9,12 @@ on:
 
 jobs:
   changed:
-    uses: EdgeFirstAI/.github/.github/workflows/nightly-gate.yml@0000000000000000000000000000000000000000  # v1.0.0 — replace with release SHA
+    uses: EdgeFirstAI/.github/.github/workflows/nightly-gate.yml@ca1dd553f352cbdf0d80c0abe2d52237c6964f25  # v1.0.0
 
   nightly:
     needs: changed
     if: needs.changed.outputs.run == 'true'
-    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@0000000000000000000000000000000000000000  # v1.0.0 — replace with release SHA
+    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@ca1dd553f352cbdf0d80c0abe2d52237c6964f25  # v1.0.0
     with:
       lanes: all
       nightly: true
