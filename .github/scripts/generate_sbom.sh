@@ -75,7 +75,7 @@ out = pathlib.Path(sys.argv[1])
 components = []
 seen = set()
 for path in pathlib.Path(".").rglob("*.cdx.json"):
-    if ".ef-ci" in path.parts or "target" in path.parts:
+    if any(part in {".ef-ci", "target", "venv", ".venv", "node_modules", "sbom"} for part in path.parts):
         continue
     doc = json.loads(path.read_text(encoding="utf-8"))
     for component in doc.get("components") or []:
