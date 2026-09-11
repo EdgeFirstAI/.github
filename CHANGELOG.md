@@ -11,4 +11,6 @@ All notable changes to the EdgeFirstAI shared CI workflows are documented here.
 - Composite actions: `setup-rust`, `setup-python-uv`, `sbom-tools`, `board-run`.
 - Canonical license policy scripts and `copilot-instructions.md`.
 - Org ruleset JSON, runner provision scripts, usage-report and runner-audit.
+  Reviews (`protect-main`) allow org-admin PR merge without a human approval;
+  `protect-main-ci` still requires `ci-gate` with no bypass.
 - Per-repository caller templates.

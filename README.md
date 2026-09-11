@@ -23,7 +23,7 @@ The organisation profile README lives in [`profile/`](profile/README.md).
 | `.github/workflows/release-rust.yml` | crates OIDC, wheels as artifacts, GitHub Release |
 | `.github/actions/` | `setup-rust`, `setup-python-uv`, `sbom-tools`, `board-run` |
 | `.github/scripts/` | license policy (single copy) |
-| `.github/rulesets/` | `protect-main`, `protect-release-tags` |
+| `.github/rulesets/` | `protect-main` (reviews; org-admin PR bypass), `protect-main-ci` (ci-gate, no bypass), `protect-release-tags` |
 | `.github/runners/` | ephemeral fleet provision scripts |
 | `templates/` | per-repo `ci.yml`, `nightly.yml`, `tag-release.yml`, `release.yml` |
 
@@ -61,7 +61,9 @@ the caller and restricted by the `larger-runners` group.
    keeps `publish-pypi` (see `templates/release.yml`).
 
 Do not tag by hand. Org rulesets in `.github/rulesets/` enforce `ci-gate` on
-migrated repos and restrict `v*` tag creation.
+migrated repos and restrict `v*` tag creation. Org admins may merge their own
+PRs without a human approval; other authors still need a review. `ci-gate`
+is required for everyone.
 
 ## Applying org settings
 
