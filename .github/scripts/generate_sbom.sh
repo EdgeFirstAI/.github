@@ -148,48 +148,7 @@ generate_source_sbom() {
     --processes "${SCANCODE_PROCESSES:-4}" \
     "${args[@]}"
 
-  python3 - "$scan_json" "$SRC_SBOM" <<'PY'
-import json, sys
-
-scan_path, dest = sys.argv[1], sys.argv[2]
-with open(scan_path, encoding="utf-8") as handle:
-    data = json.load(handle)
-
-components = []
-seen = set()
-for package in data.get("packages") or []:
-    name = package.get("name") or package.get("purl") or "unknown"
-    version = package.get("version") or ""
-    key = (name, version, package.get("purl"))
-    if key in seen:
-        continue
-    seen.add(key)
-    licenses = []
-    expression = (
-        package.get("declared_license_expression_spdx")
-        or package.get("declared_license_expression")
-    )
-    if expression:
-        licenses.append({"expression": expression})
-    component = {
-        "type": "library",
-        "name": name,
-        "version": version,
-        "licenses": licenses,
-    }
-    if package.get("purl"):
-        component["purl"] = package["purl"]
-    components.append(component)
-
-doc = {
-    "bomFormat": "CycloneDX",
-    "specVersion": "1.5",
-    "components": components,
-}
-with open(dest, "w", encoding="utf-8") as handle:
-    json.dump(doc, handle, indent=2)
-    handle.write("\n")
-PY
+  python3 "$SCRIPT_DIR/scancode_packages_to_cyclonedx.py" "$scan_json" "$SRC_SBOM"
 }
 
 merge_sboms() {
@@ -210,7 +169,11 @@ components = []
 seen = set()
 for bom in (dep, src):
     for component in bom.get("components") or []:
-        key = (component.get("name"), component.get("version"), component.get("bom-ref"))
+        key = (
+            component.get("purl")
+            or component.get("bom-ref")
+            or (component.get("name"), component.get("version"))
+        )
         if key in seen:
             continue
         seen.add(key)
