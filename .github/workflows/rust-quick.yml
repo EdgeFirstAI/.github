@@ -101,6 +101,11 @@ jobs:
       - name: Setup Python / ruff
         if: inputs.python || inputs.python-tests
         uses: ./.ef-ci/.github/actions/setup-python-uv
+        with:
+          # Lint needs no project environment: uvx fetches ruff on its own.
+          # Syncing would build the caller's package (maturin for binding
+          # crates), which is Full-tier work and fails in a lint-only job.
+          sync: ${{ inputs.python-tests }}
 
       - name: ruff
         if: inputs.python || inputs.python-tests
