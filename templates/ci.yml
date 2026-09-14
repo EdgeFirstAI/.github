@@ -78,6 +78,7 @@ jobs:
       python: false
       # Optional: caller setup after checkout (OpenCV, ANGLE, testdata).
       # pre-command: bash .github/scripts/ci-setup.sh
+      # nextest-args: --workspace --locked -j 1
       shared-sha: eec0cb31b6576a47735099b91e39a9bdb5fbde3a
 
   full:
@@ -88,6 +89,9 @@ jobs:
       lanes: ${{ needs.changes.outputs.full == 'true' && 'all' || 'hardware' }}
       boards: nxp-imx8mp-latest
       runner-class-linux: hosted
+      # board-pre-command: SKIP_PACKAGES=1 bash .github/scripts/ci-setup.sh
+      # board-extra-args: -j 1 --profile ci
+      # archive-args: --locked --package your-on-target-crate
       shared-sha: eec0cb31b6576a47735099b91e39a9bdb5fbde3a
     secrets: inherit
 

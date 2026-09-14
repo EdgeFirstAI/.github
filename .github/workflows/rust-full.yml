@@ -69,6 +69,18 @@ on:
         description: Caller setup (OpenCV, ANGLE, testdata). Passed through env, never interpolated.
         type: string
         default: ""
+      board-pre-command:
+        description: Board-only setup. Falls back to pre-command when empty.
+        type: string
+        default: ""
+      board-extra-args:
+        description: Extra args for cargo nextest run on the board (e.g. -j 1). Not used for archive.
+        type: string
+        default: ""
+      archive-args:
+        description: Args for cargo nextest archive. Empty uses nextest-args (do not put -j 1 here).
+        type: string
+        default: ""
     secrets:
       SONAR_TOKEN:
         required: false
@@ -223,7 +235,7 @@ jobs:
           PRE_COMMAND: ${{ inputs.pre-command }}
         run: |
           set -euo pipefail
-          bash -c "$PRE_COMMAND"
+          bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
 
       - uses: ./.ef-ci/.github/actions/setup-rust
         with:
@@ -272,7 +284,16 @@ jobs:
           PRE_COMMAND: ${{ inputs.pre-command }}
         run: |
           set -euo pipefail
-          bash -c "$PRE_COMMAND"
+          bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
+
+      - name: Upload merged testdata
+        if: needs.setup.outputs.do_hardware == 'true' && inputs.lfs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: ci-testdata
+          path: testdata/
+          if-no-files-found: error
+          retention-days: 1
 
       - uses: ./.ef-ci/.github/actions/setup-rust
         with:
@@ -300,8 +321,12 @@ jobs:
           CARGO_TARGET_DIR: target/llvm-cov-target
           RUSTFLAGS: "-C instrument-coverage"
           LLVM_PROFILE_FILE: "%p-%m.profraw"
+          ARCHIVE_ARGS: ${{ inputs.archive-args }}
+          NEXTEST_ARGS: ${{ inputs.nextest-args }}
         run: |
-          cargo nextest archive --archive-file nextest-archive.tar.zst ${{ inputs.nextest-args }}
+          set -euo pipefail
+          args="${ARCHIVE_ARGS:-$NEXTEST_ARGS}"
+          cargo nextest archive --archive-file nextest-archive.tar.zst $args
           test -d target/llvm-cov-target
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
@@ -347,7 +372,7 @@ jobs:
           PRE_COMMAND: ${{ inputs.pre-command }}
         run: |
           set -euo pipefail
-          bash -c "$PRE_COMMAND"
+          bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
 
       - uses: ./.ef-ci/.github/actions/setup-rust
         with:
@@ -392,7 +417,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bash -c "$PRE_COMMAND"
+          bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
 
       - uses: ./.ef-ci/.github/actions/setup-rust
         with:
@@ -438,16 +463,24 @@ jobs:
           persist-credentials: false
 
       - name: Caller pre-command
-        if: ${{ inputs.pre-command != '' }}
+        if: ${{ inputs.board-pre-command != '' || inputs.pre-command != '' }}
         env:
-          PRE_COMMAND: ${{ inputs.pre-command }}
+          PRE_COMMAND: ${{ inputs.board-pre-command != '' && inputs.board-pre-command || inputs.pre-command }}
         run: |
           set -euo pipefail
-          bash -c "$PRE_COMMAND"
+          bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
+
+      - name: Download merged testdata
+        if: ${{ inputs.lfs }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: ci-testdata
+          path: testdata/
 
       - uses: ./.ef-ci/.github/actions/board-run
         with:
           command: ${{ inputs.board-command }}
+          extra-args: ${{ inputs.board-extra-args }}
           archive-artifact: nextest-archive-aarch64
           profraw-artifact: coverage-hardware-${{ matrix.runner }}
 
@@ -533,7 +566,7 @@ jobs:
           PRE_COMMAND: ${{ inputs.pre-command }}
         run: |
           set -euo pipefail
-          bash -c "$PRE_COMMAND"
+          bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
       - uses: ./.ef-ci/.github/actions/setup-rust
         with:
           tools: cargo-hack,cargo-audit

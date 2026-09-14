@@ -76,7 +76,7 @@ jobs:
           PRE_COMMAND: ${{ inputs.pre-command }}
         run: |
           set -euo pipefail
-          bash -c "$PRE_COMMAND"
+          bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
 
       - name: Setup Rust
         uses: ./.ef-ci/.github/actions/setup-rust

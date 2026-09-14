@@ -92,9 +92,11 @@ Repository-specific steps (ANGLE, LFS testdata, OpenCV, `vcan0`) become
 Inputs that matter:
 
 - `rust-quick`: `shared-sha` (required, same as `uses:`), `python`, `timeout-minutes` (hal: 15), `cross-targets`, `runner`,
-  `pre-command` (caller setup after checkout; passed through env, never interpolated)
+  `pre-command` (caller setup after checkout; passed through env, never interpolated into the script)
 - `rust-full`: `shared-sha` (required), `lanes` (`all` \| `host` \| `hardware`), `boards`, `nightly`,
-  `runner-class-linux` / `-linux-arm` / `-macos` / `-windows`, `pre-command` (same as Quick, on host and board jobs)
+  `runner-class-linux` / `-linux-arm` / `-macos` / `-windows`, `pre-command` (host jobs),
+  `board-pre-command` (board; falls back to `pre-command`), `board-extra-args` (`-j 1` and similar; not used for archive),
+  `archive-args` (nextest archive features/packages; empty uses `nextest-args`)
 - `sbom`: `shared-sha` (required), `mode` `dependency` \| `full`
 - `release-rust`: `shared-sha` (required), `dry-run`, `publish-crates`, `build-wheels`
 

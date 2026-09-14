@@ -12,9 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pre-command` input on `rust-quick` and `rust-full` host/board jobs so callers
   can install OpenCV, fetch ANGLE, or merge LFS testdata after checkout. The
   command is passed through `env`, never interpolated into the script text.
+- `rust-full` `board-pre-command`, `board-extra-args`, and `archive-args` so
+  on-target jobs can skip host package installs, run tests with `-j 1`, and
+  archive a different feature set than the host matrix. Host linux-arm
+  uploads merged LFS testdata as `ci-testdata` for the board to download.
 
 ### Fixed
 
+- Inner `pre-command` bash inherits `set -euo pipefail` (`bash --noprofile --norc -euo pipefail -c`).
 - Caller `templates/ci.yml` treats `ci:full` / `ci:hardware` as sticky: Full
   re-runs on later pushes while the label is still present, not only on the
   `labeled` event.
