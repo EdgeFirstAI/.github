@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- LFS checkouts install `git-lfs` first when the runner image lacks it. The
+  org-provisioned `ubuntu-24.04-arm-xlarge` image ships without it, so moving
+  a lane from a standard runner to that class failed at checkout, before any
+  repository code existed to repair it.
 - `protect-release-tags` also blocks tag `update`. hal's hand-made repo ruleset
   had that rule and the org one did not, so retiring the duplicate would have
   widened what a `v*` tag allows.

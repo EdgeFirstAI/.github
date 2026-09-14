@@ -60,6 +60,20 @@ jobs:
     permissions:
       contents: read
     steps:
+      # Some org-provisioned larger runner images ship without git-lfs, and an
+      # lfs checkout fails before any repo code exists to fix it.
+      - name: Ensure git-lfs
+        if: ${{ inputs.lfs && runner.os == 'Linux' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v git-lfs >/dev/null 2>&1; then
+            exit 0
+          fi
+          echo "::notice::git-lfs missing on this runner image; installing"
+          sudo apt-get update
+          sudo apt-get install -y git-lfs
+
       - name: Checkout caller
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
