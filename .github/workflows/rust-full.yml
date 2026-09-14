@@ -393,8 +393,20 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p llvm-cov-binaries
-          find target/llvm-cov-target/debug -maxdepth 1 -type f -perm -u+x \
+          # The instrumented test executables cargo llvm-cov report needs to
+          # attribute counters live in debug/deps, not directly in debug.
+          find target/llvm-cov-target/debug -maxdepth 2 -type f -perm -u+x \
+            ! -name '*.d' ! -name '*.rlib' ! -name '*.rmeta' \
+            ! -name '*.so' ! -name '*.dylib' ! -name '*.a' \
             -exec cp -t llvm-cov-binaries {} +
+          count="$(find llvm-cov-binaries -type f | wc -l)"
+          if [[ "$count" -eq 0 ]]; then
+            echo "::error::collected no instrumented binaries; board coverage would be empty"
+            echo "target/llvm-cov-target tree:"
+            find target/llvm-cov-target -maxdepth 2 | head -40
+            exit 1
+          fi
+          echo "collected $count instrumented binaries"
           du -sh llvm-cov-binaries
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
