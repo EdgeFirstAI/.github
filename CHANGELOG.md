@@ -12,6 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pre-command` input on `rust-quick` and `rust-full` host/board jobs so callers
   can install OpenCV, fetch ANGLE, or merge LFS testdata after checkout. The
   command is passed through `env`, never interpolated into the script text.
+  Its environment contract is documented: the caller checkout as working
+  directory, `GH_TOKEN` / `GITHUB_TOKEN` for `gh` and API calls, and
+  `GITHUB_ENV` / `GITHUB_PATH` for exporting state. Secrets are not passed.
+- `rust-quick` splits the old all-or-nothing `python` input: `python` runs ruff
+  lint, `python-tests` adds the maturin develop + pytest pass, and `ruff-paths`
+  targets specific directories. hal needed lint without the test pass and had
+  to hand-roll a job for it.
+- `check_license_policy.py --self-test` covers the SPDX evaluator against the
+  expressions that have broken the fleet. The shared CI lint job runs it.
 - `rust-full` `board-pre-command`, `board-extra-args`, and `archive-args` so
   on-target jobs can skip host package installs, run tests with `-j 1`, and
   archive a different feature set than the host matrix. Host linux-arm
@@ -19,6 +28,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **License policy rejected valid dependencies.** The evaluator compared whole
+  SPDX expressions against the allowlist, so any parenthesised compound failed:
+  `(MIT OR Apache-2.0) AND Unicode-3.0` was rejected even though every term is
+  allowed. cargo-cyclonedx emits exactly that shape, and it blocked hal's Quick
+  tier. Replaced with a real expression evaluator (parentheses, nesting, `WITH`,
+  `+`) where AND takes the worst operand and OR the best. `IJG`, dropped when
+  the per-repo policies were consolidated, is allowed again.
+- License identifiers are matched case-insensitively, per SPDX. Previously
+  `gpl-3.0` missed the blocked-licence check and fell through to "unknown".
+- Violation messages name the offending licence rather than the whole
+  expression.
+- `rust-full` Linux coverage no longer re-runs the whole suite on failure. The
+  `--profile ci || retry` fallback was meant to cover a missing nextest profile
+  but caught genuine test failures, doubling wall-clock before reporting them.
+  The profile is now selected with `hashFiles`.
+- `rust-full` uploads only the instrumented test binaries for board coverage
+  instead of the entire `target/llvm-cov-target` tree.
+- `rust-full`'s SonarCloud job passes the merged `coverage/lcov.info` to the
+  scanner. It was building the file and never referencing it.
 - Inner `pre-command` bash inherits `set -euo pipefail` (`bash --noprofile --norc -euo pipefail -c`).
 - Caller `templates/ci.yml` treats `ci:full` / `ci:hardware` as sticky: Full
   re-runs on later pushes while the label is still present, not only on the
@@ -29,9 +57,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   single `actions` group, so weekly bumps land as one PR instead of one per
   composite. Caller templates pin
   `eec0cb31b6576a47735099b91e39a9bdb5fbde3a` (action bumps on main).
-- Shared workflows take a required `shared-sha` input (same commit as the
-  `uses:` pin) to check out composites. `github.workflow_sha` is not a git
-  commit and `github.workflow_ref` is the caller workflow.
+- Retired the `shared-sha` input. Shared workflows resolve their own repository
+  and commit from `job.workflow_repository` / `job.workflow_sha` to reach their
+  composite actions, so the shared commit appears only in the caller's `uses:`
+  pin, Dependabot's bump is complete on its own, and the two values can no
+  longer drift. The earlier attempt needed the input because
+  `github.workflow_sha` is the *caller's* commit, not this repository's.
 - Full scancode writes native JSON and converts it to CycloneDX, and pins
   Click 8.2. ScanCode 32.4.1 plus Click 8.5 treats `--full-root` and
   `--strip-root` as both set. The converter keeps ScanCode's PURL `bom-ref`

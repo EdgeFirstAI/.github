@@ -38,12 +38,13 @@ ALLOWED_LICENSES: Set[str] = {
     "MPL-2.0",
     "BlueOak-1.0.0",
     "OpenSSL",
-    "ISC AND MIT",
-    "MIT AND Apache-2.0",
-    "Apache-2.0 OR MIT",
-    "MIT OR Apache-2.0",
-    "BSD-3-Clause OR MIT",
+    "IJG",
+    "IJG-short",
 }
+
+# Composite expressions ("MIT OR Apache-2.0", "(MIT OR Apache-2.0) AND IJG")
+# are not listed here. evaluate_expression parses them and resolves each leaf
+# against this set, so only single license identifiers belong above.
 
 REVIEW_REQUIRED_LICENSES: Set[str] = {
     "LGPL-2.1",
@@ -146,6 +147,159 @@ def load_overrides(path: Optional[str]) -> Dict[str, str]:
     return merged
 
 
+# Outcome ranks, best to worst. AND takes the worst operand because every term
+# binds; OR takes the best because we may rely on a single branch.
+RANK_ALLOWED = 0
+RANK_PROPRIETARY = 1
+RANK_REVIEW = 2
+RANK_UNKNOWN = 3
+RANK_BLOCKED = 4
+
+
+def tokenize_expression(expression: str) -> List[str]:
+    """Split an SPDX expression into parens, operators, and license leaves."""
+    tokens: List[str] = []
+    buffer: List[str] = []
+
+    def flush() -> None:
+        if buffer:
+            token = "".join(buffer).strip()
+            if token:
+                tokens.append(token)
+            buffer.clear()
+
+    index = 0
+    while index < len(expression):
+        char = expression[index]
+        if char in "()":
+            flush()
+            tokens.append(char)
+            index += 1
+            continue
+        matched = False
+        # Operators are case-insensitive in SPDX and bind only on word
+        # boundaries, so "ORACLE" and "SAND" are never read as operators.
+        for operator in ("AND", "OR", "WITH"):
+            end = index + len(operator)
+            if (
+                expression[index:end].upper() == operator
+                and (index == 0 or not expression[index - 1].isalnum())
+                and (end >= len(expression) or not expression[end].isalnum())
+            ):
+                if operator == "WITH":
+                    # WITH binds tighter than AND/OR: keep the exception with
+                    # its license so "Apache-2.0 WITH LLVM-exception" stays a
+                    # single allowlist lookup.
+                    buffer.append(expression[index:end])
+                else:
+                    flush()
+                    tokens.append(operator)
+                index = end
+                matched = True
+                break
+        if not matched:
+            buffer.append(char)
+            index += 1
+    flush()
+    return tokens
+
+
+def _normalize_leaf(leaf: str) -> str:
+    # A trailing "+" means "or later"; policy treats both the same.
+    return normalize_license(leaf.rstrip("+").strip())
+
+
+def _lower(values: Set[str]) -> Set[str]:
+    return {value.lower() for value in values}
+
+
+# SPDX identifiers are case-insensitive. Matching on the canonical casing alone
+# let "gpl-3.0" slip past the blocked check and land in UNKNOWN.
+_ALLOWED_LOWER = _lower(ALLOWED_LICENSES)
+_BLOCKED_LOWER = _lower(BLOCKED_LICENSES)
+_REVIEW_LOWER = _lower(REVIEW_REQUIRED_LICENSES)
+_PROPRIETARY_LOWER = _lower(CONDITIONAL_PROPRIETARY_LICENSES)
+
+
+def classify_leaf(leaf: str) -> Tuple[int, str]:
+    license_id = _normalize_leaf(leaf)
+    if not license_id:
+        return RANK_UNKNOWN, "UNKNOWN"
+    folded = license_id.lower()
+    if (
+        folded in _BLOCKED_LOWER
+        or folded.startswith("gpl")
+        or folded.startswith("agpl")
+    ):
+        return RANK_BLOCKED, license_id
+    if folded in _REVIEW_LOWER or folded.startswith("lgpl"):
+        return RANK_REVIEW, license_id
+    if folded in _PROPRIETARY_LOWER or "proprietary" in folded:
+        return RANK_PROPRIETARY, license_id
+    if folded in _ALLOWED_LOWER:
+        return RANK_ALLOWED, license_id
+    return RANK_UNKNOWN, license_id
+
+
+def evaluate_expression(expression: str) -> Tuple[int, str]:
+    """Resolve an SPDX expression to its (rank, license) outcome.
+
+    Handles nesting and parentheses, so "(MIT OR Apache-2.0) AND IJG" is the
+    worst of best-of-{MIT, Apache-2.0} and IJG, rather than an unmatched string
+    compare of the whole expression against the allowlist.
+    """
+    tokens = tokenize_expression(expression)
+    if not tokens:
+        return RANK_UNKNOWN, "UNKNOWN"
+
+    position = 0
+
+    def advance() -> None:
+        nonlocal position
+        position += 1
+
+    def parse_atom() -> Tuple[int, str]:
+        if position >= len(tokens):
+            return RANK_UNKNOWN, "UNKNOWN"
+        token = tokens[position]
+        if token == "(":
+            advance()
+            rank, license_id = parse_or()
+            if position < len(tokens) and tokens[position] == ")":
+                advance()
+            return rank, license_id
+        if token in ("AND", "OR", ")"):
+            # Malformed expression; never treat it as permissive.
+            advance()
+            return RANK_UNKNOWN, "UNKNOWN"
+        advance()
+        return classify_leaf(token)
+
+    def parse_and() -> Tuple[int, str]:
+        rank, license_id = parse_atom()
+        while position < len(tokens) and tokens[position] == "AND":
+            advance()
+            right_rank, right_license = parse_atom()
+            if right_rank > rank:
+                rank, license_id = right_rank, right_license
+        return rank, license_id
+
+    def parse_or() -> Tuple[int, str]:
+        rank, license_id = parse_and()
+        while position < len(tokens) and tokens[position] == "OR":
+            advance()
+            right_rank, right_license = parse_and()
+            if right_rank < rank:
+                rank, license_id = right_rank, right_license
+        return rank, license_id
+
+    rank, license_id = parse_or()
+    if position < len(tokens):
+        # Trailing tokens mean we did not understand the expression.
+        return RANK_UNKNOWN, expression
+    return rank, license_id
+
+
 def evaluate_component(
     component: dict,
     overrides: Dict[str, str],
@@ -161,37 +315,40 @@ def evaluate_component(
     if not licenses:
         return "fail", "UNKNOWN", f"{key}: missing license metadata"
 
-    for license_id in licenses:
-        if license_id in BLOCKED_LICENSES or license_id.startswith("GPL") or license_id.startswith("AGPL"):
-            return "fail", license_id, f"{key}: blocked license {license_id}"
-        if license_id in REVIEW_REQUIRED_LICENSES or license_id.startswith("LGPL"):
-            if rust:
-                return "fail", license_id, (
-                    f"{key}: LGPL ({license_id}) is forbidden in Rust "
-                    "(static linking cannot satisfy LGPL)"
-                )
-            if name.split("-")[0] not in dynamic and name not in dynamic:
-                return "fail", license_id, (
-                    f"{key}: LGPL ({license_id}) allowed only for documented "
-                    "dynamically linked libraries"
-                )
-            return "warn", license_id, f"{key}: LGPL permitted as dynamic {license_id}"
-        if license_id in CONDITIONAL_PROPRIETARY_LICENSES or "proprietary" in license_id.lower():
-            return "warn", license_id, (
-                f"{key}: proprietary {license_id} must be documented in NOTICE"
+    # Multiple license entries on one component are alternatives, so the best
+    # outcome wins, matching OR. Seed from the first entry rather than a
+    # constant, so the reported id is always the leaf that decided the verdict.
+    best_rank, best_license = evaluate_expression(licenses[0])
+    for expression in licenses[1:]:
+        if best_rank == RANK_ALLOWED:
+            break
+        rank, license_id = evaluate_expression(expression)
+        if rank < best_rank:
+            best_rank, best_license = rank, license_id
+
+    if best_rank == RANK_ALLOWED:
+        return "ok", best_license, f"{key}: {best_license}"
+    if best_rank == RANK_PROPRIETARY:
+        return "warn", best_license, (
+            f"{key}: proprietary {best_license} must be documented in NOTICE"
+        )
+    if best_rank == RANK_REVIEW:
+        if rust:
+            return "fail", best_license, (
+                f"{key}: LGPL ({best_license}) is forbidden in Rust "
+                "(static linking cannot satisfy LGPL)"
             )
-        if license_id in ALLOWED_LICENSES:
-            continue
-        if " OR " in license_id:
-            options = {part.strip() for part in license_id.split(" OR ")}
-            if options & ALLOWED_LICENSES:
-                continue
-        if " AND " in license_id:
-            parts = {part.strip() for part in license_id.split(" AND ")}
-            if parts <= ALLOWED_LICENSES:
-                continue
-        return "fail", license_id, f"{key}: license {license_id} is not on the allowed list"
-    return "ok", licenses[0], f"{key}: {licenses[0]}"
+        if name.split("-")[0] not in dynamic and name not in dynamic:
+            return "fail", best_license, (
+                f"{key}: LGPL ({best_license}) allowed only for documented "
+                "dynamically linked libraries"
+            )
+        return "warn", best_license, f"{key}: LGPL permitted as dynamic {best_license}"
+    if best_rank == RANK_BLOCKED:
+        return "fail", best_license, f"{key}: blocked license {best_license}"
+    return "fail", best_license, (
+        f"{key}: license {best_license} is not on the allowed list"
+    )
 
 
 def iter_components(sbom: dict) -> Iterable[dict]:
@@ -204,15 +361,91 @@ def iter_components(sbom: dict) -> Iterable[dict]:
             yield nested
 
 
+# Cases that have actually broken the fleet, plus the operator semantics the
+# evaluator has to preserve. Run by the shared CI lint job.
+SELF_TEST_CASES = [
+    # (expression, rust project, expected status)
+    # cargo-cyclonedx emits parenthesised compounds; these two failed hal Quick
+    # when the evaluator was a flat string compare (EDGEAI-1554).
+    ("(MIT OR Apache-2.0) AND IJG", True, "ok"),
+    ("(MIT OR Apache-2.0) AND Unicode-3.0", True, "ok"),
+    ("MIT OR Apache-2.0", True, "ok"),
+    ("MIT AND Apache-2.0", True, "ok"),
+    ("Apache-2.0 WITH LLVM-exception", True, "ok"),
+    ("MIT", True, "ok"),
+    ("MIT+", True, "ok"),
+    ("mit or apache-2.0", True, "ok"),
+    # AND takes the worst operand: one blocked term poisons the whole grant.
+    ("MIT AND GPL-3.0", True, "fail"),
+    ("(MIT OR Apache-2.0) AND GPL-3.0", True, "fail"),
+    # OR takes the best: a permissive branch rescues a blocked one.
+    ("GPL-3.0 OR MIT", True, "ok"),
+    ("GPL-2.0-only", True, "fail"),
+    ("AGPL-3.0", True, "fail"),
+    ("SSPL-1.0", True, "fail"),
+    # Unknown identifiers must never pass, alone or under AND.
+    ("NotARealLicense", True, "fail"),
+    ("MIT AND NotARealLicense", True, "fail"),
+    ("MIT OR NotARealLicense", True, "ok"),
+    # LGPL stays forbidden in Rust and undocumented-dynamic elsewhere.
+    ("LGPL-2.1", True, "fail"),
+    ("LGPL-2.1", False, "fail"),
+    ("(MIT OR LGPL-3.0) AND MIT", True, "ok"),
+    # Malformed input fails closed.
+    ("", True, "fail"),
+    ("MIT AND", True, "fail"),
+    ("(MIT OR Apache-2.0", True, "ok"),
+]
+
+
+def run_self_test() -> int:
+    failures = []
+    for expression, rust, expected in SELF_TEST_CASES:
+        component = {"name": "probe", "version": "0.0.0"}
+        if expression:
+            component["licenses"] = [{"expression": expression}]
+        status, license_id, detail = evaluate_component(
+            component, dict(LICENSE_OVERRIDES), rust, set(DEFAULT_DYNAMIC)
+        )
+        if status != expected:
+            failures.append(
+                f"  {expression!r} (rust={rust}): expected {expected}, got "
+                f"{status} [{license_id}] {detail}"
+            )
+    # A component with no licence metadata at all must fail, not pass silently.
+    status, _, _ = evaluate_component(
+        {"name": "probe", "version": "0.0.0"}, {}, True, set()
+    )
+    if status != "fail":
+        failures.append(f"  missing licence metadata: expected fail, got {status}")
+
+    if failures:
+        print("license policy self-test FAILED:")
+        print("\n".join(failures))
+        return 1
+    print(f"license policy self-test passed ({len(SELF_TEST_CASES) + 1} cases)")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("sbom", help="CycloneDX JSON SBOM path")
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help="Check the SPDX expression evaluator against known cases and exit",
+    )
+    parser.add_argument("sbom", nargs="?", help="CycloneDX JSON SBOM path")
     parser.add_argument(
         "--overrides",
         default=os.environ.get("LICENSE_OVERRIDES_FILE"),
         help="JSON object of name@version -> SPDX id",
     )
     args = parser.parse_args()
+
+    if args.self_test:
+        return run_self_test()
+    if not args.sbom:
+        parser.error("sbom path is required unless --self-test is given")
 
     with open(args.sbom, encoding="utf-8") as handle:
         sbom = json.load(handle)

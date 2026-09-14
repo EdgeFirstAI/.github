@@ -73,7 +73,6 @@ jobs:
     uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@eec0cb31b6576a47735099b91e39a9bdb5fbde3a
     with:
       python: true
-      shared-sha: eec0cb31b6576a47735099b91e39a9bdb5fbde3a
   full:
     if: needs.changes.outputs.full == 'true'
     uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@eec0cb31b6576a47735099b91e39a9bdb5fbde3a
@@ -81,9 +80,13 @@ jobs:
       lanes: all
       boards: nxp-imx8mp-latest
       runner-class-linux: hosted
-      shared-sha: eec0cb31b6576a47735099b91e39a9bdb5fbde3a
     secrets: inherit
 ```
+
+The `uses:` pin is the only place the shared commit appears. The shared
+workflows resolve their own repository and commit from `job.workflow_repository`
+and `job.workflow_sha` to reach their composite actions, so there is no second
+SHA to keep in sync and Dependabot's bump is complete on its own.
 
 Copy the caller skeletons from [`templates/`](https://github.com/EdgeFirstAI/.github/tree/main/templates).
 Repository-specific steps (ANGLE, LFS testdata, OpenCV, `vcan0`) become
@@ -91,14 +94,40 @@ Repository-specific steps (ANGLE, LFS testdata, OpenCV, `vcan0`) become
 
 Inputs that matter:
 
-- `rust-quick`: `shared-sha` (required, same as `uses:`), `python`, `timeout-minutes` (hal: 15), `cross-targets`, `runner`,
-  `pre-command` (caller setup after checkout; passed through env, never interpolated into the script)
-- `rust-full`: `shared-sha` (required), `lanes` (`all` \| `host` \| `hardware`), `boards`, `nightly`,
+- `rust-quick`: `python` (ruff lint), `python-tests` (adds maturin develop + pytest),
+  `ruff-paths`, `timeout-minutes` (hal: 15), `cross-targets`, `runner`,
+  `pre-command` (caller setup after checkout)
+- `rust-full`: `lanes` (`all` \| `host` \| `hardware`), `boards`, `nightly`,
   `runner-class-linux` / `-linux-arm` / `-macos` / `-windows`, `pre-command` (host jobs),
   `board-pre-command` (board; falls back to `pre-command`), `board-extra-args` (`-j 1` and similar; not used for archive),
   `archive-args` (nextest archive features/packages; empty uses `nextest-args`)
-- `sbom`: `shared-sha` (required), `mode` `dependency` \| `full`
-- `release-rust`: `shared-sha` (required), `dry-run`, `publish-crates`, `build-wheels`
+- `sbom`: `mode` `dependency` \| `full`
+- `release-rust`: `dry-run`, `publish-crates`, `build-wheels`
+
+### The `pre-command` hook
+
+Repository setup that cannot be expressed as an input (install OpenCV, fetch
+ANGLE, merge LFS testdata) goes in a script in the calling repository, named by
+`pre-command`. It runs after both checkouts and before the toolchain setup.
+
+The command string is passed to the step through `env` and executed with
+`bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"`. It is never
+interpolated into the script text, so a caller cannot inject steps.
+
+What a pre-command may rely on:
+
+- the caller's checkout as the working directory;
+- `GH_TOKEN` and `GITHUB_TOKEN`, set to the job's `github.token`, for `gh` and
+  API calls such as release-asset downloads;
+- `GITHUB_ENV` and `GITHUB_PATH` to export state to later steps.
+
+Nothing else is guaranteed. Secrets are **not** passed to the hook; a step that
+needs one belongs in the calling repository's own workflow.
+
+The hook runs code from the pull request's head, so on a fork PR it is
+attacker-controlled. That is the same exposure as `build.rs` or any test, and
+it is why `rust-full` forces hosted runners and disables board lanes for fork
+PRs. Never add a self-hosted lane that skips that guard.
 
 Every job in the shared workflows has `timeout-minutes`. Every third-party
 action is SHA-pinned. Do not reintroduce unpinned tags or jobs without a timeout.

@@ -106,6 +106,9 @@ jobs:
       - name: scancode CycloneDX mapping
         run: python3 .github/scripts/scancode_packages_to_cyclonedx.py --self-test
 
+      - name: license policy evaluator
+        run: python3 .github/scripts/check_license_policy.py --self-test
+
   ci-gate:
     if: always()
     needs: [changes, lint]

@@ -1,5 +1,5 @@
 # Caller skeleton — copy into the product repository as .github/workflows/ci.yml
-# Pin uses: and shared-sha to the same EdgeFirstAI/.github commit.
+# Pin every uses: to a 40-char EdgeFirstAI/.github commit. Dependabot bumps them.
 
 name: CI
 
@@ -79,7 +79,6 @@ jobs:
       # Optional: caller setup after checkout (OpenCV, ANGLE, testdata).
       # pre-command: bash .github/scripts/ci-setup.sh
       # nextest-args: --workspace --locked -j 1
-      shared-sha: eec0cb31b6576a47735099b91e39a9bdb5fbde3a
 
   full:
     needs: changes
@@ -92,7 +91,6 @@ jobs:
       # board-pre-command: SKIP_PACKAGES=1 bash .github/scripts/ci-setup.sh
       # board-extra-args: -j 1 --profile ci
       # archive-args: --locked --package your-on-target-crate
-      shared-sha: eec0cb31b6576a47735099b91e39a9bdb5fbde3a
     secrets: inherit
 
   ci-gate:

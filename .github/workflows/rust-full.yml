@@ -61,10 +61,6 @@ on:
       scancode:
         type: boolean
         default: true
-      shared-sha:
-        description: 40-char commit SHA of EdgeFirstAI/.github; must match the uses pin
-        type: string
-        required: true
       pre-command:
         description: Caller setup (OpenCV, ANGLE, testdata). Passed through env, never interpolated.
         type: string
@@ -224,8 +220,8 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          repository: EdgeFirstAI/.github
-          ref: ${{ inputs.shared-sha }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: .ef-ci
           persist-credentials: false
 
@@ -233,6 +229,11 @@ jobs:
         if: ${{ inputs.pre-command != '' }}
         env:
           PRE_COMMAND: ${{ inputs.pre-command }}
+          # Contract: pre-command scripts may rely on GH_TOKEN / GITHUB_TOKEN
+          # for gh and API calls (release asset downloads, etc). Nothing else
+          # is guaranteed beyond the default runner environment.
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
@@ -243,12 +244,15 @@ jobs:
           tools: nextest,cargo-llvm-cov
           cache-key: full-x86_64
 
+      # Select the nextest profile up front. A `|| retry` here re-ran the
+      # entire suite on a genuine test failure, doubling wall-clock before
+      # reporting it.
       - name: Tests with coverage
+        env:
+          PROFILE_ARG: ${{ hashFiles('.config/nextest.toml') != '' && '--profile ci' || '' }}
         run: |
           cargo llvm-cov nextest --lcov --output-path coverage-linux.lcov \
-            ${{ inputs.nextest-args }} --profile ci || \
-          cargo llvm-cov nextest --lcov --output-path coverage-linux.lcov \
-            ${{ inputs.nextest-args }}
+            ${{ inputs.nextest-args }} $PROFILE_ARG
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
@@ -273,8 +277,8 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          repository: EdgeFirstAI/.github
-          ref: ${{ inputs.shared-sha }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: .ef-ci
           persist-credentials: false
 
@@ -282,6 +286,11 @@ jobs:
         if: ${{ inputs.pre-command != '' }}
         env:
           PRE_COMMAND: ${{ inputs.pre-command }}
+          # Contract: pre-command scripts may rely on GH_TOKEN / GITHUB_TOKEN
+          # for gh and API calls (release asset downloads, etc). Nothing else
+          # is guaranteed beyond the default runner environment.
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
@@ -337,11 +346,23 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      # cargo llvm-cov report only needs the instrumented test binaries to
+      # resolve counters, not the whole target tree. Uploading the tree was
+      # the bulk of the ~2 GB per run this tier used to move.
+      - name: Collect instrumented binaries
+        if: needs.setup.outputs.do_hardware == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p llvm-cov-binaries
+          find target/llvm-cov-target/debug -maxdepth 1 -type f -perm -u+x \
+            -exec cp -t llvm-cov-binaries {} +
+          du -sh llvm-cov-binaries
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         if: needs.setup.outputs.do_hardware == 'true'
         with:
           name: rust-llvm-cov-aarch64
-          path: target/llvm-cov-target
+          path: llvm-cov-binaries
           if-no-files-found: error
           retention-days: 1
 
@@ -361,8 +382,8 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          repository: EdgeFirstAI/.github
-          ref: ${{ inputs.shared-sha }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: .ef-ci
           persist-credentials: false
 
@@ -370,6 +391,11 @@ jobs:
         if: ${{ inputs.pre-command != '' }}
         env:
           PRE_COMMAND: ${{ inputs.pre-command }}
+          # Contract: pre-command scripts may rely on GH_TOKEN / GITHUB_TOKEN
+          # for gh and API calls (release asset downloads, etc). Nothing else
+          # is guaranteed beyond the default runner environment.
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
@@ -405,8 +431,8 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          repository: EdgeFirstAI/.github
-          ref: ${{ inputs.shared-sha }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: .ef-ci
           persist-credentials: false
 
@@ -414,6 +440,11 @@ jobs:
         if: ${{ inputs.pre-command != '' }}
         env:
           PRE_COMMAND: ${{ inputs.pre-command }}
+          # Contract: pre-command scripts may rely on GH_TOKEN / GITHUB_TOKEN
+          # for gh and API calls (release asset downloads, etc). Nothing else
+          # is guaranteed beyond the default runner environment.
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -457,8 +488,8 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          repository: EdgeFirstAI/.github
-          ref: ${{ inputs.shared-sha }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: .ef-ci
           persist-credentials: false
 
@@ -466,6 +497,11 @@ jobs:
         if: ${{ inputs.board-pre-command != '' || inputs.pre-command != '' }}
         env:
           PRE_COMMAND: ${{ inputs.board-pre-command != '' && inputs.board-pre-command || inputs.pre-command }}
+          # Contract: pre-command scripts may rely on GH_TOKEN / GITHUB_TOKEN
+          # for gh and API calls (release asset downloads, etc). Nothing else
+          # is guaranteed beyond the default runner environment.
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
@@ -496,8 +532,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          repository: EdgeFirstAI/.github
-          ref: ${{ inputs.shared-sha }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: .ef-ci
           persist-credentials: false
       - uses: ./.ef-ci/.github/actions/setup-rust
@@ -514,7 +550,7 @@ jobs:
         continue-on-error: true
         with:
           name: rust-llvm-cov-aarch64
-          path: target/llvm-cov-target
+          path: target/llvm-cov-target/debug
       - name: Merge profraw
         run: |
           set -euo pipefail
@@ -542,7 +578,6 @@ jobs:
       mode: full
       project-name: ${{ inputs.project-name }}
       timeout-minutes: 20
-      shared-sha: ${{ inputs.shared-sha }}
 
   nightly-extra:
     name: Nightly extras
@@ -556,14 +591,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          repository: EdgeFirstAI/.github
-          ref: ${{ inputs.shared-sha }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: .ef-ci
           persist-credentials: false
       - name: Caller pre-command
         if: ${{ inputs.pre-command != '' }}
         env:
           PRE_COMMAND: ${{ inputs.pre-command }}
+          # Contract: pre-command scripts may rely on GH_TOKEN / GITHUB_TOKEN
+          # for gh and API calls (release asset downloads, etc). Nothing else
+          # is guaranteed beyond the default runner environment.
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
@@ -639,3 +679,6 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: >-
+            "-Dsonar.rust.lcov.reportPaths=coverage/lcov.info"

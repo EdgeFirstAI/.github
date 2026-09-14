@@ -1,4 +1,4 @@
-# Caller skeleton — pin uses: and shared-sha to the same EdgeFirstAI/.github commit.
+# Caller skeleton — pin every uses: to a 40-char EdgeFirstAI/.github commit.
 
 name: Nightly
 
@@ -19,5 +19,4 @@ jobs:
       lanes: all
       nightly: true
       runner-class-linux: hosted
-      shared-sha: eec0cb31b6576a47735099b91e39a9bdb5fbde3a
     secrets: inherit

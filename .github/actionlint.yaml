@@ -1,0 +1,16 @@
+# actionlint configuration.
+#
+# The `job` context gained workflow_sha / workflow_repository / workflow_ref /
+# workflow_file_path, which is how a reusable workflow checks out its own
+# repository at its own commit without the caller passing a shared-sha input.
+# actionlint 1.7.12 still ships the older `job` context schema and reports them
+# as undefined properties.
+#
+# These are documented in the Actions contexts reference and verified against a
+# live runner: EdgeFirstAI/ci-foundation-scratch run 34887992847 resolved
+# job.workflow_sha to the pinned EdgeFirstAI/.github commit and checked it out
+# successfully. Drop this ignore once actionlint updates its schema.
+paths:
+  .github/workflows/*.yml:
+    ignore:
+      - 'property "workflow_(sha|repository|ref|file_path)" is not defined in object type'
