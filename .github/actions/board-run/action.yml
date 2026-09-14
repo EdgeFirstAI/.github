@@ -35,8 +35,25 @@ runs:
         name: ${{ inputs.archive-artifact }}
         path: board-archive
 
-    - name: Install nextest
+    # Boards are provisioned with their toolchain; they run tests, never builds.
+    # install-action needs jq and curl and a recognised distro, none of which a
+    # Yocto board has, so it exits 127 rather than installing anything.
+    - name: Probe for nextest
       if: inputs.command == ''
+      id: probe
+      shell: bash
+      run: |
+        set -euo pipefail
+        if command -v cargo-nextest >/dev/null 2>&1 || cargo nextest --version >/dev/null 2>&1; then
+          echo "present=true" >> "$GITHUB_OUTPUT"
+          echo "nextest already provisioned on this runner"
+        else
+          echo "present=false" >> "$GITHUB_OUTPUT"
+          echo "::warning::nextest not on this runner; attempting install"
+        fi
+
+    - name: Install nextest
+      if: inputs.command == '' && steps.probe.outputs.present != 'true'
       uses: taiki-e/install-action@d438492cf8a250514fa2d34b30bc3c0dc37c65ff  # v2.87.8
       with:
         tool: nextest

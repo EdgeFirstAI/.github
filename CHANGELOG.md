@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `board-run` probes for nextest instead of always invoking `install-action`.
+  A Yocto board has neither `jq` nor `curl` nor a distro the action recognises,
+  so the install exited 127 and took the on-target lane with it. Boards are
+  provisioned with their toolchain; they run tests, never builds.
 - LFS checkouts install `git-lfs` first when the runner image lacks it. The
   org-provisioned `ubuntu-24.04-arm-xlarge` image ships without it, so moving
   a lane from a standard runner to that class failed at checkout, before any
