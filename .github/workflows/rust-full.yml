@@ -136,9 +136,10 @@ jobs:
                 esac
                 ;;
               larger)
+                # 24.04 to match the hosted class; the org provisions both.
                 case "$kind" in
-                  linux) echo '"ubuntu-22.04-xlarge"' ;;
-                  linux-arm) echo '"ubuntu-22.04-arm-xlarge"' ;;
+                  linux) echo '"ubuntu-24.04-xlarge"' ;;
+                  linux-arm) echo '"ubuntu-24.04-arm-xlarge"' ;;
                   macos) echo '"macos-latest-xlarge"' ;;
                   windows) echo '"windows-latest-8-cores"' ;;
                 esac

@@ -26,6 +26,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   archive a different feature set than the host matrix. Host linux-arm
   uploads merged LFS testdata as `ci-testdata` for the board to download.
 
+### Changed
+
+- Runner policy is now per tier rather than a single cost-first ordering.
+  Quick stays on free standard runners and never bills; Full and Release
+  default to `larger`, which is what they were before this migration. Moving
+  those lanes to standard runners to save money made hal's Full tier slower
+  than the 15-to-20-job workflow it replaced, which is a failed migration, not
+  a saving. The `larger` class maps to `ubuntu-24.04-xlarge` /
+  `ubuntu-24.04-arm-xlarge` to match the hosted class.
+
 ### Fixed
 
 - `protect-release-tags` also blocks tag `update`. hal's hand-made repo ruleset

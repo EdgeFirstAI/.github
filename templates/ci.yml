@@ -87,7 +87,9 @@ jobs:
     with:
       lanes: ${{ needs.changes.outputs.full == 'true' && 'all' || 'hardware' }}
       boards: nxp-imx8mp-latest
-      runner-class-linux: hosted
+      # Full is speed-optimised: larger runners by default. Phase 2 swaps
+      # these for the self-hosted fleet.
+      runner-class-linux: larger
       # board-pre-command: SKIP_PACKAGES=1 bash .github/scripts/ci-setup.sh
       # board-extra-args: -j 1 --profile ci
       # archive-args: --locked --package your-on-target-crate

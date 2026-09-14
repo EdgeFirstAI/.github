@@ -49,19 +49,35 @@ skip Quick; the gate still runs and treats `skipped` as success.
 
 ## Runner selection policy
 
-Apply in order; stop at the first fit:
+The tier decides, not the job. What is being optimised differs per tier:
+
+| Tier | Optimise for | Runner class |
+| --- | --- | --- |
+| **Quick** | cost **and** speed | `hosted` — free standard runners, always |
+| **Full** | speed, cost accepted | `larger` |
+| **Release** | speed, cost accepted | `larger` |
+| **Nightly** | speed, cost accepted | `larger` (nothing blocks on it; see below) |
 
 1. **hosted** — `ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-latest`,
-   `windows-latest`. Default for Quick and for Full lanes under 20 minutes.
-2. **fleet** — self-hosted groups `boards`, `build-x86`, `gpu-cuda`, `mac`,
+   `windows-latest`. Free and unmetered on public repositories. This is the
+   Quick tier everywhere, with no exceptions: the per-push path never bills.
+2. **larger** — `ubuntu-24.04-xlarge`, `ubuntu-24.04-arm-xlarge`,
+   `macos-latest-xlarge`, `windows-latest-8-cores`, via
+   `runner-class-*: larger`. The default for Full and Release. These tiers run
+   once per PR or per tag, not per push, so the spend is bounded by review
+   cadence rather than by typing. A Full tier that is slower than the pipeline
+   it replaced is a failed migration, not a saving.
+3. **fleet** — self-hosted groups `boards`, `build-x86`, `gpu-cuda`, `mac`,
    `windows`. Full and Nightly only. Never fork PRs; the shared Full workflow
-   forces `hosted` when `head.repo` is not this repository.
-3. **larger** — GitHub `-xlarge` / `-8core`. Exception only, via the caller
-   input `runner-class-*: larger` with a comment naming the reason and review
-   date. Group `larger-runners` is restricted to `hal` and `packaging`.
+   forces `hosted` when `head.repo` is not this repository. Phase 2 moves the
+   Linux, Windows and CUDA lanes here and retires those larger runners; macOS
+   stays billed because a hosted Apple runner has no free equivalent.
 
-Never add a billed runner label in a workflow without `runner-class: larger`.
-A nightly audit opens an issue when that happens.
+Putting a Quick lane on a billed runner is the defect the nightly audit exists
+to catch. A Full or Release lane on a billed runner is the intended state; when
+such a lane names the label directly rather than going through
+`runner-class-*`, put `# runner-class: larger` in the file with the reason so
+the audit can tell the two apart.
 
 ## How to call the shared workflows
 
