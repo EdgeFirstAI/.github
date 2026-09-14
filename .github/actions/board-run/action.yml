@@ -116,7 +116,11 @@ runs:
           # Invoke the binary directly: `cargo nextest` needs cargo, which a
           # board does not have.
           # shellcheck disable=SC2086  # EXTRA_ARGS is an argument list and must split
-          "$NEXTEST_BIN" nextest run --archive-file "$archive" --extract-to "$EXTRACT_DIR" $EXTRA_ARGS
+          # --workspace-remap: the archive records the workspace root it was
+          # built under (a hosted runner), and the board checks out to a
+          # different path, so without this nextest looks for the manifest at
+          # the builder's path and fails before running anything.
+          "$NEXTEST_BIN" nextest run --archive-file "$archive"             --extract-to "$EXTRACT_DIR"             --workspace-remap "$GITHUB_WORKSPACE" $EXTRA_ARGS
         fi
 
     - name: Upload profraw

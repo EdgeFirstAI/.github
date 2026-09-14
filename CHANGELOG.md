@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `board-run` passes `--workspace-remap`. A nextest archive records the
+  workspace root it was built under, so one built on a hosted runner looked for
+  its manifest at that path on the board and failed before running a test.
 - `board-run` extracts the archive into the workspace with `--extract-to` and
   points `TMPDIR` there as well. nextest extracts to a temp directory by
   default, which on a board is a small RAM-backed `/tmp` tmpfs: it ran out of
