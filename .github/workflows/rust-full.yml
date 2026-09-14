@@ -251,6 +251,7 @@ jobs:
         env:
           PROFILE_ARG: ${{ hashFiles('.config/nextest.toml') != '' && '--profile ci' || '' }}
         run: |
+          # shellcheck disable=SC2086  # PROFILE_ARG carries "--profile ci" and must split
           cargo llvm-cov nextest --lcov --output-path coverage-linux.lcov \
             ${{ inputs.nextest-args }} $PROFILE_ARG
 
@@ -335,6 +336,7 @@ jobs:
         run: |
           set -euo pipefail
           args="${ARCHIVE_ARGS:-$NEXTEST_ARGS}"
+          # shellcheck disable=SC2086  # args is a cargo argument list and must split
           cargo nextest archive --archive-file nextest-archive.tar.zst $args
           test -d target/llvm-cov-target
 
