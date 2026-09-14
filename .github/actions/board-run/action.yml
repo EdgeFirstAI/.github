@@ -35,28 +35,32 @@ runs:
         name: ${{ inputs.archive-artifact }}
         path: board-archive
 
-    # Boards are provisioned with their toolchain; they run tests, never builds.
-    # install-action needs jq and curl and a recognised distro, none of which a
-    # Yocto board has, so it exits 127 rather than installing anything.
-    - name: Probe for nextest
+    # Boards run tests, never builds: no cargo, and no way to fetch one, since
+    # install-action needs jq, curl and a recognised distro that a Yocto board
+    # does not have. Prefer a provisioned nextest; otherwise use the static
+    # aarch64 binary the aarch64 lane ships inside the archive artifact.
+    - name: Resolve nextest
       if: inputs.command == ''
       id: probe
       shell: bash
+      env:
+        ARCHIVE_DIR: board-archive
       run: |
         set -euo pipefail
-        if command -v cargo-nextest >/dev/null 2>&1 || cargo nextest --version >/dev/null 2>&1; then
-          echo "present=true" >> "$GITHUB_OUTPUT"
-          echo "nextest already provisioned on this runner"
-        else
-          echo "present=false" >> "$GITHUB_OUTPUT"
-          echo "::warning::nextest not on this runner; attempting install"
+        if command -v cargo-nextest >/dev/null 2>&1; then
+          echo "runner=$(command -v cargo-nextest)" >> "$GITHUB_OUTPUT"
+          echo "using provisioned cargo-nextest"
+          exit 0
         fi
-
-    - name: Install nextest
-      if: inputs.command == '' && steps.probe.outputs.present != 'true'
-      uses: taiki-e/install-action@d438492cf8a250514fa2d34b30bc3c0dc37c65ff  # v2.87.8
-      with:
-        tool: nextest
+        shipped="$(find "$ARCHIVE_DIR" -name cargo-nextest -type f | head -1)"
+        if [[ -n "$shipped" ]]; then
+          chmod +x "$shipped"
+          echo "runner=$(cd "$(dirname "$shipped")" && pwd)/cargo-nextest" >> "$GITHUB_OUTPUT"
+          echo "using the static nextest shipped with the archive"
+          exit 0
+        fi
+        echo "::error::no cargo-nextest on this runner and none shipped in $ARCHIVE_DIR"
+        exit 1
 
     - name: Run on-target tests
       shell: bash
@@ -66,6 +70,7 @@ runs:
         EXTRA_ARGS: ${{ inputs.extra-args }}
         ARCHIVE_FILE: ${{ inputs.archive-file }}
         PROFRAW_DIR: ${{ inputs.profraw-dir }}
+        NEXTEST_BIN: ${{ steps.probe.outputs.runner }}
       run: |
         set -euo pipefail
         mkdir -p "$PROFRAW_DIR"
@@ -74,13 +79,16 @@ runs:
         else
           archive="$(find board-archive -name "$(basename "$ARCHIVE_FILE")" | head -1)"
           if [[ -z "$archive" ]]; then
-            archive="$(find board-archive -type f | head -1)"
+            archive="$(find board-archive -type f ! -name cargo-nextest | head -1)"
           fi
           if [[ -z "$archive" ]]; then
             echo "error: nextest archive not found in board-archive/" >&2
             exit 1
           fi
-          cargo nextest run --archive-file "$archive" $EXTRA_ARGS
+          # Invoke the binary directly: `cargo nextest` needs cargo, which a
+          # board does not have.
+          # shellcheck disable=SC2086  # EXTRA_ARGS is an argument list and must split
+          "$NEXTEST_BIN" nextest run --archive-file "$archive" $EXTRA_ARGS
         fi
 
     - name: Upload profraw

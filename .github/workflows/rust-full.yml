@@ -377,11 +377,29 @@ jobs:
           cargo nextest archive --archive-file nextest-archive.tar.zst $args
           test -d target/llvm-cov-target
 
+      # Boards run tests, never builds, so they have no cargo and no way to
+      # fetch one: install-action needs jq, curl and a recognised distro, and
+      # a Yocto board has none of them. Ship a statically linked aarch64
+      # nextest next to the archive so the board can execute it directly.
+      - name: Stage a static nextest for the board
+        if: needs.setup.outputs.do_hardware == 'true'
+        env:
+          NEXTEST_URL: https://get.nexte.st/latest/linux-arm-musl
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 5 --retry-connrefused -o nextest.tar.gz "$NEXTEST_URL"
+          tar xzf nextest.tar.gz cargo-nextest
+          chmod +x cargo-nextest
+          file cargo-nextest || true
+          rm -f nextest.tar.gz
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         if: needs.setup.outputs.do_hardware == 'true'
         with:
           name: nextest-archive-aarch64
-          path: nextest-archive.tar.zst
+          path: |
+            nextest-archive.tar.zst
+            cargo-nextest
           if-no-files-found: error
           retention-days: 1
 
