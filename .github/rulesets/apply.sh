@@ -23,14 +23,18 @@ set -euo pipefail
 ORG="${ORG:-EdgeFirstAI}"
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 
+# gh --jq is used throughout rather than a standalone jq binary, which is not
+# present on a stock Git Bash and made this script unrunnable on Windows.
 for spec in protect-main.json protect-main-ci.json protect-release-tags.json; do
-  name="$(jq -r .name "$ROOT/$spec")"
-  existing="$(gh api "orgs/${ORG}/rulesets" --jq ".[] | select(.name==\"${name}\") | .id" || true)"
+  name="${spec%.json}"
+  existing="$(gh api "orgs/${ORG}/rulesets" --jq ".[] | select(.name==\"${name}\") | .id" | head -1 || true)"
   if [[ -n "$existing" ]]; then
     echo "updating ruleset $name ($existing)"
-    gh api --method PUT "orgs/${ORG}/rulesets/${existing}" --input "$ROOT/$spec"
+    # Response body is discarded: gh api emits no trailing newline, which ran
+    # the JSON into the next iteration's message. Errors still reach stderr.
+    gh api --method PUT "orgs/${ORG}/rulesets/${existing}" --input "$ROOT/$spec" > /dev/null
   else
     echo "creating ruleset $name"
-    gh api --method POST "orgs/${ORG}/rulesets" --input "$ROOT/$spec"
+    gh api --method POST "orgs/${ORG}/rulesets" --input "$ROOT/$spec" > /dev/null
   fi
 done

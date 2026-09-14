@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `protect-release-tags` also blocks tag `update`. hal's hand-made repo ruleset
+  had that rule and the org one did not, so retiring the duplicate would have
+  widened what a `v*` tag allows.
+- `apply.sh` no longer needs a standalone `jq` (absent from a stock Git Bash,
+  which made it unrunnable on Windows) and discards API response bodies, which
+  ran into the next ruleset's progress line.
 - **License policy rejected valid dependencies.** The evaluator compared whole
   SPDX expressions against the allowlist, so any parenthesised compound failed:
   `(MIT OR Apache-2.0) AND Unicode-3.0` was rejected even though every term is
