@@ -7,8 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `pre-command` input on `rust-quick` and `rust-full` host/board jobs so callers
+  can install OpenCV, fetch ANGLE, or merge LFS testdata after checkout. The
+  command is passed through `env`, never interpolated into the script text.
+
 ### Fixed
 
+- Caller `templates/ci.yml` treats `ci:full` / `ci:hardware` as sticky: Full
+  re-runs on later pushes while the label is still present, not only on the
+  `labeled` event.
 - GitHub Release notes use `body_path`; `softprops/action-gh-release` v2.5.0
   ignores `body_file`, so v1.0.0 published with an empty body.
 - Dependabot scans workflows and composites in one `directories` list with a

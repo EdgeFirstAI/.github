@@ -65,6 +65,10 @@ on:
         description: 40-char commit SHA of EdgeFirstAI/.github; must match the uses pin
         type: string
         required: true
+      pre-command:
+        description: Caller setup (OpenCV, ANGLE, testdata). Passed through env, never interpolated.
+        type: string
+        default: ""
     secrets:
       SONAR_TOKEN:
         required: false
@@ -213,6 +217,14 @@ jobs:
           path: .ef-ci
           persist-credentials: false
 
+      - name: Caller pre-command
+        if: ${{ inputs.pre-command != '' }}
+        env:
+          PRE_COMMAND: ${{ inputs.pre-command }}
+        run: |
+          set -euo pipefail
+          bash -c "$PRE_COMMAND"
+
       - uses: ./.ef-ci/.github/actions/setup-rust
         with:
           components: rustfmt, clippy, llvm-tools-preview
@@ -253,6 +265,14 @@ jobs:
           ref: ${{ inputs.shared-sha }}
           path: .ef-ci
           persist-credentials: false
+
+      - name: Caller pre-command
+        if: ${{ inputs.pre-command != '' }}
+        env:
+          PRE_COMMAND: ${{ inputs.pre-command }}
+        run: |
+          set -euo pipefail
+          bash -c "$PRE_COMMAND"
 
       - uses: ./.ef-ci/.github/actions/setup-rust
         with:
@@ -321,6 +341,14 @@ jobs:
           path: .ef-ci
           persist-credentials: false
 
+      - name: Caller pre-command
+        if: ${{ inputs.pre-command != '' }}
+        env:
+          PRE_COMMAND: ${{ inputs.pre-command }}
+        run: |
+          set -euo pipefail
+          bash -c "$PRE_COMMAND"
+
       - uses: ./.ef-ci/.github/actions/setup-rust
         with:
           components: rustfmt, clippy, llvm-tools-preview
@@ -356,6 +384,15 @@ jobs:
           ref: ${{ inputs.shared-sha }}
           path: .ef-ci
           persist-credentials: false
+
+      - name: Caller pre-command
+        if: ${{ inputs.pre-command != '' }}
+        env:
+          PRE_COMMAND: ${{ inputs.pre-command }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -c "$PRE_COMMAND"
 
       - uses: ./.ef-ci/.github/actions/setup-rust
         with:
@@ -399,6 +436,14 @@ jobs:
           ref: ${{ inputs.shared-sha }}
           path: .ef-ci
           persist-credentials: false
+
+      - name: Caller pre-command
+        if: ${{ inputs.pre-command != '' }}
+        env:
+          PRE_COMMAND: ${{ inputs.pre-command }}
+        run: |
+          set -euo pipefail
+          bash -c "$PRE_COMMAND"
 
       - uses: ./.ef-ci/.github/actions/board-run
         with:
@@ -482,6 +527,13 @@ jobs:
           ref: ${{ inputs.shared-sha }}
           path: .ef-ci
           persist-credentials: false
+      - name: Caller pre-command
+        if: ${{ inputs.pre-command != '' }}
+        env:
+          PRE_COMMAND: ${{ inputs.pre-command }}
+        run: |
+          set -euo pipefail
+          bash -c "$PRE_COMMAND"
       - uses: ./.ef-ci/.github/actions/setup-rust
         with:
           tools: cargo-hack,cargo-audit

@@ -51,8 +51,7 @@ jobs:
       - id: mode
         env:
           EVENT_NAME: ${{ github.event_name }}
-          EVENT_ACTION: ${{ github.event.action }}
-          LABEL_NAME: ${{ github.event.label.name }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           DISPATCH_FULL: ${{ inputs.full }}
           DISPATCH_HARDWARE: ${{ inputs.hardware }}
         run: |
@@ -64,15 +63,10 @@ jobs:
               full="$DISPATCH_FULL"
               hardware="$DISPATCH_HARDWARE"
               ;;
-            pull_request)
-              if [[ "$EVENT_ACTION" == labeled ]]; then
-                case "$LABEL_NAME" in
-                  ci:full) full=true ;;
-                  ci:hardware) hardware=true ;;
-                esac
-              fi
-              ;;
           esac
+          # Re-run Full on later pushes while the label is still present.
+          case ",$LABELS," in *,ci:full,*) full=true ;; esac
+          case ",$LABELS," in *,ci:hardware,*) hardware=true ;; esac
           echo "full=$full" >> "$GITHUB_OUTPUT"
           echo "hardware=$hardware" >> "$GITHUB_OUTPUT"
 
@@ -82,6 +76,8 @@ jobs:
     uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@eec0cb31b6576a47735099b91e39a9bdb5fbde3a
     with:
       python: false
+      # Optional: caller setup after checkout (OpenCV, ANGLE, testdata).
+      # pre-command: bash .github/scripts/ci-setup.sh
       shared-sha: eec0cb31b6576a47735099b91e39a9bdb5fbde3a
 
   full:
