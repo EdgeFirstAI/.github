@@ -1,0 +1,57 @@
+name: _probe-context
+
+# Temporary probe for EDGEAI-1554: can a reusable workflow check out its own
+# repository at its own commit without the caller passing a shared-sha input?
+# Deleted once the answer is recorded.
+
+on:
+  workflow_call:
+
+jobs:
+  probe:
+    name: Probe
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Print context
+        env:
+          GH_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          GH_WORKFLOW_REF: ${{ github.workflow_ref }}
+          JOB_WORKFLOW_SHA: ${{ job.workflow_sha }}
+          JOB_WORKFLOW_REF: ${{ job.workflow_ref }}
+          JOB_WORKFLOW_REPO: ${{ job.workflow_repository }}
+          JOB_WORKFLOW_PATH: ${{ job.workflow_file_path }}
+          GH_SHA: ${{ github.sha }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          echo "github.sha                = '${GH_SHA}'"
+          echo "github.repository         = '${GH_REPO}'"
+          echo "github.workflow_sha       = '${GH_WORKFLOW_SHA}'"
+          echo "github.workflow_ref       = '${GH_WORKFLOW_REF}'"
+          echo "job.workflow_sha          = '${JOB_WORKFLOW_SHA}'"
+          echo "job.workflow_ref          = '${JOB_WORKFLOW_REF}'"
+          echo "job.workflow_repository   = '${JOB_WORKFLOW_REPO}'"
+          echo "job.workflow_file_path    = '${JOB_WORKFLOW_PATH}'"
+
+      - name: Checkout shared CI via job context
+        continue-on-error: true
+        id: ctx
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .ef-ci
+          persist-credentials: false
+
+      - name: Report
+        run: |
+          set -euo pipefail
+          echo "checkout outcome = ${{ steps.ctx.outcome }}"
+          if [[ -f .ef-ci/.github/actions/setup-rust/action.yml ]]; then
+            echo "RESULT: job context checkout WORKS"
+          else
+            echo "RESULT: job context checkout FAILED"
+          fi
