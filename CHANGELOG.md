@@ -38,6 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rust-full` takes `archive-profile` so the on-target archive is built with a
+  release-like profile. The archive was built on the default dev profile, so it
+  carried full debug info for 26 instrumented binaries plus a standard library
+  and exhausted the board's eMMC with `No space left on device`. The shipped
+  nextest is stripped, and `board-run` clears the previous payload and reports
+  headroom before unpacking, because its cleanup only runs after a job that
+  succeeded and a failed one used to leave everything behind.
 - `board-run` no longer tries to install nextest on the board. A Yocto board
   has neither `jq` nor `curl` nor a distro `install-action` recognises, so the
   install exited 127 and took the on-target lane with it. The aarch64 lane now

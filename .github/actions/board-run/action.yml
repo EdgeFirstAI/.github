@@ -28,6 +28,19 @@ inputs:
 runs:
   using: composite
   steps:
+    # A board runs on a small eMMC and the cleanup below only runs after a
+    # successful job, so a failed run leaves its payload behind and the next
+    # one fills the disk. Clear it first and record the headroom.
+    - name: Reclaim board disk space
+      shell: bash
+      env:
+        PROFRAW_DIR: ${{ inputs.profraw-dir }}
+      run: |
+        set -euo pipefail
+        rm -rf board-archive "$PROFRAW_DIR" target/nextest || true
+        find . -name '*.profraw' -delete 2>/dev/null || true
+        df -h . || true
+
     - name: Download nextest archive
       if: inputs.command == ''
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1

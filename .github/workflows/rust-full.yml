@@ -77,6 +77,13 @@ on:
         description: Args for cargo nextest archive. Empty uses nextest-args (do not put -j 1 here).
         type: string
         default: ""
+      archive-profile:
+        description: >-
+          Cargo profile for the on-target archive. A board has a small eMMC, so
+          the default dev profile's full debug info can exhaust it. Set a
+          release-like profile with debug = "line-tables-only".
+        type: string
+        default: ""
     secrets:
       SONAR_TOKEN:
         required: false
@@ -370,12 +377,18 @@ jobs:
           LLVM_PROFILE_FILE: "%p-%m.profraw"
           ARCHIVE_ARGS: ${{ inputs.archive-args }}
           NEXTEST_ARGS: ${{ inputs.nextest-args }}
+          ARCHIVE_PROFILE: ${{ inputs.archive-profile }}
         run: |
           set -euo pipefail
           args="${ARCHIVE_ARGS:-$NEXTEST_ARGS}"
-          # shellcheck disable=SC2086  # args is a cargo argument list and must split
-          cargo nextest archive --archive-file nextest-archive.tar.zst $args
+          profile_arg=""
+          if [[ -n "$ARCHIVE_PROFILE" ]]; then
+            profile_arg="--cargo-profile $ARCHIVE_PROFILE"
+          fi
+          # shellcheck disable=SC2086  # both are cargo argument lists and must split
+          cargo nextest archive --archive-file nextest-archive.tar.zst $profile_arg $args
           test -d target/llvm-cov-target
+          ls -lh nextest-archive.tar.zst
 
       # Boards run tests, never builds, so they have no cargo and no way to
       # fetch one: install-action needs jq, curl and a recognised distro, and
@@ -390,7 +403,9 @@ jobs:
           curl -fsSL --retry 5 --retry-connrefused -o nextest.tar.gz "$NEXTEST_URL"
           tar xzf nextest.tar.gz cargo-nextest
           chmod +x cargo-nextest
-          file cargo-nextest || true
+          # Ships with debug_info; the board has no use for it and little room.
+          strip cargo-nextest || llvm-strip cargo-nextest || true
+          ls -lh cargo-nextest
           rm -f nextest.tar.gz
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
@@ -408,12 +423,17 @@ jobs:
       # the bulk of the ~2 GB per run this tier used to move.
       - name: Collect instrumented binaries
         if: needs.setup.outputs.do_hardware == 'true'
+        env:
+          ARCHIVE_PROFILE: ${{ inputs.archive-profile }}
         run: |
           set -euo pipefail
           mkdir -p llvm-cov-binaries
-          # The instrumented test executables cargo llvm-cov report needs to
-          # attribute counters live in debug/deps, not directly in debug.
-          find target/llvm-cov-target/debug -maxdepth 2 -type f -perm -u+x \
+          # Cargo writes the dev profile to debug/; a named profile uses its
+          # own directory. The instrumented test executables cargo llvm-cov
+          # report needs live in <profile>/deps, not directly in <profile>.
+          profile_dir="${ARCHIVE_PROFILE:-debug}"
+          [[ "$profile_dir" == "dev" ]] && profile_dir=debug
+          find "target/llvm-cov-target/$profile_dir" -maxdepth 2 -type f -perm -u+x \
             ! -name '*.d' ! -name '*.rlib' ! -name '*.rmeta' \
             ! -name '*.so' ! -name '*.dylib' ! -name '*.a' \
             -exec cp -t llvm-cov-binaries {} +
