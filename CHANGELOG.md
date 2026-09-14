@@ -38,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `board-run` extracts the archive into the workspace with `--extract-to` and
+  points `TMPDIR` there as well. nextest extracts to a temp directory by
+  default, which on a board is a small RAM-backed `/tmp` tmpfs: it ran out of
+  space while the workspace filesystem still had room. `df` is now reported for
+  both filesystems.
 - `rust-full` takes `archive-profile` so the on-target archive is built with a
   release-like profile. The archive was built on the default dev profile, so it
   carried full debug info for 26 instrumented binaries plus a standard library

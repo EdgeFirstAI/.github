@@ -37,9 +37,12 @@ runs:
         PROFRAW_DIR: ${{ inputs.profraw-dir }}
       run: |
         set -euo pipefail
-        rm -rf board-archive "$PROFRAW_DIR" target/nextest || true
+        rm -rf board-archive board-extract board-tmp "$PROFRAW_DIR" target/nextest || true
         find . -name '*.profraw' -delete 2>/dev/null || true
+        echo "workspace filesystem:"
         df -h . || true
+        echo "/tmp filesystem:"
+        df -h /tmp || true
 
     - name: Download nextest archive
       if: inputs.command == ''
@@ -84,9 +87,21 @@ runs:
         ARCHIVE_FILE: ${{ inputs.archive-file }}
         PROFRAW_DIR: ${{ inputs.profraw-dir }}
         NEXTEST_BIN: ${{ steps.probe.outputs.runner }}
+        # A board's /tmp is a small RAM-backed tmpfs. nextest extracts an
+        # archive to a temp directory by default, which lands there and runs
+        # it out of space long before the workspace filesystem is troubled.
+        # Keep every large write on the workspace.
+        TMPDIR: ${{ github.workspace }}/board-tmp
+        TMP: ${{ github.workspace }}/board-tmp
+        TEMP: ${{ github.workspace }}/board-tmp
+        EXTRACT_DIR: ${{ github.workspace }}/board-extract
       run: |
         set -euo pipefail
-        mkdir -p "$PROFRAW_DIR"
+        mkdir -p "$PROFRAW_DIR" "$TMPDIR"
+        # nextest will not extract into a populated directory, and the
+        # cleanup below only runs after a job that got that far.
+        rm -rf "$EXTRACT_DIR"
+        mkdir -p "$EXTRACT_DIR"
         if [[ -n "$BOARD_COMMAND" ]]; then
           bash -lc "$BOARD_COMMAND"
         else
@@ -101,7 +116,7 @@ runs:
           # Invoke the binary directly: `cargo nextest` needs cargo, which a
           # board does not have.
           # shellcheck disable=SC2086  # EXTRA_ARGS is an argument list and must split
-          "$NEXTEST_BIN" nextest run --archive-file "$archive" $EXTRA_ARGS
+          "$NEXTEST_BIN" nextest run --archive-file "$archive" --extract-to "$EXTRACT_DIR" $EXTRA_ARGS
         fi
 
     - name: Upload profraw
@@ -117,4 +132,4 @@ runs:
       if: always()
       shell: bash
       run: |
-        rm -rf board-archive "${{ inputs.profraw-dir }}" || true
+        rm -rf board-archive board-extract board-tmp "${{ inputs.profraw-dir }}" || true
