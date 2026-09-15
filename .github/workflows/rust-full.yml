@@ -69,6 +69,22 @@ on:
         description: Board-only setup. Falls back to pre-command when empty.
         type: string
         default: ""
+      board-binaries:
+        description: >-
+          Newline-separated test binaries to run directly on the board, one per
+          line as `<name-prefix>[=<filter>[,<filter>...]]`. Each binary runs in a
+          SINGLE process. nextest runs one process per test, and on a GPU board
+          each process pays a full driver init/teardown, which dominates both
+          runtime and the per-process profraw footprint. Prefer this over
+          board-extra-args for any board with a GPU.
+        type: string
+        default: ""
+      board-min-tests:
+        description: >-
+          Fail the board lane if fewer than this many tests ran. A selection
+          that matches nothing otherwise reports success.
+        type: string
+        default: "0"
       board-extra-args:
         description: Extra args for cargo nextest run on the board (e.g. -j 1). Not used for archive.
         type: string
@@ -640,6 +656,8 @@ jobs:
         with:
           command: ${{ inputs.board-command }}
           extra-args: ${{ inputs.board-extra-args }}
+          binaries: ${{ inputs.board-binaries }}
+          min-tests: ${{ inputs.board-min-tests }}
           archive-artifact: nextest-archive-aarch64
           profraw-artifact: coverage-hardware-${{ matrix.runner }}
 
@@ -673,7 +691,14 @@ jobs:
         continue-on-error: true
         with:
           name: rust-llvm-cov-aarch64
-          path: target/llvm-cov-target/debug
+          # deps/, not the profile root. cargo llvm-cov looks for instrumented
+          # test executables under <profile>/deps, which is where the collect
+          # step found them; unpacking the flat artifact into the profile root
+          # leaves them one level too high and the report fails with "not found
+          # object files". `report` defaults to the dev profile, so debug/ is
+          # the directory it will search whatever profile built the archive --
+          # it needs the objects, not a matching build.
+          path: target/llvm-cov-target/debug/deps
       - name: Merge profraw
         run: |
           set -euo pipefail
@@ -684,7 +709,29 @@ jobs:
             exit 1
           fi
           cp "${profs[@]}" target/llvm-cov-target/
+          echo "merged ${#profs[@]} board profraw files"
+          # The instrumented-binaries download is continue-on-error, so a miss
+          # here otherwise surfaces as llvm-cov's opaque "not found object
+          # files" rather than the artifact that did not arrive.
+          # The -d test keeps a missing directory from aborting under
+          # pipefail before the message below can be printed.
+          objs=0
+          if [[ -d target/llvm-cov-target/debug/deps ]]; then
+            # An artifact round trip does not preserve the executable bit, so
+            # every binary arrives 0644. cargo llvm-cov collects object files
+            # by filtering on executability, so without this it reports "not
+            # found object files" however correct the paths are -- which it
+            # did with the binaries in the profile root and again in deps/.
+            find target/llvm-cov-target/debug/deps -maxdepth 1 -type f ! -name '*.d' -exec chmod +x {} +
+            objs=$(find target/llvm-cov-target/debug/deps -maxdepth 1 -type f -perm -u+x ! -name '*.d' | wc -l)
+          fi
+          if [[ "$objs" -eq 0 ]]; then
+            echo "::error::no instrumented binaries in target/llvm-cov-target/debug/deps; the rust-llvm-cov-aarch64 artifact did not download"
+            exit 1
+          fi
+          echo "found $objs instrumented binaries to attribute against"
           cargo llvm-cov report --lcov --output-path coverage-hardware.lcov
+          echo "source files in report: $(grep -c '^SF:' coverage-hardware.lcov)"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: coverage-hardware
