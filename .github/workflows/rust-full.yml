@@ -713,14 +713,17 @@ jobs:
           # The instrumented-binaries download is continue-on-error, so a miss
           # here otherwise surfaces as llvm-cov's opaque "not found object
           # files" rather than the artifact that did not arrive.
-          # Count regular files, not executables: an artifact round trip does
-          # not preserve the executable bit, so every binary arrives 0644.
-          # llvm-cov reads them as object files and never executes them.
           # The -d test keeps a missing directory from aborting under
-          # pipefail before this message can be printed.
+          # pipefail before the message below can be printed.
           objs=0
           if [[ -d target/llvm-cov-target/debug/deps ]]; then
-            objs=$(find target/llvm-cov-target/debug/deps -maxdepth 1 -type f ! -name '*.d' | wc -l)
+            # An artifact round trip does not preserve the executable bit, so
+            # every binary arrives 0644. cargo llvm-cov collects object files
+            # by filtering on executability, so without this it reports "not
+            # found object files" however correct the paths are -- which it
+            # did with the binaries in the profile root and again in deps/.
+            find target/llvm-cov-target/debug/deps -maxdepth 1 -type f ! -name '*.d' -exec chmod +x {} +
+            objs=$(find target/llvm-cov-target/debug/deps -maxdepth 1 -type f -perm -u+x ! -name '*.d' | wc -l)
           fi
           if [[ "$objs" -eq 0 ]]; then
             echo "::error::no instrumented binaries in target/llvm-cov-target/debug/deps; the rust-llvm-cov-aarch64 artifact did not download"
