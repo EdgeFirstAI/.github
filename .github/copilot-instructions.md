@@ -111,8 +111,9 @@ Repository-specific steps (ANGLE, LFS testdata, OpenCV, `vcan0`) become
 Inputs that matter:
 
 - `rust-quick`: `python` (ruff lint), `python-tests` (adds maturin develop + pytest),
-  `ruff-paths`, `timeout-minutes` (hal: 15), `cross-targets`, `runner`,
-  `pre-command` (caller setup after checkout)
+  `ruff-paths`, `ruff-version` (exact ruff for uvx; empty takes whatever the
+  runner's uv cache holds), `timeout-minutes` (hal: 15), `cross-targets`,
+  `runner`, `pre-command` (caller setup after checkout)
 - `rust-full`: `lanes` (`all` \| `host` \| `hardware`), `boards`, `nightly`,
   `runner-class-linux` / `-linux-arm` / `-macos` / `-windows`, `pre-command` (host jobs),
   `board-pre-command` (board; falls back to `pre-command`), `board-extra-args` (`-j 1` and similar; not used for archive),
