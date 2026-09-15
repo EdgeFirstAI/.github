@@ -21,6 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lint, `python-tests` adds the maturin develop + pytest pass, and `ruff-paths`
   targets specific directories. hal needed lint without the test pass and had
   to hand-roll a job for it.
+- `ruff-version` on `rust-quick` and `python-quick` pins the exact ruff `uvx`
+  runs, e.g. `0.16.7`. Empty keeps today's behaviour. Both workflows called
+  bare `uvx ruff`, and `setup-python-uv` enables the uv cache, so the version
+  a lane linted with was whatever that runner's cache happened to hold -- not
+  reproducible, and it drifts without any signal. hal hit the inverse case: a
+  contributor's local ruff 0.15.8 reported five `F403`s on star re-exports
+  that the CI-resolved 0.16.7 does not, so the mandatory local gate failed on
+  a tree `main` passes. Callers that pin get one version across every repo;
+  callers that do not are unaffected.
 - `check_license_policy.py --self-test` covers the SPDX evaluator against the
   expressions that have broken the fleet. The shared CI lint job runs it.
 - `rust-full` `board-pre-command`, `board-extra-args`, and `archive-args` so

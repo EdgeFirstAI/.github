@@ -15,6 +15,13 @@ on:
         description: Paths for ruff. Empty lints the repository root.
         type: string
         default: ""
+      ruff-version:
+        description: >-
+          Exact ruff version for uvx, e.g. 0.16.7. Empty keeps the current
+          behaviour, where uvx resolves whatever the runner's uv cache holds
+          -- not reproducible, and it drifts silently in both directions.
+        type: string
+        default: ""
       lfs:
         description: Fetch Git LFS files
         type: boolean
@@ -125,15 +132,17 @@ jobs:
         if: inputs.python || inputs.python-tests
         env:
           RUFF_PATHS: ${{ inputs.ruff-paths }}
+          RUFF_VERSION: ${{ inputs.ruff-version }}
         run: |
           set -euo pipefail
           read -ra paths <<< "${RUFF_PATHS:-.}"
           if [[ ${#paths[@]} -eq 0 ]]; then
             paths=(.)
           fi
+          ruff_spec="ruff${RUFF_VERSION:+@${RUFF_VERSION}}"
           if [[ -f pyproject.toml || -f ruff.toml || -n "${RUFF_PATHS}" ]]; then
-            uvx ruff format --check "${paths[@]}"
-            uvx ruff check "${paths[@]}"
+            uvx "${ruff_spec}" format --check "${paths[@]}"
+            uvx "${ruff_spec}" check "${paths[@]}"
           fi
 
       - name: Host clippy

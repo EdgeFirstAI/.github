@@ -15,6 +15,12 @@ on:
       pytest-args:
         type: string
         default: -q
+      ruff-version:
+        description: >-
+          Exact ruff version for uvx, e.g. 0.16.7. Empty resolves whatever
+          the runner's uv cache holds.
+        type: string
+        default: ""
       extra-sync-args:
         type: string
         default: ""
@@ -50,9 +56,13 @@ jobs:
           extra-args: ${{ inputs.extra-sync-args }}
 
       - name: ruff
+        env:
+          RUFF_VERSION: ${{ inputs.ruff-version }}
         run: |
-          uvx ruff format --check .
-          uvx ruff check .
+          set -euo pipefail
+          ruff_spec="ruff${RUFF_VERSION:+@${RUFF_VERSION}}"
+          uvx "${ruff_spec}" format --check .
+          uvx "${ruff_spec}" check .
 
       - name: pytest
         run: uv run pytest ${{ inputs.pytest-args }}
