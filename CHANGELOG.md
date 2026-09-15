@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `nightly-gate` now applies its "has main moved" check to every trigger, not only `schedule`. A `workflow_dispatch` previously bypassed it silently, so re-dispatching a green nightly rebuilt the same commit and re-ran the board lane for no new information. A new `force` input opts back in to that deliberately. A nightly that *failed* still re-runs on an unchanged main without `force`, because the comparison is against the last **successful** run.
+
 - Runner policy is now per tier rather than a single cost-first ordering.
   Quick stays on free standard runners and never bills; Full and Release
   default to `larger`, which is what they were before this migration. Moving

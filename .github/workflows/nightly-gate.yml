@@ -2,6 +2,15 @@ name: nightly-gate
 
 on:
   workflow_call:
+    inputs:
+      force:
+        description: >-
+          Run even when main has not moved since the last successful nightly.
+          For deliberately re-running a green nightly; a failed one already
+          re-runs without this, because the last success is a different commit.
+        type: boolean
+        required: false
+        default: false
     outputs:
       run:
         description: true when nightly Full should run
@@ -21,13 +30,24 @@ jobs:
       - id: c
         env:
           GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force }}
         run: |
           set -euo pipefail
           wf="$(basename "${GITHUB_WORKFLOW_REF%@*}")"
+          # status=success on purpose. If the last nightly failed, its commit is
+          # not the last successful one, so an unchanged main still re-runs --
+          # which is what you want after fixing a lane rather than the code.
           last="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${wf}/runs?status=success&branch=main&per_page=1" --jq '.workflow_runs[0].head_sha // ""')"
-          if [[ "${GITHUB_EVENT_NAME}" == schedule && "$last" == "$GITHUB_SHA" ]]; then
+          if [[ "$FORCE" == "true" ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "forced (last=$last sha=$GITHUB_SHA)"
+          elif [[ "$last" == "$GITHUB_SHA" ]]; then
+            # Applies to every trigger, not just schedule. A manual dispatch
+            # used to bypass this silently, so re-dispatching a green nightly
+            # rebuilt the same commit and re-ran the board for no new
+            # information. Use `force` to say that deliberately.
             echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "main unchanged since last successful nightly ($last)"
+            echo "main unchanged since the last successful nightly ($last); pass force to override"
           else
             echo "run=true" >> "$GITHUB_OUTPUT"
             echo "nightly will run (last=$last sha=$GITHUB_SHA event=$GITHUB_EVENT_NAME)"
