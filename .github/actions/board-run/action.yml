@@ -157,17 +157,37 @@ runs:
         run_binary() {
           # $1 executable, $2 libtest substring filter (may be empty), $3 label
           local bin="$1" filter="$2" label="$3"
-          local name log rc line count
+          local name log rc tee_rc line count
+          local -a st
           name="$(basename "$bin")"
           log="$RESULTS_DIR/${name}${label:+-$label}.txt"
           echo "=== $name ${label:+($label)} ==="
-          rc=0
+          # PIPESTATUS must be read from the test pipeline itself. `|| true`
+          # is a pipeline of its own, so under `set -o pipefail` it runs
+          # whenever the test binary fails and resets PIPESTATUS to (0) --
+          # which silently turned every failing binary into a passing lane.
+          # errexit comes off around the pipeline instead, because a failing
+          # test binary is an expected outcome here, not a script error.
+          set +e
           if [[ -n "$filter" ]]; then
-            "$bin" "$filter" --test-threads=1 2>&1 | tee "$log" || true
+            "$bin" "$filter" --test-threads=1 2>&1 | tee "$log"
           else
-            "$bin" --test-threads=1 2>&1 | tee "$log" || true
+            "$bin" --test-threads=1 2>&1 | tee "$log"
           fi
-          rc=${PIPESTATUS[0]}
+          # One assignment: reading ${PIPESTATUS[0]} is itself a command, and
+          # that resets PIPESTATUS to a single element, so a second read for
+          # tee would be unbound under `set -u`.
+          st=( "${PIPESTATUS[@]}" )
+          set -e
+          rc=${st[0]}
+          tee_rc=${st[1]:-0}
+          # A board that has run out of disk fails the write, not the test,
+          # and the summary parse below would then read an empty log and
+          # report zero tests rather than a problem.
+          if [[ $tee_rc -ne 0 ]]; then
+            echo "::error::could not write $log (tee exit $tee_rc); the board may be out of disk"
+            FAILED=1
+          fi
 
           # "test result: ok. 12 passed; 0 failed; ..." -- sum the passed and
           # failed counts so a selection that matches nothing is visible.

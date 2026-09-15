@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `board-binaries` and `board-min-tests` on `rust-full`, and `binaries` / `min-tests` on the `board-run` action. `board-binaries` selects test binaries to run **directly, one process per binary**, given one per line as `<name-prefix>[=<filter>[,<filter>...]]` — a bare prefix runs the whole binary, filters run it once per filter as a libtest substring match. This is an alternative to `board-extra-args`, which routes the archive through nextest; callers that do not set `board-binaries` are unaffected. Use it for any board with a GPU. nextest runs one process per test, so each test pays a full driver init and teardown, and coverage instrumentation writes one profraw per process. Measured on an i.MX 8M Plus: 6 to 22 seconds per GL test and 307 profraw files totalling 2.8 GB, against 4.1 GB free, where whole-binary execution of the same selection is ~20 files and ~190 MB. Two behaviours come with it, both of which nextest's model cannot express: a non-zero exit is tolerated when the log shows a clean libtest summary with no failures, because the Vivante driver aborts while unloading its library after tests have passed; and `board-min-tests` fails the lane when fewer than that many tests ran, since a selection matching nothing otherwise reports success.
+
 - `pre-command` input on `rust-quick` and `rust-full` host/board jobs so callers
   can install OpenCV, fetch ANGLE, or merge LFS testdata after checkout. The
   command is passed through `env`, never interpolated into the script text.
@@ -37,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ubuntu-24.04-arm-xlarge` to match the hosted class.
 
 ### Fixed
+
+- The license policy self-test asserted case folding only on the allowed side. A case-sensitive compare does not mis-sort a lower-case blocked identifier, it fails to recognise it, so the expression falls through to `unknown` and is rejected for the wrong reason — and both outcomes read as a failure, so an ok/fail assertion could not tell them apart. It now asserts the classification rank for blocked and review identifiers across casings.
 
 - `board-run` passes `--workspace-remap`. A nextest archive records the
   workspace root it was built under, so one built on a hosted runner looked for

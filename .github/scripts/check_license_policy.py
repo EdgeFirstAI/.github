@@ -456,11 +456,29 @@ def run_self_test() -> int:
                 f"blocked list"
             )
 
+    # The review list needs the same treatment, and for the same reason the
+    # ok/fail cases cannot cover it: LGPL is rejected for a Rust project
+    # whether it classifies as RANK_REVIEW or falls through to RANK_UNKNOWN,
+    # so only the rank distinguishes "review list matched" from "identifier
+    # not recognised".
+    review_casings = (
+        "LGPL-2.1", "lgpl-2.1", "LgPl-2.1",
+        "LGPL-3.0", "lgpl-3.0",
+    )
+    for identifier in review_casings:
+        rank, _name = evaluate_expression(identifier)
+        if rank != RANK_REVIEW:
+            failures.append(
+                f"  {identifier!r}: expected RANK_REVIEW ({RANK_REVIEW}), "
+                f"got rank {rank} -- case folding is not reaching the "
+                f"review list"
+            )
+
     if failures:
         print("license policy self-test FAILED:")
         print("\n".join(failures))
         return 1
-    total = len(SELF_TEST_CASES) + 1 + len(blocked_casings)
+    total = len(SELF_TEST_CASES) + 1 + len(blocked_casings) + len(review_casings)
     print(f"license policy self-test passed ({total} cases)")
     return 0
 
