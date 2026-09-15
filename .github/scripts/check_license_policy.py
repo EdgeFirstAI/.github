@@ -375,6 +375,21 @@ SELF_TEST_CASES = [
     ("MIT", True, "ok"),
     ("MIT+", True, "ok"),
     ("mit or apache-2.0", True, "ok"),
+    # Case-insensitivity is asserted on the BLOCKED side, not only the allowed
+    # side. A case-sensitive compare does not merely mis-sort a lower-case
+    # blocked identifier -- it fails to recognise it at all, so `gpl-3.0`
+    # sailed past the blocked list while `GPL-3.0` was caught. cargo-cyclonedx
+    # and scancode both emit identifiers as the upstream metadata wrote them,
+    # so casing is never ours to assume. Every blocked family is pinned here
+    # in lower and mixed case.
+    ("gpl-3.0", True, "fail"),
+    ("GpL-3.0", True, "fail"),
+    ("gpl-2.0-only", True, "fail"),
+    ("mit and gpl-3.0", True, "fail"),
+    ("agpl-3.0", True, "fail"),
+    ("sspl-1.0", True, "fail"),
+    ("lgpl-2.1", True, "fail"),
+    ("apache-2.0 with llvm-exception", True, "ok"),
     # AND takes the worst operand: one blocked term poisons the whole grant.
     ("MIT AND GPL-3.0", True, "fail"),
     ("(MIT OR Apache-2.0) AND GPL-3.0", True, "fail"),
@@ -419,11 +434,34 @@ def run_self_test() -> int:
     if status != "fail":
         failures.append(f"  missing licence metadata: expected fail, got {status}")
 
+    # Case folding is asserted on the CLASSIFICATION, not only on pass/fail.
+    # A case-sensitive compare does not merely mis-sort a lower-case blocked
+    # identifier -- it fails to recognise it at all, so the expression falls
+    # through to "unknown", which also rejects the component. Both outcomes
+    # read as "fail", so an ok/fail assertion cannot tell a blocked licence
+    # from an unrecognised one, and the regression that let `gpl-3.0` past the
+    # blocked list would sail through this suite. Pin the rank instead.
+    blocked_casings = (
+        "GPL-3.0", "gpl-3.0", "GpL-3.0",
+        "GPL-2.0-only", "gpl-2.0-only",
+        "AGPL-3.0", "agpl-3.0",
+        "SSPL-1.0", "sspl-1.0",
+    )
+    for identifier in blocked_casings:
+        rank, _name = evaluate_expression(identifier)
+        if rank != RANK_BLOCKED:
+            failures.append(
+                f"  {identifier!r}: expected RANK_BLOCKED ({RANK_BLOCKED}), "
+                f"got rank {rank} -- case folding is not reaching the "
+                f"blocked list"
+            )
+
     if failures:
         print("license policy self-test FAILED:")
         print("\n".join(failures))
         return 1
-    print(f"license policy self-test passed ({len(SELF_TEST_CASES) + 1} cases)")
+    total = len(SELF_TEST_CASES) + 1 + len(blocked_casings)
+    print(f"license policy self-test passed ({total} cases)")
     return 0
 
 
