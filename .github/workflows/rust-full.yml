@@ -69,6 +69,16 @@ on:
         description: Board-only setup. Falls back to pre-command when empty.
         type: string
         default: ""
+      hack-args:
+        description: >-
+          Arguments for the nightly `cargo hack check` feature-combination
+          lane. `--locked` is always added. Set to an empty string to skip
+          the lane entirely. A crate with mutually exclusive features needs
+          `--exclude-no-default-features`, since the powerset otherwise
+          builds a combination the crate deliberately rejects with
+          `compile_error!`, which is a correct guard rather than a defect.
+        type: string
+        default: "--feature-powerset --depth 2"
       board-binaries:
         description: >-
           Newline-separated test binaries to run directly on the board, one per
@@ -781,7 +791,14 @@ jobs:
         with:
           tools: cargo-hack,cargo-audit
           cache-key: nightly-extras
-      - run: cargo hack check --feature-powerset --depth 2 --locked
+      - name: Feature combinations
+        if: inputs.hack-args != ''
+        env:
+          HACK_ARGS: ${{ inputs.hack-args }}
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2086  # HACK_ARGS is an argument list and must split
+          cargo hack check $HACK_ARGS --locked
       - run: cargo audit
 
   verify-version:
