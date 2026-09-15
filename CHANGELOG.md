@@ -40,6 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Board coverage merge looked for instrumented binaries in the profile root rather than `<profile>/deps`, so `cargo llvm-cov report` failed with "not found object files" once a board lane completed far enough to produce profraw. The artifact now unpacks into `debug/deps`, and a missing-objects case reports the artifact that did not arrive rather than llvm-cov’s opaque message.
+
 - The license policy self-test asserted case folding only on the allowed side. A case-sensitive compare does not mis-sort a lower-case blocked identifier, it fails to recognise it, so the expression falls through to `unknown` and is rejected for the wrong reason — and both outcomes read as a failure, so an ok/fail assertion could not tell them apart. It now asserts the classification rank for blocked and review identifiers across casings.
 
 - `board-run` passes `--workspace-remap`. A nextest archive records the

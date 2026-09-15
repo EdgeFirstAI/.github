@@ -691,7 +691,14 @@ jobs:
         continue-on-error: true
         with:
           name: rust-llvm-cov-aarch64
-          path: target/llvm-cov-target/debug
+          # deps/, not the profile root. cargo llvm-cov looks for instrumented
+          # test executables under <profile>/deps, which is where the collect
+          # step found them; unpacking the flat artifact into the profile root
+          # leaves them one level too high and the report fails with "not found
+          # object files". `report` defaults to the dev profile, so debug/ is
+          # the directory it will search whatever profile built the archive --
+          # it needs the objects, not a matching build.
+          path: target/llvm-cov-target/debug/deps
       - name: Merge profraw
         run: |
           set -euo pipefail
@@ -702,7 +709,18 @@ jobs:
             exit 1
           fi
           cp "${profs[@]}" target/llvm-cov-target/
+          echo "merged ${#profs[@]} board profraw files"
+          # The instrumented-binaries download is continue-on-error, so a miss
+          # here otherwise surfaces as llvm-cov's opaque "not found object
+          # files" rather than the artifact that did not arrive.
+          objs=$(find target/llvm-cov-target/debug/deps -maxdepth 1 -type f -perm -u+x 2>/dev/null | wc -l)
+          if [[ "$objs" -eq 0 ]]; then
+            echo "::error::no instrumented binaries in target/llvm-cov-target/debug/deps; the rust-llvm-cov-aarch64 artifact did not download"
+            exit 1
+          fi
+          echo "found $objs instrumented binaries to attribute against"
           cargo llvm-cov report --lcov --output-path coverage-hardware.lcov
+          echo "source files in report: $(grep -c '^SF:' coverage-hardware.lcov)"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: coverage-hardware
