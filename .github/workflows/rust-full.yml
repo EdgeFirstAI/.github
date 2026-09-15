@@ -69,6 +69,22 @@ on:
         description: Board-only setup. Falls back to pre-command when empty.
         type: string
         default: ""
+      board-binaries:
+        description: >-
+          Newline-separated test binaries to run directly on the board, one per
+          line as `<name-prefix>[=<filter>[,<filter>...]]`. Each binary runs in a
+          SINGLE process. nextest runs one process per test, and on a GPU board
+          each process pays a full driver init/teardown, which dominates both
+          runtime and the per-process profraw footprint. Prefer this over
+          board-extra-args for any board with a GPU.
+        type: string
+        default: ""
+      board-min-tests:
+        description: >-
+          Fail the board lane if fewer than this many tests ran. A selection
+          that matches nothing otherwise reports success.
+        type: string
+        default: "0"
       board-extra-args:
         description: Extra args for cargo nextest run on the board (e.g. -j 1). Not used for archive.
         type: string
@@ -640,6 +656,8 @@ jobs:
         with:
           command: ${{ inputs.board-command }}
           extra-args: ${{ inputs.board-extra-args }}
+          binaries: ${{ inputs.board-binaries }}
+          min-tests: ${{ inputs.board-min-tests }}
           archive-artifact: nextest-archive-aarch64
           profraw-artifact: coverage-hardware-${{ matrix.runner }}
 

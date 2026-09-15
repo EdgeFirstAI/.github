@@ -25,6 +25,23 @@ inputs:
     description: Extra arguments for cargo nextest run
     required: false
     default: ""
+  binaries:
+    description: >-
+      Newline-separated selection of test binaries to execute directly, one per
+      line as `<name-prefix>[=<filter>[,<filter>...]]`. A bare prefix runs the
+      whole binary; filters run it once per filter as a libtest substring match.
+      When set, the archive is only unpacked and each binary is run in a SINGLE
+      process, which is what a board needs: nextest runs one process per test,
+      and on a GPU board each process pays a full driver init/teardown. Leave
+      empty to run the archive through nextest instead.
+    required: false
+    default: ""
+  min-tests:
+    description: >-
+      Fail if fewer than this many tests were executed. Guards against a
+      selection that silently matches nothing, which otherwise reports success.
+    required: false
+    default: "0"
 runs:
   using: composite
   steps:
@@ -78,7 +95,141 @@ runs:
         echo "::error::no cargo-nextest on this runner and none shipped in $ARCHIVE_DIR"
         exit 1
 
+    # nextest runs ONE PROCESS PER TEST. On a board with a GPU driver that is
+    # the dominant cost and not a detail: each process pays a full EGL display
+    # init, context creation and teardown, measured at 6-22s per test on an
+    # i.MX 8M Plus, and coverage instrumentation writes one profraw per
+    # process -- 307 files totalling 2.8 GB on a board with 4.1 GB free, where
+    # the same coverage from whole-binary runs is ~20 files and ~190 MB.
+    # Running each binary once, as the pre-migration flow did, fixes the
+    # runtime and the disk footprint together.
+    - name: Run on-target tests (single process per binary)
+      if: inputs.command == '' && inputs.binaries != ''
+      shell: bash
+      env:
+        LLVM_PROFILE_FILE: ${{ github.workspace }}/${{ inputs.profraw-dir }}/board-%p-%m.profraw
+        ARCHIVE_FILE: ${{ inputs.archive-file }}
+        PROFRAW_DIR: ${{ inputs.profraw-dir }}
+        NEXTEST_BIN: ${{ steps.probe.outputs.runner }}
+        BINARIES: ${{ inputs.binaries }}
+        MIN_TESTS: ${{ inputs.min-tests }}
+        TMPDIR: ${{ github.workspace }}/board-tmp
+        TMP: ${{ github.workspace }}/board-tmp
+        TEMP: ${{ github.workspace }}/board-tmp
+        EXTRACT_DIR: ${{ github.workspace }}/board-extract
+        RESULTS_DIR: ${{ github.workspace }}/board-results
+      run: |
+        set -euo pipefail
+        mkdir -p "$PROFRAW_DIR" "$TMPDIR" "$RESULTS_DIR"
+        rm -rf "$EXTRACT_DIR"
+        mkdir -p "$EXTRACT_DIR"
+
+        archive="$(find board-archive -name "$(basename "$ARCHIVE_FILE")" | head -1)"
+        if [[ -z "$archive" ]]; then
+          archive="$(find board-archive -type f ! -name cargo-nextest | head -1)"
+        fi
+        if [[ -z "$archive" ]]; then
+          echo "error: nextest archive not found in board-archive/" >&2
+          exit 1
+        fi
+
+        # Use nextest purely as the unpacker. It is the only thing that knows
+        # the archive layout, and --workspace-remap fixes the build-host paths
+        # baked into the binaries. --list-type binaries-only does no work
+        # beyond enumerating, so this costs one process, not one per test.
+        echo "::group::Unpack archive"
+        "$NEXTEST_BIN" nextest list --archive-file "$archive" \
+          --extract-to "$EXTRACT_DIR" \
+          --workspace-remap "$GITHUB_WORKSPACE" \
+          --list-type binaries-only
+        echo "::endgroup::"
+
+        deps="$(find "$EXTRACT_DIR/target" -maxdepth 2 -type d -name deps | head -1)"
+        if [[ -z "$deps" ]]; then
+          echo "error: no target/*/deps directory in the extracted archive" >&2
+          exit 1
+        fi
+        echo "test binaries unpacked to $deps"
+
+        FAILED=0
+        TESTS_RUN=0
+
+        run_binary() {
+          # $1 executable, $2 libtest substring filter (may be empty), $3 label
+          local bin="$1" filter="$2" label="$3"
+          local name log rc line count
+          name="$(basename "$bin")"
+          log="$RESULTS_DIR/${name}${label:+-$label}.txt"
+          echo "=== $name ${label:+($label)} ==="
+          rc=0
+          if [[ -n "$filter" ]]; then
+            "$bin" "$filter" --test-threads=1 2>&1 | tee "$log" || true
+          else
+            "$bin" --test-threads=1 2>&1 | tee "$log" || true
+          fi
+          rc=${PIPESTATUS[0]}
+
+          # "test result: ok. 12 passed; 0 failed; ..." -- sum the passed and
+          # failed counts so a selection that matches nothing is visible.
+          line="$(grep -E '^test result:' "$log" | tail -1 || true)"
+          if [[ -n "$line" ]]; then
+            count="$(echo "$line" | sed -n 's/.* \([0-9]\+\) passed.*/\1/p')"
+            TESTS_RUN=$(( TESTS_RUN + ${count:-0} ))
+          fi
+
+          if [[ $rc -ne 0 ]]; then
+            # The Vivante driver SIGABRTs while unloading its library, after
+            # the test body has already passed. Whole-binary runs surface that
+            # as the binary's exit code, so a clean libtest summary with no
+            # failures is the signal that the abort was the teardown, not a
+            # test. nextest cannot make this distinction because it charges
+            # the abort to whichever test happened to be in that process.
+            if grep -q 'test result: ok' "$log" && ! grep -qE '^failures:|FAILED' "$log"; then
+              echo "::warning::$name ${label:+($label) }exited $rc after all tests passed (driver abort during unload)"
+            else
+              echo "::error::$name ${label:+($label) }failed with exit $rc"
+              FAILED=1
+            fi
+          fi
+        }
+
+        while IFS= read -r spec; do
+          spec="$(echo "$spec" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+          [[ -z "$spec" || "$spec" == \#* ]] && continue
+          prefix="${spec%%=*}"
+          filters=""
+          [[ "$spec" == *=* ]] && filters="${spec#*=}"
+
+          matched=0
+          for bin in "$deps/$prefix"-*; do
+            [[ -f "$bin" && -x "$bin" ]] || continue
+            case "$bin" in *.so|*.d|*.rlib|*.rmeta) continue ;; esac
+            matched=1
+            if [[ -z "$filters" ]]; then
+              run_binary "$bin" "" ""
+            else
+              IFS=',' read -ra fl <<< "$filters"
+              for f in "${fl[@]}"; do
+                run_binary "$bin" "$f" "$f"
+              done
+            fi
+          done
+          if [[ $matched -eq 0 ]]; then
+            echo "::error::no test binary matching '$prefix-*' in $deps"
+            FAILED=1
+          fi
+        done <<< "$BINARIES"
+
+        echo "executed $TESTS_RUN tests across the selected binaries"
+        if [[ "$MIN_TESTS" -gt 0 && "$TESTS_RUN" -lt "$MIN_TESTS" ]]; then
+          echo "::error::only $TESTS_RUN tests ran, expected at least $MIN_TESTS -- the selection matched less than intended"
+          FAILED=1
+        fi
+        echo "profraw written: $(find "$PROFRAW_DIR" -name '*.profraw' | wc -l)"
+        exit $FAILED
+
     - name: Run on-target tests
+      if: inputs.command != '' || inputs.binaries == ''
       shell: bash
       env:
         LLVM_PROFILE_FILE: ${{ github.workspace }}/${{ inputs.profraw-dir }}/board-%p-%m.profraw
@@ -136,4 +287,4 @@ runs:
       if: always()
       shell: bash
       run: |
-        rm -rf board-archive board-extract board-tmp "${{ inputs.profraw-dir }}" || true
+        rm -rf board-archive board-extract board-tmp board-results "${{ inputs.profraw-dir }}" || true
