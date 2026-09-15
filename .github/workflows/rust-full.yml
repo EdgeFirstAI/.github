@@ -61,10 +61,29 @@ on:
       scancode:
         type: boolean
         default: true
-      shared-sha:
-        description: 40-char commit SHA of EdgeFirstAI/.github; must match the uses pin
+      pre-command:
+        description: Caller setup (OpenCV, ANGLE, testdata). Passed through env, never interpolated.
         type: string
-        required: true
+        default: ""
+      board-pre-command:
+        description: Board-only setup. Falls back to pre-command when empty.
+        type: string
+        default: ""
+      board-extra-args:
+        description: Extra args for cargo nextest run on the board (e.g. -j 1). Not used for archive.
+        type: string
+        default: ""
+      archive-args:
+        description: Args for cargo nextest archive. Empty uses nextest-args (do not put -j 1 here).
+        type: string
+        default: ""
+      archive-profile:
+        description: >-
+          Cargo profile for the on-target archive. A board has a small eMMC, so
+          the default dev profile's full debug info can exhaust it. Set a
+          release-like profile with debug = "line-tables-only".
+        type: string
+        default: ""
     secrets:
       SONAR_TOKEN:
         required: false
@@ -124,10 +143,13 @@ jobs:
                 esac
                 ;;
               larger)
+                # 24.04 to match the hosted class; the org provisions both.
                 case "$kind" in
-                  linux) echo '"ubuntu-22.04-xlarge"' ;;
-                  linux-arm) echo '"ubuntu-22.04-arm-xlarge"' ;;
+                  linux) echo '"ubuntu-24.04-xlarge"' ;;
+                  linux-arm) echo '"ubuntu-24.04-arm-xlarge"' ;;
                   macos) echo '"macos-latest-xlarge"' ;;
+                  # Requires an org-provisioned Windows larger runner; without
+                  # one this label queues until the job times out.
                   windows) echo '"windows-latest-8-cores"' ;;
                 esac
                 ;;
@@ -201,6 +223,23 @@ jobs:
     permissions:
       contents: read
     steps:
+      # Org-provisioned larger runner images are more minimal than GitHub's
+      # standard ones: ubuntu-24.04-arm-xlarge ships without git-lfs, so an
+      # lfs checkout fails before any repo code exists to fix it. Install it
+      # before the checkout rather than pinning the lane back to a standard
+      # runner. Linux only; the hosted macOS and Windows images include it.
+      - name: Ensure git-lfs
+        if: ${{ inputs.lfs && runner.os == 'Linux' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v git-lfs >/dev/null 2>&1; then
+            exit 0
+          fi
+          echo "::notice::git-lfs missing on this runner image; installing"
+          sudo apt-get update
+          sudo apt-get install -y git-lfs
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           lfs: ${{ inputs.lfs }}
@@ -208,10 +247,23 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          repository: EdgeFirstAI/.github
-          ref: ${{ inputs.shared-sha }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: .ef-ci
           persist-credentials: false
+
+      - name: Caller pre-command
+        if: ${{ inputs.pre-command != '' }}
+        env:
+          PRE_COMMAND: ${{ inputs.pre-command }}
+          # Contract: pre-command scripts may rely on GH_TOKEN / GITHUB_TOKEN
+          # for gh and API calls (release asset downloads, etc). Nothing else
+          # is guaranteed beyond the default runner environment.
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
 
       - uses: ./.ef-ci/.github/actions/setup-rust
         with:
@@ -219,12 +271,16 @@ jobs:
           tools: nextest,cargo-llvm-cov
           cache-key: full-x86_64
 
+      # Select the nextest profile up front. A `|| retry` here re-ran the
+      # entire suite on a genuine test failure, doubling wall-clock before
+      # reporting it.
       - name: Tests with coverage
+        env:
+          PROFILE_ARG: ${{ hashFiles('.config/nextest.toml') != '' && '--profile ci' || '' }}
         run: |
+          # shellcheck disable=SC2086  # PROFILE_ARG carries "--profile ci" and must split
           cargo llvm-cov nextest --lcov --output-path coverage-linux.lcov \
-            ${{ inputs.nextest-args }} --profile ci || \
-          cargo llvm-cov nextest --lcov --output-path coverage-linux.lcov \
-            ${{ inputs.nextest-args }}
+            ${{ inputs.nextest-args }} $PROFILE_ARG
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
@@ -242,6 +298,23 @@ jobs:
     permissions:
       contents: read
     steps:
+      # Org-provisioned larger runner images are more minimal than GitHub's
+      # standard ones: ubuntu-24.04-arm-xlarge ships without git-lfs, so an
+      # lfs checkout fails before any repo code exists to fix it. Install it
+      # before the checkout rather than pinning the lane back to a standard
+      # runner. Linux only; the hosted macOS and Windows images include it.
+      - name: Ensure git-lfs
+        if: ${{ inputs.lfs && runner.os == 'Linux' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v git-lfs >/dev/null 2>&1; then
+            exit 0
+          fi
+          echo "::notice::git-lfs missing on this runner image; installing"
+          sudo apt-get update
+          sudo apt-get install -y git-lfs
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           lfs: ${{ inputs.lfs }}
@@ -249,10 +322,32 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          repository: EdgeFirstAI/.github
-          ref: ${{ inputs.shared-sha }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: .ef-ci
           persist-credentials: false
+
+      - name: Caller pre-command
+        if: ${{ inputs.pre-command != '' }}
+        env:
+          PRE_COMMAND: ${{ inputs.pre-command }}
+          # Contract: pre-command scripts may rely on GH_TOKEN / GITHUB_TOKEN
+          # for gh and API calls (release asset downloads, etc). Nothing else
+          # is guaranteed beyond the default runner environment.
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
+
+      - name: Upload merged testdata
+        if: needs.setup.outputs.do_hardware == 'true' && inputs.lfs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: ci-testdata
+          path: testdata/
+          if-no-files-found: error
+          retention-days: 1
 
       - uses: ./.ef-ci/.github/actions/setup-rust
         with:
@@ -280,23 +375,83 @@ jobs:
           CARGO_TARGET_DIR: target/llvm-cov-target
           RUSTFLAGS: "-C instrument-coverage"
           LLVM_PROFILE_FILE: "%p-%m.profraw"
+          ARCHIVE_ARGS: ${{ inputs.archive-args }}
+          NEXTEST_ARGS: ${{ inputs.nextest-args }}
+          ARCHIVE_PROFILE: ${{ inputs.archive-profile }}
         run: |
-          cargo nextest archive --archive-file nextest-archive.tar.zst ${{ inputs.nextest-args }}
+          set -euo pipefail
+          args="${ARCHIVE_ARGS:-$NEXTEST_ARGS}"
+          profile_arg=""
+          if [[ -n "$ARCHIVE_PROFILE" ]]; then
+            profile_arg="--cargo-profile $ARCHIVE_PROFILE"
+          fi
+          # shellcheck disable=SC2086  # both are cargo argument lists and must split
+          cargo nextest archive --archive-file nextest-archive.tar.zst $profile_arg $args
           test -d target/llvm-cov-target
+          ls -lh nextest-archive.tar.zst
+
+      # Boards run tests, never builds, so they have no cargo and no way to
+      # fetch one: install-action needs jq, curl and a recognised distro, and
+      # a Yocto board has none of them. Ship a statically linked aarch64
+      # nextest next to the archive so the board can execute it directly.
+      - name: Stage a static nextest for the board
+        if: needs.setup.outputs.do_hardware == 'true'
+        env:
+          NEXTEST_URL: https://get.nexte.st/latest/linux-arm-musl
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 5 --retry-connrefused -o nextest.tar.gz "$NEXTEST_URL"
+          tar xzf nextest.tar.gz cargo-nextest
+          chmod +x cargo-nextest
+          # Ships with debug_info; the board has no use for it and little room.
+          strip cargo-nextest || llvm-strip cargo-nextest || true
+          ls -lh cargo-nextest
+          rm -f nextest.tar.gz
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         if: needs.setup.outputs.do_hardware == 'true'
         with:
           name: nextest-archive-aarch64
-          path: nextest-archive.tar.zst
+          path: |
+            nextest-archive.tar.zst
+            cargo-nextest
           if-no-files-found: error
           retention-days: 1
+
+      # cargo llvm-cov report only needs the instrumented test binaries to
+      # resolve counters, not the whole target tree. Uploading the tree was
+      # the bulk of the ~2 GB per run this tier used to move.
+      - name: Collect instrumented binaries
+        if: needs.setup.outputs.do_hardware == 'true'
+        env:
+          ARCHIVE_PROFILE: ${{ inputs.archive-profile }}
+        run: |
+          set -euo pipefail
+          mkdir -p llvm-cov-binaries
+          # Cargo writes the dev profile to debug/; a named profile uses its
+          # own directory. The instrumented test executables cargo llvm-cov
+          # report needs live in <profile>/deps, not directly in <profile>.
+          profile_dir="${ARCHIVE_PROFILE:-debug}"
+          [[ "$profile_dir" == "dev" ]] && profile_dir=debug
+          find "target/llvm-cov-target/$profile_dir" -maxdepth 2 -type f -perm -u+x \
+            ! -name '*.d' ! -name '*.rlib' ! -name '*.rmeta' \
+            ! -name '*.so' ! -name '*.dylib' ! -name '*.a' \
+            -exec cp -t llvm-cov-binaries {} +
+          count="$(find llvm-cov-binaries -type f | wc -l)"
+          if [[ "$count" -eq 0 ]]; then
+            echo "::error::collected no instrumented binaries; board coverage would be empty"
+            echo "target/llvm-cov-target tree:"
+            find target/llvm-cov-target -maxdepth 2 | head -40
+            exit 1
+          fi
+          echo "collected $count instrumented binaries"
+          du -sh llvm-cov-binaries
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         if: needs.setup.outputs.do_hardware == 'true'
         with:
           name: rust-llvm-cov-aarch64
-          path: target/llvm-cov-target
+          path: llvm-cov-binaries
           if-no-files-found: error
           retention-days: 1
 
@@ -309,6 +464,23 @@ jobs:
     permissions:
       contents: read
     steps:
+      # Org-provisioned larger runner images are more minimal than GitHub's
+      # standard ones: ubuntu-24.04-arm-xlarge ships without git-lfs, so an
+      # lfs checkout fails before any repo code exists to fix it. Install it
+      # before the checkout rather than pinning the lane back to a standard
+      # runner. Linux only; the hosted macOS and Windows images include it.
+      - name: Ensure git-lfs
+        if: ${{ inputs.lfs && runner.os == 'Linux' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v git-lfs >/dev/null 2>&1; then
+            exit 0
+          fi
+          echo "::notice::git-lfs missing on this runner image; installing"
+          sudo apt-get update
+          sudo apt-get install -y git-lfs
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           lfs: ${{ inputs.lfs }}
@@ -316,10 +488,23 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          repository: EdgeFirstAI/.github
-          ref: ${{ inputs.shared-sha }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: .ef-ci
           persist-credentials: false
+
+      - name: Caller pre-command
+        if: ${{ inputs.pre-command != '' }}
+        env:
+          PRE_COMMAND: ${{ inputs.pre-command }}
+          # Contract: pre-command scripts may rely on GH_TOKEN / GITHUB_TOKEN
+          # for gh and API calls (release asset downloads, etc). Nothing else
+          # is guaranteed beyond the default runner environment.
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
 
       - uses: ./.ef-ci/.github/actions/setup-rust
         with:
@@ -345,6 +530,23 @@ jobs:
     permissions:
       contents: read
     steps:
+      # Org-provisioned larger runner images are more minimal than GitHub's
+      # standard ones: ubuntu-24.04-arm-xlarge ships without git-lfs, so an
+      # lfs checkout fails before any repo code exists to fix it. Install it
+      # before the checkout rather than pinning the lane back to a standard
+      # runner. Linux only; the hosted macOS and Windows images include it.
+      - name: Ensure git-lfs
+        if: ${{ inputs.lfs && runner.os == 'Linux' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v git-lfs >/dev/null 2>&1; then
+            exit 0
+          fi
+          echo "::notice::git-lfs missing on this runner image; installing"
+          sudo apt-get update
+          sudo apt-get install -y git-lfs
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           lfs: ${{ inputs.lfs }}
@@ -352,10 +554,24 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          repository: EdgeFirstAI/.github
-          ref: ${{ inputs.shared-sha }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: .ef-ci
           persist-credentials: false
+
+      - name: Caller pre-command
+        if: ${{ inputs.pre-command != '' }}
+        env:
+          PRE_COMMAND: ${{ inputs.pre-command }}
+          # Contract: pre-command scripts may rely on GH_TOKEN / GITHUB_TOKEN
+          # for gh and API calls (release asset downloads, etc). Nothing else
+          # is guaranteed beyond the default runner environment.
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
 
       - uses: ./.ef-ci/.github/actions/setup-rust
         with:
@@ -395,14 +611,35 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          repository: EdgeFirstAI/.github
-          ref: ${{ inputs.shared-sha }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: .ef-ci
           persist-credentials: false
+
+      - name: Caller pre-command
+        if: ${{ inputs.board-pre-command != '' || inputs.pre-command != '' }}
+        env:
+          PRE_COMMAND: ${{ inputs.board-pre-command != '' && inputs.board-pre-command || inputs.pre-command }}
+          # Contract: pre-command scripts may rely on GH_TOKEN / GITHUB_TOKEN
+          # for gh and API calls (release asset downloads, etc). Nothing else
+          # is guaranteed beyond the default runner environment.
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
+
+      - name: Download merged testdata
+        if: ${{ inputs.lfs }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: ci-testdata
+          path: testdata/
 
       - uses: ./.ef-ci/.github/actions/board-run
         with:
           command: ${{ inputs.board-command }}
+          extra-args: ${{ inputs.board-extra-args }}
           archive-artifact: nextest-archive-aarch64
           profraw-artifact: coverage-hardware-${{ matrix.runner }}
 
@@ -418,8 +655,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          repository: EdgeFirstAI/.github
-          ref: ${{ inputs.shared-sha }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: .ef-ci
           persist-credentials: false
       - uses: ./.ef-ci/.github/actions/setup-rust
@@ -436,7 +673,7 @@ jobs:
         continue-on-error: true
         with:
           name: rust-llvm-cov-aarch64
-          path: target/llvm-cov-target
+          path: target/llvm-cov-target/debug
       - name: Merge profraw
         run: |
           set -euo pipefail
@@ -464,7 +701,6 @@ jobs:
       mode: full
       project-name: ${{ inputs.project-name }}
       timeout-minutes: 20
-      shared-sha: ${{ inputs.shared-sha }}
 
   nightly-extra:
     name: Nightly extras
@@ -478,10 +714,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          repository: EdgeFirstAI/.github
-          ref: ${{ inputs.shared-sha }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: .ef-ci
           persist-credentials: false
+      - name: Caller pre-command
+        if: ${{ inputs.pre-command != '' }}
+        env:
+          PRE_COMMAND: ${{ inputs.pre-command }}
+          # Contract: pre-command scripts may rely on GH_TOKEN / GITHUB_TOKEN
+          # for gh and API calls (release asset downloads, etc). Nothing else
+          # is guaranteed beyond the default runner environment.
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
       - uses: ./.ef-ci/.github/actions/setup-rust
         with:
           tools: cargo-hack,cargo-audit
@@ -554,3 +802,6 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: >-
+            "-Dsonar.rust.lcov.reportPaths=coverage/lcov.info"

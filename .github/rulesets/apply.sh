@@ -2,9 +2,13 @@
 #
 # Requires: gh auth refresh -h github.com -s admin:org
 #
-# Target list in protect-main*.json starts as .github + ci-foundation-scratch.
-# Add product repositories as they grow a ci-gate job. Do not apply ci-gate
-# to the whole org until those repos have the check.
+# Target list in protect-main*.json grows one repository at a time, as each
+# one gains a ci-gate job. Do not apply ci-gate to the whole org until every
+# repository has the check. Current: .github, ci-foundation-scratch, hal.
+#
+# A repository listed here must have its own hand-made protect-main and
+# protect-release-tags rulesets deleted, or the two layers both apply and no
+# single file is the source of truth. See the EDGEAI-1554 close-out.
 # protect-release-tags stays ~ALL so v* tags cannot be created by hand in any
 # repo. That is independent of the ci-gate rollout.
 #
@@ -19,14 +23,18 @@ set -euo pipefail
 ORG="${ORG:-EdgeFirstAI}"
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 
+# gh --jq is used throughout rather than a standalone jq binary, which is not
+# present on a stock Git Bash and made this script unrunnable on Windows.
 for spec in protect-main.json protect-main-ci.json protect-release-tags.json; do
-  name="$(jq -r .name "$ROOT/$spec")"
-  existing="$(gh api "orgs/${ORG}/rulesets" --jq ".[] | select(.name==\"${name}\") | .id" || true)"
+  name="${spec%.json}"
+  existing="$(gh api "orgs/${ORG}/rulesets" --jq ".[] | select(.name==\"${name}\") | .id" | head -1 || true)"
   if [[ -n "$existing" ]]; then
     echo "updating ruleset $name ($existing)"
-    gh api --method PUT "orgs/${ORG}/rulesets/${existing}" --input "$ROOT/$spec"
+    # Response body is discarded: gh api emits no trailing newline, which ran
+    # the JSON into the next iteration's message. Errors still reach stderr.
+    gh api --method PUT "orgs/${ORG}/rulesets/${existing}" --input "$ROOT/$spec" > /dev/null
   else
     echo "creating ruleset $name"
-    gh api --method POST "orgs/${ORG}/rulesets" --input "$ROOT/$spec"
+    gh api --method POST "orgs/${ORG}/rulesets" --input "$ROOT/$spec" > /dev/null
   fi
 done

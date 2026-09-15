@@ -4,9 +4,17 @@ on:
   workflow_call:
     inputs:
       python:
-        description: Run ruff and pytest (maturin develop when pyproject.toml exists)
+        description: Run ruff format/check (lint only)
         type: boolean
         default: false
+      python-tests:
+        description: Also run maturin develop + pytest. Implies python.
+        type: boolean
+        default: false
+      ruff-paths:
+        description: Paths for ruff. Empty lints the repository root.
+        type: string
+        default: ""
       lfs:
         description: Fetch Git LFS files
         type: boolean
@@ -39,10 +47,10 @@ on:
       cache-key:
         type: string
         default: quick-x86_64
-      shared-sha:
-        description: 40-char commit SHA of EdgeFirstAI/.github; must match the uses pin
+      pre-command:
+        description: Caller setup (OpenCV, ANGLE, testdata). Passed through env, never interpolated.
         type: string
-        required: true
+        default: ""
 
 jobs:
   quick:
@@ -52,6 +60,20 @@ jobs:
     permissions:
       contents: read
     steps:
+      # Some org-provisioned larger runner images ship without git-lfs, and an
+      # lfs checkout fails before any repo code exists to fix it.
+      - name: Ensure git-lfs
+        if: ${{ inputs.lfs && runner.os == 'Linux' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v git-lfs >/dev/null 2>&1; then
+            exit 0
+          fi
+          echo "::notice::git-lfs missing on this runner image; installing"
+          sudo apt-get update
+          sudo apt-get install -y git-lfs
+
       - name: Checkout caller
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -61,10 +83,23 @@ jobs:
       - name: Checkout shared CI
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          repository: EdgeFirstAI/.github
-          ref: ${{ inputs.shared-sha }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: .ef-ci
           persist-credentials: false
+
+      - name: Caller pre-command
+        if: ${{ inputs.pre-command != '' }}
+        env:
+          PRE_COMMAND: ${{ inputs.pre-command }}
+          # Contract: pre-command scripts may rely on GH_TOKEN / GITHUB_TOKEN
+          # for gh and API calls (release asset downloads, etc). Nothing else
+          # is guaranteed beyond the default runner environment.
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
 
       - name: Setup Rust
         uses: ./.ef-ci/.github/actions/setup-rust
@@ -78,15 +113,27 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Setup Python / ruff
-        if: inputs.python
+        if: inputs.python || inputs.python-tests
         uses: ./.ef-ci/.github/actions/setup-python-uv
+        with:
+          # Lint needs no project environment: uvx fetches ruff on its own.
+          # Syncing would build the caller's package (maturin for binding
+          # crates), which is Full-tier work and fails in a lint-only job.
+          sync: ${{ inputs.python-tests }}
 
       - name: ruff
-        if: inputs.python
+        if: inputs.python || inputs.python-tests
+        env:
+          RUFF_PATHS: ${{ inputs.ruff-paths }}
         run: |
-          if [[ -f pyproject.toml || -f ruff.toml ]]; then
-            uvx ruff format --check .
-            uvx ruff check .
+          set -euo pipefail
+          read -ra paths <<< "${RUFF_PATHS:-.}"
+          if [[ ${#paths[@]} -eq 0 ]]; then
+            paths=(.)
+          fi
+          if [[ -f pyproject.toml || -f ruff.toml || -n "${RUFF_PATHS}" ]]; then
+            uvx ruff format --check "${paths[@]}"
+            uvx ruff check "${paths[@]}"
           fi
 
       - name: Host clippy
@@ -112,7 +159,7 @@ jobs:
         run: cargo nextest run ${{ inputs.nextest-args }}
 
       - name: Python bindings tests
-        if: inputs.python
+        if: inputs.python-tests
         run: |
           if [[ -f pyproject.toml ]]; then
             uv pip install maturin pytest

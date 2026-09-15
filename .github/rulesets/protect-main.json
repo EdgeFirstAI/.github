@@ -15,7 +15,7 @@
       "exclude": []
     },
     "repository_name": {
-      "include": [".github", "ci-foundation-scratch"],
+      "include": [".github", "ci-foundation-scratch", "hal"],
       "exclude": []
     }
   },

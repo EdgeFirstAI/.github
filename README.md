@@ -31,13 +31,16 @@ The organisation profile README lives in [`profile/`](profile/README.md).
 
 ```yaml
 uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@eec0cb31b6576a47735099b91e39a9bdb5fbde3a
-  with:
-  shared-sha: eec0cb31b6576a47735099b91e39a9bdb5fbde3a
 ```
 
-The `uses:` pin and `shared-sha` must be the same commit. `github.workflow_sha`
-is not a git object. Dependabot bumps both. CI rejects tag refs such as
-`@v1.0.0`.
+The `uses:` pin is the only place the shared commit appears, and Dependabot
+bumps it. CI rejects tag refs such as `@v1.0.0`.
+
+Internally each shared workflow checks itself out to reach its composite
+actions, using `job.workflow_repository` and `job.workflow_sha` — the repository
+and commit of the workflow file that defines the running job. Note that
+`github.workflow_sha` is the *caller's* commit and is not a git object in this
+repository; `job.workflow_sha` is the one that resolves here.
 
 ## Tiers and labels
 

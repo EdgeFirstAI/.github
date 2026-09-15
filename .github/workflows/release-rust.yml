@@ -31,10 +31,6 @@ on:
       changelog:
         type: string
         default: CHANGELOG.md
-      shared-sha:
-        description: 40-char commit SHA of EdgeFirstAI/.github; must match the uses pin
-        type: string
-        required: true
     secrets:
       SONAR_TOKEN:
         required: false
@@ -97,7 +93,6 @@ jobs:
       mode: full
       project-name: ${{ inputs.project-name }}
       timeout-minutes: 20
-      shared-sha: ${{ inputs.shared-sha }}
 
   wheels:
     name: Build wheels
@@ -123,8 +118,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          repository: EdgeFirstAI/.github
-          ref: ${{ inputs.shared-sha }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: .ef-ci
           persist-credentials: false
       - uses: ./.ef-ci/.github/actions/setup-python-uv
@@ -156,8 +151,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          repository: EdgeFirstAI/.github
-          ref: ${{ inputs.shared-sha }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: .ef-ci
           persist-credentials: false
       - uses: ./.ef-ci/.github/actions/setup-rust
@@ -198,8 +193,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          repository: EdgeFirstAI/.github
-          ref: ${{ inputs.shared-sha }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: .ef-ci
           persist-credentials: false
       - uses: ./.ef-ci/.github/actions/setup-rust
