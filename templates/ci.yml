@@ -1,5 +1,13 @@
 # Caller skeleton — copy into the product repository as .github/workflows/ci.yml
-# Pin every uses: to a 40-char EdgeFirstAI/.github commit. Dependabot bumps them.
+# Replace the all-zero placeholder in every EdgeFirstAI/.github `uses:` with
+# the commit you intend to pin, then let Dependabot bump it. Third-party
+# actions below are pinned for real and can be copied as-is.
+#
+# The placeholder is deliberate. A real SHA here goes stale the moment the
+# shared repository moves, and a stale one is worse than an obviously invalid
+# one: it resolves, so a copied skeleton silently runs old CI, or forwards an
+# input the pinned revision does not declare. An unresolvable ref fails
+# immediately and says what to fix.
 
 name: CI
 
@@ -73,7 +81,7 @@ jobs:
   quick:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@eec0cb31b6576a47735099b91e39a9bdb5fbde3a
+    uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@0000000000000000000000000000000000000000
     with:
       python: false
       # Optional: caller setup after checkout (OpenCV, ANGLE, testdata).
@@ -83,7 +91,7 @@ jobs:
   full:
     needs: changes
     if: needs.changes.outputs.full == 'true' || needs.changes.outputs.hardware == 'true'
-    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@eec0cb31b6576a47735099b91e39a9bdb5fbde3a
+    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@0000000000000000000000000000000000000000
     with:
       lanes: ${{ needs.changes.outputs.full == 'true' && 'all' || 'hardware' }}
       boards: nxp-imx8mp-latest

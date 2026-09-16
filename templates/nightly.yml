@@ -1,9 +1,13 @@
-# Caller skeleton — pin every uses: to a 40-char EdgeFirstAI/.github commit.
+# Caller skeleton — copy into the product repository as .github/workflows/nightly.yml
+# Replace the all-zero placeholder in every EdgeFirstAI/.github `uses:` with
+# the commit you intend to pin, then let Dependabot bump it. Third-party
+# actions below are pinned for real and can be copied as-is.
 #
-# The pins below are placeholders and are not kept current. Replace them
-# with one commit that contains every workflow referenced here: the SHA-pin
-# lint checks the shape of a pin, not that the file exists at it, so a pin
-# predating advisories.yml fails at run time with a 404 rather than at lint.
+# The placeholder is deliberate. A real SHA here goes stale the moment the
+# shared repository moves, and a stale one is worse than an obviously invalid
+# one: it resolves, so a copied skeleton silently runs old CI, or forwards an
+# input the pinned revision does not declare. An unresolvable ref fails
+# immediately and says what to fix.
 
 name: Nightly
 
@@ -20,7 +24,7 @@ on:
 
 jobs:
   changed:
-    uses: EdgeFirstAI/.github/.github/workflows/nightly-gate.yml@eec0cb31b6576a47735099b91e39a9bdb5fbde3a
+    uses: EdgeFirstAI/.github/.github/workflows/nightly-gate.yml@0000000000000000000000000000000000000000
     with:
       # `inputs` is null on a schedule trigger, so the fallback is required;
       # without it the expression yields an empty string and the gate's
@@ -33,12 +37,12 @@ jobs:
   # Cargo.lock without building, on a free standard runner, so running it
   # every night costs nothing.
   advisories:
-    uses: EdgeFirstAI/.github/.github/workflows/advisories.yml@eec0cb31b6576a47735099b91e39a9bdb5fbde3a
+    uses: EdgeFirstAI/.github/.github/workflows/advisories.yml@0000000000000000000000000000000000000000
 
   nightly:
     needs: changed
     if: needs.changed.outputs.run == 'true'
-    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@eec0cb31b6576a47735099b91e39a9bdb5fbde3a
+    uses: EdgeFirstAI/.github/.github/workflows/rust-full.yml@0000000000000000000000000000000000000000
     with:
       lanes: all
       nightly: true
