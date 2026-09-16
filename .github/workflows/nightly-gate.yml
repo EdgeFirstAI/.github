@@ -5,9 +5,9 @@ on:
     inputs:
       force:
         description: >-
-          Run even when main has not moved since the last successful nightly.
-          For deliberately re-running a green nightly; a failed one already
-          re-runs without this, because the last success is a different commit.
+          Run even when main has not moved since the last nightly. This is the
+          only way to re-run on an unchanged commit, so it is also how you
+          re-try after fixing a lane rather than the code.
         type: boolean
         required: false
         default: false
@@ -34,20 +34,26 @@ jobs:
         run: |
           set -euo pipefail
           wf="$(basename "${GITHUB_WORKFLOW_REF%@*}")"
-          # status=success on purpose. If the last nightly failed, its commit is
-          # not the last successful one, so an unchanged main still re-runs --
-          # which is what you want after fixing a lane rather than the code.
-          last="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${wf}/runs?status=success&branch=main&per_page=1" --jq '.workflow_runs[0].head_sha // ""')"
+          # status=completed, not status=success. The question this gate asks
+          # is "has main moved since we last looked", and a failed run looked.
+          # Filtering on success instead makes the gate useless in exactly the
+          # repository that needs it: hal's last green nightly on main was
+          # 2025-12-08, so every comparison since has been against a
+          # nine-month-old commit and the gate has never once skipped.
+          # Re-running an unchanged commit after fixing a lane is what `force`
+          # is for -- an explicit request, not an accident of run history.
+          # completed excludes the current in-progress run.
+          last="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${wf}/runs?status=completed&branch=main&per_page=1" --jq '.workflow_runs[0].head_sha // ""')"
           if [[ "$FORCE" == "true" ]]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
             echo "forced (last=$last sha=$GITHUB_SHA)"
           elif [[ "$last" == "$GITHUB_SHA" ]]; then
             # Applies to every trigger, not just schedule. A manual dispatch
-            # used to bypass this silently, so re-dispatching a green nightly
-            # rebuilt the same commit and re-ran the board for no new
-            # information. Use `force` to say that deliberately.
+            # used to bypass this silently, so re-dispatching a nightly
+            # rebuilt the same commit and re-ran the board -- the slowest and
+            # only hardware-bound lane -- for no new information.
             echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "main unchanged since the last successful nightly ($last); pass force to override"
+            echo "main unchanged since the last nightly ($last); pass force to override"
           else
             echo "run=true" >> "$GITHUB_OUTPUT"
             echo "nightly will run (last=$last sha=$GITHUB_SHA event=$GITHUB_EVENT_NAME)"

@@ -41,7 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `nightly-gate` now applies its "has main moved" check to every trigger, not only `schedule`. A `workflow_dispatch` previously bypassed it silently, so re-dispatching a green nightly rebuilt the same commit and re-ran the board lane for no new information. A new `force` input opts back in to that deliberately. A nightly that *failed* still re-runs on an unchanged main without `force`, because the comparison is against the last **successful** run.
+- `nightly-gate` now actually skips. Two things stopped it. It only applied its "has main moved" check on `schedule`, so a `workflow_dispatch` bypassed it silently and re-dispatching a nightly rebuilt the same commit, re-running the board -- the slowest and only hardware-bound lane -- for no new information. And it compared against the last **successful** run, which in a repository whose nightly is not consistently green means comparing against an arbitrarily old commit: hal's last green nightly on main was 2025-12-08, so the gate had not skipped once in nine months. The check now applies to every trigger and compares against the last **completed** run, of any conclusion.
+
+  A new `force` input runs anyway. It is the only way to re-run an unchanged commit, which makes it the way to re-try after fixing a lane rather than the code. Callers that do not pass it get `false`. `templates/nightly.yml` forwards it as `${{ inputs.force || false }}` -- the fallback is required, because `inputs` is null on a schedule trigger.
 
 - Runner policy is now per tier rather than a single cost-first ordering.
   Quick stays on free standard runners and never bills; Full and Release

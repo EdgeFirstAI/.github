@@ -6,10 +6,21 @@ on:
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
+    inputs:
+      force:
+        description: Run even if main has not moved since the last nightly.
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   changed:
     uses: EdgeFirstAI/.github/.github/workflows/nightly-gate.yml@eec0cb31b6576a47735099b91e39a9bdb5fbde3a
+    with:
+      # `inputs` is null on a schedule trigger, so the fallback is required;
+      # without it the expression yields an empty string and the gate's
+      # boolean input rejects it.
+      force: ${{ inputs.force || false }}
 
   nightly:
     needs: changed
