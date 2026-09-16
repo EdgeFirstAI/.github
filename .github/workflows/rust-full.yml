@@ -760,9 +760,13 @@ jobs:
       timeout-minutes: 20
 
   nightly-extra:
-    name: Nightly extras
+    name: Feature combinations
     needs: setup
-    if: ${{ inputs.nightly }}
+    # cargo audit used to live here too, which is why this was called "extras".
+    # It moved to advisories.yml so it runs outside the nightly gate. What is
+    # left is the hack lane, so skip the job entirely when the caller has no
+    # hack-args rather than booting a runner to install tools and run nothing.
+    if: ${{ inputs.nightly && inputs.hack-args != '' }}
     runs-on: ${{ fromJSON(needs.setup.outputs.linux) }}
     timeout-minutes: 45
     permissions:
@@ -789,17 +793,15 @@ jobs:
           bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
       - uses: ./.ef-ci/.github/actions/setup-rust
         with:
-          tools: cargo-hack,cargo-audit
+          tools: cargo-hack
           cache-key: nightly-extras
       - name: Feature combinations
-        if: inputs.hack-args != ''
         env:
           HACK_ARGS: ${{ inputs.hack-args }}
         run: |
           set -euo pipefail
           # shellcheck disable=SC2086  # HACK_ARGS is an argument list and must split
           cargo hack check $HACK_ARGS --locked
-      - run: cargo audit
 
   verify-version:
     name: verify-version

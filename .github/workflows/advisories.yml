@@ -1,0 +1,52 @@
+name: advisories
+
+# Advisory scanning, deliberately outside the nightly gate.
+#
+# Every other nightly lane answers a question about the code, so skipping it
+# on an unchanged commit loses nothing. This one answers a question about the
+# RustSec database, which changes daily whether or not the code does. Gated,
+# it would go quiet exactly when a new advisory lands against a frozen main --
+# which is not hypothetical: the 2026-09-15 nightly failed on RUSTSEC-2026-0204
+# against a Cargo.lock nobody had touched.
+#
+# Callers run this ungated, so it must cost nothing. It reads Cargo.lock and
+# does not build, so it is seconds of a free standard runner.
+#
+# To downgrade an advisory to a warning, commit `.cargo/audit.toml` in the
+# calling repository; cargo-audit reads it from the working directory. That is
+# a reviewable file in the repo it applies to, which a workflow input would
+# not be.
+
+on:
+  workflow_call:
+    inputs:
+      timeout-minutes:
+        type: number
+        default: 10
+
+jobs:
+  audit:
+    name: cargo audit
+    # Hard-coded, not the caller's runner-class. This lane runs every night
+    # regardless of the gate, so it must never land on a `larger` runner --
+    # those bill by the minute even on public repositories, where the standard
+    # classes are free. A caller cannot opt into a cost here by accident.
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # No setup-rust: cargo-audit parses Cargo.lock and never compiles, so a
+      # toolchain install and a cargo cache would be the only slow parts of an
+      # otherwise instant job. The runner image's cargo is enough to dispatch
+      # the subcommand, and if that ever stopped being true this fails loudly
+      # rather than skipping the scan.
+      - uses: taiki-e/install-action@d438492cf8a250514fa2d34b30bc3c0dc37c65ff  # v2.87.8
+        with:
+          tool: cargo-audit
+
+      - run: cargo audit
