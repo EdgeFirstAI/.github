@@ -1,4 +1,9 @@
 # Caller skeleton — pin every uses: to a 40-char EdgeFirstAI/.github commit.
+#
+# The pins below are placeholders and are not kept current. Replace them
+# with one commit that contains every workflow referenced here: the SHA-pin
+# lint checks the shape of a pin, not that the file exists at it, so a pin
+# predating advisories.yml fails at run time with a 404 rather than at lint.
 
 name: Nightly
 
