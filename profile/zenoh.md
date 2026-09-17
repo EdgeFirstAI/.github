@@ -74,14 +74,14 @@ Step 2 is the only place the full-resolution frame exists, and it is never copie
 ## Why Zenoh
 
 - **Small footprint.** No DDS discovery storm, and no ROS 2 installation on the device.
-- **Peer or routed without changing the binary.** The same service works locally and across a network through `zenohd`. Reaching a ROS 2 graph is [not yet wired up](ros2.md#reaching-edgefirst-topics-from-ros-2) — that is what the `rmw_zenoh` work is for.
+- **Peer, routed, or bridged without changing the binary.** The same service works locally, across a network through `zenohd`, and inside a ROS 2 graph through [`zenoh-bridge-ros2dds`](https://github.com/eclipse-zenoh/zenoh-plugin-ros2dds).
 - **The messages ROS 2 already uses.** Payloads are ROS 2 CDR, so a bridged topic is an ordinary ROS 2 topic on the other side. [ROS 2](ros2.md) covers exactly what that does and doesn't mean.
 
 ## Topics and namespaces
 
 Services publish on bare keys such as `camera/h264`. Each session sets its namespace to the device hostname, so the key on the wire is `verdin-imx8mp-15141091/camera/h264`.
 
-This does three things: it keeps several devices on one network apart, it makes recordings from multiple devices mergeable, and it lets a remote session subscribe to one device or to all of them with `**/camera/h264`.
+This does four things: it keeps several devices on one network apart, it makes recordings from multiple devices mergeable, it lets a remote session subscribe to one device or to all of them with `**/camera/h264`, and it lets a ROS 2 bridge strip the prefix per device so two devices never collide on the same ROS topic names. See [ROS 2](ros2.md#using-edgefirst-with-ros-2-today).
 
 The namespace replaces the `rt/` prefix used by earlier releases. Applications still hard-coded to `rt/...` will not receive data.
 
@@ -116,7 +116,7 @@ That distinction is what the [benchmark numbers](foundation.md#borrowing-cdr-dec
 Topics are visible only on the device by default. Enabling `zenohd` (TCP 7447) exposes them on the network:
 
 - **Your applications** — open a Zenoh session to the router and subscribe with `schemas`. See the [Developer Guide](https://doc.edgefirst.ai/latest/perception/dev/).
-- **ROS 2** — the `zenoh-bridge-ros2dds` standalone executable (or the matching plugin loaded into `zenohd`) is the intended route, but the key mapping is unsolved. See [ROS 2](ros2.md#reaching-edgefirst-topics-from-ros-2).
+- **ROS 2** — run the `zenoh-bridge-ros2dds` standalone executable, or load the matching plugin into `zenohd`, with the device hostname as its Zenoh namespace. See [ROS 2](ros2.md#using-edgefirst-with-ros-2-today).
 - **Foxglove** — record with `recorder` and open the MCAP file with the EdgeFirst plug-in.
 
 ## Recording and the data loop

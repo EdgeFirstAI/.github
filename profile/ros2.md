@@ -12,37 +12,52 @@ EdgeFirst Perception speaks ROS 2's message language without being a ROS 2 middl
 | Transport | Native Zenoh pub/sub with hostname-namespaced keys |
 | ROS 2 installation on the device | Not required |
 | RMW implementation | **No.** Services don't use `rcl` or an RMW, and don't appear as ROS 2 nodes |
-| Interoperates with `rmw_zenoh` directly | **Not yet.** Key expressions differ — adopting them is the roadmap |
-| Joins a ROS 2 graph | **Not yet.** The [`zenoh-bridge-ros2dds`](https://github.com/eclipse-zenoh/zenoh-plugin-ros2dds) route is unsolved; native `rmw_zenoh` support is the plan |
+| Interoperates with `rmw_zenoh` directly | **No.** `rmw_zenoh` keys carry the domain, type name and type hash; interoperation goes through the DDS bridge. Adopting its wire format is roadmap work |
+| Joins a ROS 2 graph | Yes, through [`zenoh-bridge-ros2dds`](https://github.com/eclipse-zenoh/zenoh-plugin-ros2dds) with the device hostname as the bridge's Zenoh namespace |
 
-Why build it this way? A sensor shouldn't need a ROS distribution to publish data. The same services run on devices with no ROS at all and feed our Web UI and MCAP recordings, while using message types a ROS 2 system already understands — so connecting the two is a transport problem, not a data problem.
+Why build it this way? A sensor shouldn't need a ROS distribution to publish data. The same services run on devices with no ROS at all, feed our Web UI and MCAP recordings, and still hand ROS 2 systems standard messages when they're connected.
 
-## Reaching EdgeFirst topics from ROS 2
+## Using EdgeFirst with ROS 2 today
 
-> [!IMPORTANT]
-> This path is **not yet a supported, tested recipe.** The shape below is right and the message types are already correct, but the key-to-topic mapping is an open problem we have not solved on hardware. Treat it as the direction of travel, not instructions. Native `rmw_zenoh` support — see the [roadmap](#roadmap) — is how this is intended to work properly.
+The hostname namespace is what makes this work. `zenoh-bridge-ros2dds` maps a ROS 2 topic name directly onto a Zenoh key expression — `/camera/h264` becomes the key `camera/h264`, with no type name or hash in the key — which is exactly the key EdgeFirst services publish on. Zenoh's session-level `namespace` then reconciles the device prefix: a session configured with a namespace strips it from every incoming key expression, so a bridge running with the device's hostname sees `camera/h264` and hands ROS 2 a plain `/camera/h264`.
+
+Note that this is the *Zenoh session* `namespace`, a key-expression prefix, not the `ros2dds` plugin's `namespace`, which is a ROS namespace. Only the former accepts the hyphens a device hostname contains.
 
 ```mermaid
 flowchart LR
     subgraph device["EdgeFirst device"]
-        svc["EdgeFirst services<br/>native Zenoh keys"] --> zenohd["zenohd<br/>TCP 7447"]
+        svc["EdgeFirst services"] -->|verdin-imx8mp-15141091/camera/h264| zenohd["zenohd<br/>TCP 7447"]
     end
     subgraph host["ROS 2 host"]
-        bridge["zenoh-bridge-ros2dds"] --> dds["ROS 2 DDS graph"]
+        bridge["zenoh-bridge-ros2dds<br/>namespace: verdin-imx8mp-15141091"] -->|/camera/h264| dds["ROS 2 DDS graph"]
         dds --> rviz["RViz2"]
         dds --> nav["Nav2 / your nodes"]
     end
-    zenohd -- "Zenoh" --> bridge
+    zenohd -- Zenoh --> bridge
 ```
 
-**What works.** `zenohd` can be enabled on the device (it is off by default — see [Remote Connections](https://doc.edgefirst.ai/latest/perception/dev/#remote-connections)), and the payloads are already ROS 2 CDR carrying standard message types. Nothing about the data needs converting.
+1. **Enable the router on the device.** `zenohd` is disabled by default. See [Remote Connections](https://doc.edgefirst.ai/latest/perception/dev/#remote-connections).
+2. **Run one bridge per device**, with that device's hostname as the Zenoh session namespace:
 
-**What doesn't, yet.** `zenoh-bridge-ros2dds` bridges a ROS 2 DDS graph to Zenoh using its own key convention. EdgeFirst services publish on native Zenoh keys under a hostname namespace — `verdin-imx8mp-15141091/radar/targets` — which is not that convention. Two specific obstacles:
+   ```json5
+   {
+     namespace: "verdin-imx8mp-15141091",
+     mode: "client",
+     connect: { endpoints: ["tcp/<device-ip>:7447"] },
+     plugins: { ros2dds: { domain: 0 } }
+   }
+   ```
 
-- The bridge's `namespace` option *prefixes* ROS names for the multi-robot case. It does not rewrite arbitrary Zenoh keys into ROS topic names.
-- ROS names permit only alphanumerics and underscores, and device hostnames contain hyphens, so the hostname cannot be used as a ROS namespace as-is.
+   ```sh
+   zenoh-bridge-ros2dds -c bridge.json5
+   ```
 
-Closing this needs either a tested key-remapping setup or a device-side namespace override. Until one exists, the dependable routes off the device are MCAP recordings in Foxglove and your own Zenoh subscribers using [`schemas`](https://github.com/EdgeFirstAI/schemas).
+3. **Subscribe from ROS 2.** Use RViz2, `ros2 topic echo`, or your own nodes.
+
+One bridge per device keeps devices apart on the ROS 2 side, the same pattern the bridge documents for multi-robot fleets. Stripping the prefix at `zenohd` instead would merge two devices' topics onto the same names, which is the cross-talk the hostname namespace exists to prevent.
+
+> [!NOTE]
+> The bridge creates its Zenoh-to-DDS route when it discovers a ROS 2 subscriber, and EdgeFirst services publish no ROS graph liveliness tokens, so a topic may not appear in `ros2 topic list` until something subscribes to it. `ros2 topic echo` creates that subscriber and works. A tested configuration file is still to be published.
 
 ### What you get on the ROS 2 side
 
