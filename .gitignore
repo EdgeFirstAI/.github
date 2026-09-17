@@ -4,3 +4,4 @@ __pycache__/
 *.lcov
 sbom/
 dist/
+.DS_Store

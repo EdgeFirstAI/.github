@@ -1,140 +1,118 @@
-# EdgeFirst Perception for ROS 2
+# EdgeFirst Perception and ROS 2
 
-> **Status: Roadmap** — Native ROS 2 integration is planned. The bridge-based integration described under "Current State" is available and in production use today. Everything below "Planned" describes our intended direction.
+EdgeFirst Perception speaks ROS 2's message language without being a ROS 2 middleware. This page explains exactly what that means, how to use EdgeFirst devices from ROS 2 today, and where we're taking the integration.
 
-## Vision
+## What EdgeFirst is and isn't
 
-EdgeFirst Perception for ROS 2 will extend the existing [Zenoh microservices](zenoh.md) with first-class ROS 2 integration — native nodes, services, and lifecycle management — while preserving the zero-copy, DMA-accelerated performance that defines the EdgeFirst stack. The goal is to make EdgeFirst Perception indistinguishable from native ROS 2 nodes while delivering embedded-grade efficiency.
+| | EdgeFirst Perception today |
+|---|---|
+| Message definitions | ROS 2 common interfaces (`std_msgs`, `geometry_msgs`, `sensor_msgs`, `nav_msgs`), Foxglove schemas, and `edgefirst_msgs` |
+| Encoding | ROS 2 CDR |
+| Coordinate frames | REP-103, with `base_link` → sensor transforms on `tf_static` |
+| Transport | Native Zenoh pub/sub with hostname-namespaced keys |
+| ROS 2 installation on the device | Not required |
+| RMW implementation | **No.** Services don't use `rcl` or an RMW, and don't appear as ROS 2 nodes |
+| Interoperates with `rmw_zenoh` directly | **No.** Key expressions differ. Interoperation goes through a DDS bridge |
+| Joins a ROS 2 graph | Yes, through [`zenoh-plugin-ros2dds`](https://github.com/eclipse-zenoh/zenoh-plugin-ros2dds) |
 
-For teams building autonomous systems — mobile robots, ADAS applications, industrial equipment, or agricultural machinery — EdgeFirst Perception for ROS 2 will provide production-ready spatial perception that integrates naturally with Nav2, MoveIt, and the broader ROS 2 ecosystem.
+Why build it this way? A sensor shouldn't need a ROS distribution to publish data. The same services run on devices with no ROS at all, feed our Web UI and MCAP recordings, and still hand ROS 2 systems standard messages when they're connected.
 
-## Current State: Bridge-Based Integration
-
-Today, EdgeFirst Zenoh microservices are already ROS 2-compatible through:
-
-- **CDR message encoding** — All EdgeFirst messages use the same binary encoding as ROS 2, handled by [`edgefirst-schemas`](https://github.com/EdgeFirstAI/schemas)
-- **Zenoh transport** — The [zenoh-plugin-ros2dds](https://github.com/eclipse-zenoh/zenoh-plugin-ros2dds) bridge transparently exposes EdgeFirst topics to the ROS 2 graph via `zenohd`
-- **Standard message types** — Common `sensor_msgs`, `geometry_msgs`, `nav_msgs`, and other ROS 2 types are supported natively
-- **Visualization** — EdgeFirst data renders directly in RViz, Foxglove Studio, and PlotJuggler without any conversion
-- **`edgefirst_msgs`** — The [`schemas`](https://github.com/EdgeFirstAI/schemas) project already builds as a ROS 2 message package, available today
-
-This approach works well and is in production use today. EdgeFirst Perception for ROS 2 will add native ROS 2 lifecycle nodes with services and parameters, giving ROS 2 teams a fully integrated experience without requiring the external bridge.
-
-## Zero-Copy DMA: The Performance Foundation
-
-A central design goal of EdgeFirst Perception for ROS 2 is **end-to-end zero-copy data flow using Linux DMA buffers** — the same philosophy that drives the Foundation, Zenoh, and GStreamer layers. On embedded devices where memory bandwidth is the primary bottleneck, eliminating copies between sensors, inference engines, and consumers is essential for real-time performance.
-
-### ROS 2 REP-2007 Type Adaptation
-
-ROS 2's [REP-2007](https://ros.org/reps/rep-2007.html) provides the framework for this. Type Adaptation allows ROS 2 publishers and subscribers to work with custom types (like DMA buffer handles) while the middleware handles conversion to standard message types only when necessary — for example, when bridging to a remote node. Within a single process or between co-located nodes using shared memory, data can flow as native DMA buffer file descriptors with no serialization overhead.
-
-EdgeFirst Perception for ROS 2 will implement REP-2007 type adapters for key message types, enabling:
-
-- **Camera frames** passed as DMA-BUF file descriptors from V4L2 capture through ISP processing and NPU inference without a single CPU-side copy
-- **Point clouds** from LiDAR and radar shared between fusion and visualization nodes via DMA buffer references
-- **Radar cubes** — large 4D complex tensors — exchanged between radar processing and fusion services without memcpy
-
-### EdgeFirst Schemas: Near Zero-Cost CDR
-
-When serialization is required — for recording, remote transport, or bridging to non-DMA-aware nodes — EdgeFirst Perception's [`schemas`](https://github.com/EdgeFirstAI/schemas) library provides a near zero-cost CDR implementation. This is the same library used by the Zenoh microservices today.
-
-The table below compares EdgeFirst's zero-copy borrow operation (which builds an offset index for O(1) field access without deserializing payload data) against a typical full CDR deserialization in Python. These are different operations solving the same practical problem — accessing message fields — but the zero-copy approach avoids allocating or copying any data:
-
-| Operation | EdgeFirst Rust (zero-copy borrow) | Typical Python CDR (full deserialize) | Ratio |
-|-----------|----------------------------------|---------------------------------------|-------|
-| Access Image fields (FHD) | 144 ns | 165 ms | 1.2B x |
-| Access Radar Cube fields (1.5 MB) | 129 ns | 232 ms | 1.8B x |
-| Encode Image (FHD) | 2.17 ms (single memcpy) | 699 ms | 322x |
-| Decode small messages | 25–166 ns | 51–137 µs | 470–2,000x |
-
-> Borrow cost is **O(1) with respect to payload size** — the wire buffer is never duplicated. See [BENCHMARKS.md](https://github.com/EdgeFirstAI/schemas/blob/main/BENCHMARKS.md) for full results on NXP i.MX 8M Plus.
+## Using EdgeFirst with ROS 2 today
 
 ```mermaid
-graph LR
-    subgraph device["Edge Device"]
-        sensor["Camera / LiDAR / Radar"] -- "DMA-BUF fd" --> node["EdgeFirst<br/>ROS 2 Node"]
-        node -- "DMA-BUF fd<br/>(REP-2007)" --> inference["NPU<br/>Inference"]
-        inference -- "DMA-BUF fd" --> fusion["Fusion<br/>Node"]
-        fusion -- "zero-copy CDR" --> recorder["Recorder"]
+flowchart LR
+    subgraph device["EdgeFirst device"]
+        svc["EdgeFirst services<br/>(Zenoh peers)"] --> zenohd["zenohd<br/>TCP 7447"]
     end
-    subgraph remote["Remote System"]
-        nav["Nav2 / MoveIt"]
-        viz["RViz / Foxglove"]
+    subgraph host["ROS 2 host"]
+        bridge["zenoh-bridge-ros2dds"] --> dds["ROS 2 DDS graph"]
+        dds --> rviz["RViz2"]
+        dds --> nav["Nav2 / your nodes"]
+        dds --> bag["rosbag2"]
     end
-    node -- "rmw_zenoh" --> nav
-    fusion -- "rmw_zenoh" --> viz
+    zenohd -- "Zenoh" --> bridge
 ```
 
-## Planned: Native ROS 2 Integration
+1. **Enable the router on the device.** `zenohd` is disabled by default. See [Remote Connections](https://doc.edgefirst.ai/latest/perception/dev/#remote-connections).
+2. **Run the bridge on a ROS 2 host** and point it at the device's router. Match your `ROS_DOMAIN_ID`.
+3. **Map the device namespace.** Device keys are prefixed with the hostname, for example `verdin-imx8mp-15141091/radar/targets`. Configure the bridge so ROS 2 topics resolve to those keys.
+4. **Subscribe from ROS 2.** Use RViz2, `ros2 topic echo`, or your own nodes.
 
-### Direct RMW Integration
+> [!NOTE]
+> Steps 2 and 3 are the shape of the workflow rather than a tested recipe. Two details are still being pinned down on hardware: device hostnames contain hyphens, which ROS 2 topic names do not allow, so the key-to-topic mapping needs an explicit bridge configuration; and the bridge creates its routes on discovering a subscriber, so topics may not be listed until something subscribes. A verified configuration file is coming.
 
-EdgeFirst microservices will use `rmw_zenoh` as the ROS 2 middleware layer, allowing them to participate in the ROS 2 graph as first-class nodes — discoverable, introspectable, and manageable through standard ROS 2 tooling — while retaining Zenoh's shared memory transport for on-device communication.
+### What you get on the ROS 2 side
 
-### ROS 2 Lifecycle & Service Support
+| Topic | Message type | Works with stock ROS 2 tools |
+|-------|--------------|------------------------------|
+| `camera/info` | `sensor_msgs/CameraInfo` | Yes |
+| `camera/jpeg` | `sensor_msgs/CompressedImage` | Yes, with `image_transport` |
+| `radar/targets`, `radar/clusters` | `sensor_msgs/PointCloud2` | Yes, RViz2 PointCloud2 display |
+| `lidar/points`, `lidar/clusters` | `sensor_msgs/PointCloud2` | Yes |
+| `fusion/radar`, `fusion/lidar`, `fusion/occupancy` | `sensor_msgs/PointCloud2` | Yes; colour by `vision_class` in RViz2 |
+| `imu`, `lidar/imu` | `sensor_msgs/Imu` | Yes |
+| `gps` | `sensor_msgs/NavSatFix` | Yes |
+| `tf_static` | `geometry_msgs/TransformStamped` | Not directly — see below |
+| `camera/h264` | `foxglove_msgs/CompressedVideo` | Needs `foxglove_msgs` and a decoder; RViz2 has no H.264 display |
+| `model/output`, `model/info`, `fusion/boxes3d`, `radar/cube`, `radar/info` | `edgefirst_msgs/*` | Needs the `edgefirst_msgs` package; no stock RViz2 display |
 
-Each microservice will be implemented as a ROS 2 lifecycle node, enabling:
+EdgeFirst publishes `tf_static` as individual `geometry_msgs/TransformStamped` messages. ROS 2's tf2 subscribes to `/tf_static` expecting `tf2_msgs/TFMessage`, which wraps an array of transforms, so **the transforms need an adapter before RViz2 or tf2 will consume them**. Without TF, point clouds will not place correctly in RViz2. Whether the bridge can do that wrapping for you is being confirmed.
 
-- `ros2 lifecycle` management for coordinated startup, shutdown, and error recovery
-- `ros2 service call` and `ros2 param` for runtime configuration
-- Launch file integration with `edgefirst_bringup` for deployment orchestration
-- Standard diagnostics publishing for fleet monitoring
+### Custom messages: `edgefirst_msgs`
 
-### ROS 2 Packages & Existing Repositories
+[`schemas`](https://github.com/EdgeFirstAI/schemas) builds as a ROS 2 message package. Add it to your workspace and your nodes can subscribe to `model/output` for detections, masks, and tracks, `fusion/boxes3d` for 3D boxes, and `radar/cube` for raw radar tensors. They get the same types the EdgeFirst services use.
 
-The remaining services will gain ROS 2 support within their existing repositories rather than as separate packages:
+### Recordings
 
-| Repository | ROS 2 Integration |
-|-----------|-------------------|
-| [`schemas`](https://github.com/EdgeFirstAI/schemas) | **Available now** — builds as `edgefirst_msgs` for ROS 2 with the same CDR-encoded message types used by Zenoh services |
-| [`camera`](https://github.com/EdgeFirstAI/camera) | Gains ROS 2 lifecycle node with DMA-accelerated ISP and encoding pipelines |
-| [`model`](https://github.com/EdgeFirstAI/model) | Gains ROS 2 lifecycle node with NPU-accelerated inference |
-| [`fusion`](https://github.com/EdgeFirstAI/fusion) | Gains ROS 2 lifecycle node for multi-sensor fusion |
-| [`lidarpub`](https://github.com/EdgeFirstAI/lidarpub) | Gains ROS 2 lifecycle node for LiDAR point cloud publishing |
-| [`radarpub`](https://github.com/EdgeFirstAI/radarpub) | Gains ROS 2 lifecycle node for radar point clouds and raw cube data |
-| [`recorder`](https://github.com/EdgeFirstAI/recorder) | Gains ROS 2 lifecycle node with [EdgeFirst Studio](https://edgefirst.studio) integration |
-| [`replay`](https://github.com/EdgeFirstAI/replay) | Gains ROS 2 lifecycle node for MCAP session replay |
-| [`navsat`](https://github.com/EdgeFirstAI/navsat) | Gains ROS 2 lifecycle node for GNSS/GPS data |
-| [`imu`](https://github.com/EdgeFirstAI/imu) | Gains ROS 2 lifecycle node for IMU data |
-| New: `edgefirst_dmabuf` | REP-2007 type adapters and DMA buffer management for zero-copy transport on supported SoCs |
-| New: `edgefirst_bringup` | Launch files, parameter configs, and deployment presets for common scenarios |
+`recorder` writes MCAP with the schemas embedded, and channels are named `/camera/h264`, `/fusion/radar`, and so on. Recordings open in Foxglove with the [EdgeFirst plug-in](https://github.com/EdgeFirstAI/foxglove).
 
-### Pure Rust ROS 2 Integration
+rosbag2 compatibility is a separate question from Foxglove: `ros2 bag` expects its own storage profile and metadata alongside the MCAP, which the recorder does not write today. Whether recordings replay directly through rosbag2 has not been verified.
 
-All EdgeFirst Perception services are written in Rust. Rather than binding to the C-based `rclcpp` / `rcl` stack, the planned ROS 2 integration uses a pure Rust ROS 2 client library (such as [`ros2-client`](https://github.com/Atostek/ros2-client)) that communicates directly with the ROS 2 graph over DDS without any C/C++ dependencies. This approach provides:
+## Performance when serialization is needed
 
-- **No C/C++ ROS 2 dependency** — Services compile and link as pure Rust binaries; no `rclcpp`, `rcl`, or ROS 2 installation required at build time
-- **Native async/await** — Rust's async runtime replaces the callback-driven model of `rclcpp`, fitting naturally with EdgeFirst's existing Zenoh async architecture
-- **EdgeFirst CDR throughout** — The `edgefirst-schemas` zero-copy CDR serializer is used for all message encoding and decoding, replacing the default DDS serialization with our [near zero-cost implementation](https://github.com/EdgeFirstAI/schemas/blob/main/BENCHMARKS.md)
-- **Targeting full ROS 2 compatibility** — Topics, services, actions, parameters, lifecycle management, and ROS graph discovery working with standard ROS 2 nodes and tooling (`ros2 topic`, `ros2 service`, `ros2 param`, RViz, Foxglove)
+Serialization is paid on every hop that isn't zero-copy: recording, network transport, and the bridge. [`schemas`](https://github.com/EdgeFirstAI/schemas) reads CDR in place instead of materializing a copy. Against the codecs used by the two major ROS 2 middleware vendors, on a Raspberry Pi 5 ([BENCHMARKS.md](https://github.com/EdgeFirstAI/schemas/blob/main/BENCHMARKS.md)):
 
-### Runtime Mode Selection
+| Message | EdgeFirst decode | Fast-CDR | Cyclone DDS |
+|---------|------------------|----------|-------------|
+| `sensor_msgs/PointCloud2`, Ouster 128-beam | 123 ns | 784 µs | 819 µs |
+| `edgefirst_msgs/RadarCube`, DRVEGRD-171 extra long | 58 ns | 3.4 ms | 3.4 ms |
+| `foxglove_msgs/CompressedVideo`, 1 MB | 53 ns | 122 µs | 134 µs |
 
-Each EdgeFirst service will support both Zenoh-native and ROS 2 modes from the same codebase:
+Decode is the cost a subscriber pays before touching the data. A node that reads, modifies, and republishes an entire HD image still pays for walking the pixels; in that workflow the advantage is about 1.9×. Both results are in BENCHMARKS.md.
 
-- **Compile-time feature gate** — ROS 2 support is an optional Cargo feature. When disabled, the binary has zero ROS 2 overhead and no ROS 2 dependencies. When enabled, both transports are available.
-- **Runtime transport selection** — With the ROS 2 feature compiled in, a configuration flag or environment variable selects the active transport at startup
-- **Identical topics and messages** — Topic patterns and message schemas remain the same regardless of mode; only the transport layer changes
-- **Maximum portability** — The same codebase targets systems with or without ROS 2 ecosystems
+Inside the device, camera frames skip serialization entirely: they move between processes as DMA-BUF handles. See [what is actually zero-copy](zenoh.md#what-is-actually-zero-copy-and-what-isnt) in the Perception Middleware.
 
-```mermaid
-graph TB
-    subgraph binary["EdgeFirst Service Binary (Rust)"]
-        logic["Perception Logic<br/>+ edgefirst-schemas CDR<br/>+ DMA Buffer Management"]
-        logic --> select{"Runtime<br/>Mode Selection"}
-    end
-    select -- "default" --> zenoh_mode["Zenoh<br/>Publisher/Subscriber"]
-    select -- "cargo feature: ros2" --> ros2_mode["Pure Rust ROS 2 Client<br/>+ edgefirst-schemas CDR<br/>+ DDS Discovery"]
-```
+## Roadmap
 
-Teams choose the deployment model that fits their system — Zenoh, ROS 2, or both — without maintaining separate binaries or introducing C/C++ dependencies. Combined with the [GStreamer](gstreamer.md) layer, all three integration paths share the same Foundation libraries and deliver the same perception capabilities.
+> [!IMPORTANT]
+> Everything below is planned work, not shipped functionality.
 
-## Get Involved
+We want ROS 2 teams to get EdgeFirst services as first-class participants in their graph without losing the properties that make the stack useful on embedded hardware.
 
-We are shaping this layer now and actively seeking input from teams building for autonomous mobile robots, ADAS, industrial, and agricultural applications. Your requirements will help shape the ROS 2 integration.
+### Goals
 
-Reach out to [Au-Zone Technologies](https://www.au-zone.com) to discuss your project, or explore our existing [Zenoh microservices](zenoh.md) and [GStreamer plugins](gstreamer.md) which provide ROS 2 interoperability today. Get started with a free [EdgeFirst Studio](https://edgefirst.studio) account.
+- **Discoverable graph participants.** EdgeFirst services appear to `ros2 node list`, `ros2 topic`, and `ros2 param` without an external bridge.
+- **Standard lifecycle and parameters.** Lifecycle transitions and parameter services mapped onto each service's existing configuration.
+- **No C/C++ ROS dependency.** The services are Rust. ROS 2 support stays an optional Cargo feature, so builds without it carry no ROS 2 code.
+- **Same topics, same messages.** Topic names and message types are identical whether a service runs in Zenoh-native or ROS 2 mode.
+- **Zero-copy preserved, and extended.** Camera frames continue to move as DMA-BUF handles on the device, and serialization happens only where a hop requires it. Going further in a ROS 2 graph is an open question we intend to answer: either through the ROS 2 RFCs covering custom allocators and memory regions, if that is what interoperability requires, or by reusing the [shared-memory support planned for the Zenoh services](zenoh.md#what-is-actually-zero-copy-and-what-isnt) should that work with `rmw_zenoh`. Which of the two applies is still to be determined.
+- **`edgefirst_bringup`.** Launch files and presets for Maivin, Raivin, and LiDAR variants.
+
+### Transport: we are going with `rmw_zenoh`
+
+There were two credible ways to reach those goals from pure Rust, and they don't interoperate with each other.
+
+| Approach | Strengths | Trade-offs |
+|----------|-----------|------------|
+| **Speak the `rmw_zenoh` wire protocol** — its key expressions, liveliness tokens, and attachments — directly from the existing Zenoh sessions | Keeps Zenoh end to end. Matches the Tier-1 Zenoh middleware in current ROS 2 releases. Smallest change to the services | Only interoperates with graphs running `rmw_zenoh`. Must track rmw_zenoh protocol changes across distributions |
+| **Native DDS participant** through a pure-Rust ROS 2 client | Works with default DDS-based ROS 2 graphs | Adds a DDS stack to every service. Loses Zenoh's footprint and routing on the device |
+
+**We are taking the `rmw_zenoh` route.** The services are already Zenoh-native, so this is the smallest change: adopt the `rmw_zenoh` wire details in sessions we already open. The goal is that every EdgeFirst Zenoh application gains the ability to talk to an `rmw_zenoh` ROS 2 graph *or* to direct Zenoh peers as it does today — same topics, same messages, same binary.
+
+We would add a native DDS participant if customers running DDS-based graphs ask for it, but Zenoh is the better fit for embedded targets and it is where we already are.
+
+If you run EdgeFirst hardware alongside ROS 2 — AMRs, agriculture, industrial, ADAS — which RMW your robots use is still the most useful thing you can tell us. [Get in touch](https://www.au-zone.com).
 
 ---
 
-[Back to Overview](README.md) · [Foundation](foundation.md) · [Zenoh](zenoh.md) · [GStreamer](gstreamer.md) · [Documentation](https://doc.edgefirst.ai/latest/)
+[Overview](README.md) · [Foundation](foundation.md) · [Middleware](zenoh.md) · [Profiler](profiler.md) · [GStreamer](gstreamer.md) · [Platforms](platforms.md) · [Documentation](https://doc.edgefirst.ai/latest/perception/)
