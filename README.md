@@ -18,6 +18,7 @@ The organisation profile README lives in [`profile/`](profile/README.md).
 | `.github/workflows/python-quick.yml` | ruff + pytest |
 | `.github/workflows/cmake-quick.yml` | ccache + ctest |
 | `.github/workflows/nightly-gate.yml` | skip nightly when `main` is unchanged |
+| `.github/workflows/advisories.yml` | `cargo audit`, run ungated so a new advisory is still reported |
 | `.github/workflows/sbom.yml` | `dependency` or `full` scancode |
 | `.github/workflows/tag-release.yml` | `release/X.Y.Z` merge → annotated `vX.Y.Z` |
 | `.github/workflows/release-rust.yml` | crates OIDC, wheels as artifacts, GitHub Release |

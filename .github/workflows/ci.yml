@@ -85,6 +85,33 @@ jobs:
               sys.exit(1)
           print("all scanned uses: refs are SHA-pinned")
           PY
+      - name: Template self-pin placeholder check
+        run: |
+          python3 - <<'EOP'
+          import pathlib, re, sys
+          # templates/ pins EdgeFirstAI/.github to all zeros on purpose. A
+          # real SHA there is stale the moment this repository moves, and a
+          # stale one still resolves: a copied skeleton then silently runs
+          # old CI, or forwards an input the pinned revision does not
+          # declare. Both have happened. The shape check above cannot catch
+          # it, because a stale SHA is a valid SHA, so assert the
+          # placeholder instead. Third-party actions in templates/ keep
+          # real pins; only self-references are placeholders.
+          placeholder = "0000000000000000000000000000000000000000"
+          ref = re.compile(r"uses:\s*EdgeFirstAI/\.github/\S+@([0-9a-fA-F]{40})")
+          bad = []
+          for path in sorted(pathlib.Path("templates").rglob("*.yml")):
+              for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                  match = ref.search(line)
+                  if match and match.group(1) != placeholder:
+                      bad.append(f"{path}:{lineno}: {line.strip()}")
+          if bad:
+              print("templates/ must pin EdgeFirstAI/.github to the placeholder:")
+              for item in bad:
+                  print(item)
+              sys.exit(1)
+          print("all template self-pins use the placeholder")
+          EOP
       - name: timeout-minutes check
         run: |
           python3 - <<'PY'

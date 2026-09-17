@@ -2,6 +2,15 @@ name: nightly-gate
 
 on:
   workflow_call:
+    inputs:
+      force:
+        description: >-
+          Run even when main has not moved since the last nightly. This is the
+          only way to re-run on an unchanged commit, so it is also how you
+          re-try after fixing a lane rather than the code.
+        type: boolean
+        required: false
+        default: false
     outputs:
       run:
         description: true when nightly Full should run
@@ -21,13 +30,39 @@ jobs:
       - id: c
         env:
           GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force }}
         run: |
           set -euo pipefail
           wf="$(basename "${GITHUB_WORKFLOW_REF%@*}")"
-          last="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${wf}/runs?status=success&branch=main&per_page=1" --jq '.workflow_runs[0].head_sha // ""')"
-          if [[ "${GITHUB_EVENT_NAME}" == schedule && "$last" == "$GITHUB_SHA" ]]; then
+          # The question is "has main moved since we last looked at it", so
+          # what counts is a run that reached a verdict on a commit.
+          #
+          # success and failure both did: the lanes ran and reported. Filtering
+          # on success alone makes the gate useless in exactly the repository
+          # that needs it -- hal's last green nightly on main was 2025-12-08,
+          # so every comparison since would be against a nine-month-old commit
+          # and the gate would never skip. Re-running an unchanged commit after
+          # fixing a lane is what `force` is for.
+          #
+          # Every other conclusion is discarded, cancelled above all. A run can
+          # be cancelled before a single lane starts, so it proves nothing
+          # about its commit, yet it is still "completed" at that sha and would
+          # suppress the next night. Same for timed_out, stale, neutral,
+          # action_required and startup_failure. Discarding them looks further
+          # back instead, which at worst re-runs a nightly.
+          #
+          # status=completed also excludes this run, which is in_progress.
+          last="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${wf}/runs?status=completed&branch=main&per_page=30" --jq '[.workflow_runs[] | select(.conclusion == "success" or .conclusion == "failure")][0].head_sha // ""')"
+          if [[ "$FORCE" == "true" ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "forced (last=$last sha=$GITHUB_SHA)"
+          elif [[ "$last" == "$GITHUB_SHA" ]]; then
+            # Applies to every trigger, not just schedule. A manual dispatch
+            # used to bypass this silently, so re-dispatching a nightly
+            # rebuilt the same commit and re-ran the board -- the slowest and
+            # only hardware-bound lane -- for no new information.
             echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "main unchanged since last successful nightly ($last)"
+            echo "main unchanged since the last nightly ($last); pass force to override"
           else
             echo "run=true" >> "$GITHUB_OUTPUT"
             echo "nightly will run (last=$last sha=$GITHUB_SHA event=$GITHUB_EVENT_NAME)"

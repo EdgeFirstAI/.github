@@ -33,6 +33,7 @@ from the root; changing directory loses assistant context.
 | **Quick** | every non-draft PR push | fmt, lint, check, host tests, dependency license policy (NOTICE required; C/C++ graphs wait for Full scancode). Target under 10 minutes (hal 15). |
 | **Full** | `ci:full` or `ci:hardware` label, `workflow_dispatch`, or merge queue | platform matrix, boards, coverage, scancode. Once per PR, not once per push. |
 | **Nightly** | schedule, only if `main` moved | Full plus slow suites. Quiet days cost nothing. |
+| **Advisories** | every schedule, gated or not | `cargo audit`. See the exception below. |
 
 Labels:
 
@@ -57,6 +58,7 @@ The tier decides, not the job. What is being optimised differs per tier:
 | **Full** | speed, cost accepted | `larger` |
 | **Release** | speed, cost accepted | `larger` |
 | **Nightly** | speed, cost accepted | `larger` (nothing blocks on it; see below) |
+| **Advisories** | cost, absolutely | `hosted`, hard-coded — see the exception below |
 
 1. **hosted** — `ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-latest`,
    `windows-latest`. Free and unmetered on public repositories. This is the
@@ -78,6 +80,33 @@ to catch. A Full or Release lane on a billed runner is the intended state; when
 such a lane names the label directly rather than going through
 `runner-class-*`, put `# runner-class: larger` in the file with the reason so
 the audit can tell the two apart.
+
+### The one exception: advisory scanning
+
+`advisories.yml` breaks both rules above on purpose, and the reasons are
+narrow enough that nothing else should copy it.
+
+**It is not gated.** Every other Nightly lane asks a question about the code,
+so skipping an unchanged commit loses nothing. `cargo audit` asks a question
+about the RustSec database, which changes daily whether the code does or not.
+Gated, it goes quiet exactly when a new advisory lands against a frozen
+`main` -- which is not hypothetical: the 2026-09-15 nightly failed on
+RUSTSEC-2026-0204 against a `Cargo.lock` nobody had touched.
+
+**It is `hosted`, not `larger`, and hard-codes the label** rather than
+honouring the caller's `runner-class-*`. "Cost accepted" is affordable for
+Nightly because the gate bounds it to days when `main` moved. An ungated lane
+has no such bound, so it only stays affordable on a free class. Hard-coding
+means a caller cannot put an every-night lane on a billed runner by setting
+`runner-class-linux: larger` for unrelated reasons.
+
+The exception is affordable only because the job is trivial: `cargo audit`
+parses `Cargo.lock` and never compiles, so it skips `setup-rust` and is
+seconds of a free runner. A lane that builds anything does not qualify --
+gate it, or leave it out of the nightly.
+
+`runner-audit` does not flag `advisories.yml`, because `ubuntu-24.04` is not a
+billed label; it needs no `# runner-class: larger` marker.
 
 ## How to call the shared workflows
 
