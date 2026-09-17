@@ -97,7 +97,7 @@ Because this passes local file descriptors, `camera/frame` is only available **o
 
 **Every other topic is copied onto the wire.** We do not currently use Zenoh's shared-memory transport, so point clouds, radar cubes, and the rest go through the network stack like any other Zenoh payload — even between two processes on the same device.
 
-**What stays zero-copy everywhere is the codec.** [`schemas`](foundation.md#borrowing-cdr-decode) encodes and decodes CDR in place: a subscriber reads fields directly out of the received buffer instead of materializing a new structure, and strings and typed arrays are borrowed from the wire bytes. So a subscriber pays one transport copy and then nothing further, rather than a transport copy plus a full deserialization pass.
+**What stays zero-copy is subscriber-side decode.** [`schemas`](foundation.md#borrowing-cdr-decode) decodes CDR in place: a subscriber reads fields directly out of the received buffer instead of materializing a new structure, and strings and typed arrays are borrowed from the wire bytes. So a subscriber pays one transport copy and then nothing further, rather than a transport copy plus a full deserialization pass. Encoding is not zero-copy — it writes into a newly allocated output buffer.
 
 That distinction is what the [benchmark numbers](foundation.md#borrowing-cdr-decode) measure — decode, not transport.
 

@@ -58,7 +58,7 @@ That distinction matters when reading results: an ONNX model on a CUDA host stil
 | macOS (Apple Silicon) | ONNX Runtime | CPU | Apple GPU / ANE via CoreML |
 | NXP i.MX 8M Plus | TFLite | CPU | VSI NPU delegate |
 | NXP i.MX 95 | TFLite | CPU | Neutron NPU delegate |
-| NVIDIA Jetson Orin | ONNX Runtime | CUDA GPU | TensorRT |
+| NVIDIA Jetson Orin | ONNX Runtime | CPU | CUDA GPU / TensorRT |
 | Raspberry Pi 5 | ONNX Runtime | CPU | Hailo-8 / 8L NPU via HailoRT |
 | NXP Ara240 | DVM via `ara2-proxy` | Ara240 NPU | — |
 
