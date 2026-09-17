@@ -6,38 +6,26 @@ EdgeFirst Perception for GStreamer brings spatial perception to the GStreamer ec
 
 GStreamer is the de facto multimedia framework on embedded Linux, with mature infrastructure for buffer management, DMA, hardware acceleration, and pipeline scheduling. Until now, spatial perception — point clouds, radar processing, multi-sensor fusion — has not been part of the GStreamer ecosystem.
 
-EdgeFirst Perception for GStreamer unlocks GStreamer's strengths for spatial perception workloads: deterministic buffer pools, zero-copy DMA negotiation, hardware-accelerated processing, and the vast plugin ecosystem for encoding, streaming, and display. For teams that prefer or already use GStreamer pipelines, EdgeFirst brings the same perception capabilities available through the [Zenoh](zenoh.md) and [ROS 2](ros2.md) layers directly into the GStreamer graph.
+EdgeFirst Perception for GStreamer unlocks GStreamer's strengths for spatial perception workloads: deterministic buffer pools, zero-copy DMA negotiation, hardware-accelerated processing, and the vast plugin ecosystem for encoding, streaming, and display. For teams that prefer or already use GStreamer pipelines, EdgeFirst brings the same perception capabilities available through the [Perception Middleware](zenoh.md) directly into the GStreamer graph.
 
 ## Overview
 
-EdgeFirst Perception for GStreamer is one of three complementary integration layers — alongside [Zenoh microservices](zenoh.md) and [ROS 2](ros2.md) — all built on the same [Foundation](foundation.md) libraries and sharing the same commitment to zero-copy DMA buffer flow. The GStreamer layer is ideal for teams working within GStreamer pipelines, while the Zenoh bridge elements also enable interoperability between GStreamer and the Zenoh microservices.
+EdgeFirst Perception for GStreamer is one of two integration layers, alongside the [Perception Middleware](zenoh.md), all built on the same [Foundation](foundation.md) libraries and sharing the same commitment to zero-copy DMA buffer flow. The GStreamer layer is ideal for teams working within GStreamer pipelines, while the Zenoh bridge elements also enable interoperability between GStreamer and the middleware services.
 
 ```mermaid
-graph LR
-    subgraph sources["Sensor Sources"]
-        cam["v4l2src<br/>(Camera)"]
-        lidar["Zenoh / LiDAR"]
-        radar["Zenoh / Radar"]
-    end
-    subgraph gst["EdgeFirst GStreamer Elements"]
-        adaptor["edgefirstcameraadaptor"]
-        zenohsub["edgefirstzenohsub"]
-        pcdclassify["edgefirstpcdclassify"]
-    end
-    subgraph sinks["Outputs"]
-        nn["NNStreamer<br/>tensor_filter"]
-        zenohpub["edgefirstzenohpub"]
-        display["waylandsink"]
-    end
-    cam --> adaptor --> nn
-    lidar --> zenohsub --> pcdclassify
-    radar --> zenohsub
-    nn --> pcdclassify
-    pcdclassify --> zenohpub
-    nn --> display
+flowchart LR
+    cam["v4l2src<br/>camera"] --> adaptor["edgefirstcameraadaptor<br/>convert · resize · letterbox · quantize"]
+    adaptor --> nn["tensor_filter<br/>NNStreamer + NPU"]
+    nn --> decode["detection decode<br/>+ tracking"]
+
+    zsub["edgefirstzenohsub<br/>radar / LiDAR point clouds"] --> pcd["edgefirstpcdclassify<br/>project masks onto points"]
+    decode --> pcd
+
+    decode --> overlay["overlay<br/>boxes · masks · labels"] --> display["waylandsink"]
+    pcd --> zpub["edgefirstzenohpub"]
 ```
 
-> Note: `edgefirsttransforminject` attaches calibration metadata inline to buffers flowing through the pipeline — it is not shown as a separate node because it operates as a passthrough element on existing streams.
+`edgefirsttransforminject` is not drawn: it is a passthrough element that attaches calibration metadata to buffers already flowing through the pipeline, and `edgefirstpcdclassify` reads that metadata to do the projection.
 
 ## New Spatial Data Types for GStreamer
 
@@ -47,7 +35,7 @@ EdgeFirst introduces GStreamer caps and metadata structures that have no precede
 |-----------|-------------|
 | **Point clouds** | Custom caps and `GstMeta` for LiDAR, radar, and ToF point cloud data with per-buffer point count, field descriptors, and sensor timestamps. Supports variable-size point clouds in fixed DMA buffer pools for deterministic real-time performance. |
 | **Radar cubes** | Caps for raw radar cube data — 4D complex tensors containing range-Doppler FFT output from automotive radar sensors. Enables signal-level radar processing within GStreamer pipelines. |
-| **Calibration metadata** | Per-buffer intrinsic and extrinsic transform metadata enabling multi-sensor alignment, coordinate transformation, and projection — equivalent to ROS `tf` but native to GStreamer. |
+| **Calibration metadata** | Per-buffer intrinsic and extrinsic transform metadata enabling multi-sensor alignment, coordinate transformation, and projection — playing the role ROS `tf` plays, native to GStreamer. |
 
 These foundational types allow point clouds, radar data, and calibration transforms to flow through standard GStreamer pipelines alongside video, leveraging the framework's buffer pools, scheduling, and synchronization infrastructure.
 
@@ -69,13 +57,13 @@ The [`gstreamer`](https://github.com/EdgeFirstAI/gstreamer) project provides a s
 
 | Element | Description |
 |---------|-------------|
-| `edgefirstcameraadaptor` | Hardware-accelerated ML preprocessing — fused color conversion, resize, letterbox, quantization, and layout transformation with DMA-BUF zero-copy. Works with models trained using the [`cameraadaptor`](https://github.com/EdgeFirstAI/cameraadaptor) Python library (see also [Foundation — Model Training & Export](foundation.md#model-training--export)). |
+| `edgefirstcameraadaptor` | Hardware-accelerated ML preprocessing — fused color conversion, resize, letterbox, quantization, and layout transformation with DMA-BUF zero-copy. Works with models trained using the [`cameraadaptor`](https://github.com/EdgeFirstAI/cameraadaptor) Python library (see also [Foundation — Model training for native sensor formats](foundation.md#model-training-for-native-sensor-formats)). |
 
 ### Zenoh Bridge & Sensor Fusion
 
 | Element | Description |
 |---------|-------------|
-| `edgefirstzenohsub` | Subscribe to Zenoh topics (PointCloud2, RadarCube, Image) and produce GStreamer buffers with CDR decoding |
+| `edgefirstzenohsub` | Subscribe to Zenoh topics (PointCloud2, RadarCube, Image) and produce GStreamer buffers with CDR decoding via [`schemas`](https://github.com/EdgeFirstAI/schemas) |
 | `edgefirstzenohpub` | Publish GStreamer buffers to Zenoh topics with CDR encoding |
 | `edgefirstpcdclassify` | Project camera segmentation masks onto point clouds for semantic 3D understanding |
 | `edgefirsttransforminject` | Attach calibration metadata (intrinsic/extrinsic transforms) inline to buffers for multi-sensor alignment |
@@ -90,7 +78,7 @@ The [`gstreamer`](https://github.com/EdgeFirstAI/gstreamer) project provides a s
 
 ## Multi-Sensor Fusion Inside the Pipeline
 
-EdgeFirst's GStreamer elements support sensor fusion directly within the pipeline. This gives GStreamer users the same fusion capabilities available through the Zenoh and ROS 2 layers, without leaving the GStreamer workflow. EdgeFirst's elements handle:
+EdgeFirst's GStreamer elements support sensor fusion directly within the pipeline. This gives GStreamer users fusion capabilities comparable to the middleware's `fusion` service, without leaving the GStreamer workflow. EdgeFirst's elements handle:
 
 - **Multi-rate synchronization** — Combining 10Hz radar with 30Hz camera requires timestamp-based association beyond GStreamer's standard `GstCollectPads`. EdgeFirst elements handle heterogeneous sensor rates with configurable synchronization policies.
 - **In-pipeline coordinate transforms** — Extrinsic calibration, projection onto rectified images, and spatial alignment happen within the GStreamer graph via `edgefirsttransforminject` metadata.
@@ -130,4 +118,4 @@ gst-launch-1.0 \
 
 ---
 
-[Back to Overview](README.md) · [Foundation](foundation.md) · [Zenoh](zenoh.md) · [ROS 2](ros2.md) · [Documentation](https://doc.edgefirst.ai/latest/)
+[Overview](README.md) · [Foundation](foundation.md) · [Middleware](zenoh.md) · [Profiler](profiler.md) · [ROS 2](ros2.md) · [Platforms](platforms.md) · [Documentation](https://doc.edgefirst.ai/latest/perception/)
