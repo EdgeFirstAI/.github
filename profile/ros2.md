@@ -112,7 +112,7 @@ We want ROS 2 teams to get EdgeFirst services as first-class participants in the
 - **Discoverable graph participants.** EdgeFirst services appear to `ros2 node list`, `ros2 topic`, and `ros2 param` without an external bridge.
 - **Standard lifecycle and parameters.** Lifecycle transitions and parameter services mapped onto each service's existing configuration.
 - **No C/C++ ROS dependency.** The services are Rust. ROS 2 support stays an optional Cargo feature, so builds without it carry no ROS 2 code.
-- **Same topics, same messages.** Topic names and message types are identical whether a service runs in Zenoh-native or ROS 2 mode.
+- **Same topics, same messages.** Topic names and message types are identical whether a service runs in Zenoh-native or ROS 2 mode. A service runs in one mode or the other, selected at launch — not both at once.
 - **Zero-copy preserved, and extended.** Camera frames continue to move as DMA-BUF handles on the device, and serialization happens only where a hop requires it. Going further in a ROS 2 graph is an open question we intend to answer: either through the ROS 2 RFCs covering custom allocators and memory regions, if that is what interoperability requires, or by reusing the [shared-memory support planned for the Zenoh services](zenoh.md#what-is-actually-zero-copy-and-what-isnt) should that work with `rmw_zenoh`. Which of the two applies is still to be determined.
 - **`edgefirst_bringup`.** Launch files and presets for Maivin, Raivin, and LiDAR variants.
 
@@ -125,9 +125,15 @@ There were two credible ways to reach those goals from pure Rust, and they don't
 | **Speak the `rmw_zenoh` wire protocol** — its key expressions, liveliness tokens, and attachments — directly from the existing Zenoh sessions | Keeps Zenoh end to end. Matches the Tier-1 Zenoh middleware in current ROS 2 releases. Smallest change to the services | Only interoperates with graphs running `rmw_zenoh`. Must track rmw_zenoh protocol changes across distributions |
 | **Native DDS participant** through a pure-Rust ROS 2 client | Works with default DDS-based ROS 2 graphs | Adds a DDS stack to every service. Loses Zenoh's footprint and routing on the device |
 
-**We are taking the `rmw_zenoh` route.** The services are already Zenoh-native, so this is the smallest change: adopt the `rmw_zenoh` wire details in sessions we already open. The goal is that every EdgeFirst Zenoh application gains the ability to talk to an `rmw_zenoh` ROS 2 graph *or* to direct Zenoh peers as it does today — same topics, same messages, same binary.
+**We are taking the `rmw_zenoh` route.** The services are already Zenoh-native, so this is the smallest change: adopt the `rmw_zenoh` wire details in sessions we already open. We would add a native DDS participant if customers running DDS-based graphs ask for it, but Zenoh is the better fit for embedded targets and it is where we already are.
 
-We would add a native DDS participant if customers running DDS-based graphs ask for it, but Zenoh is the better fit for embedded targets and it is where we already are.
+**It will be a mode, not an addition.** A service will run either Zenoh-native, as today, or as an `rmw_zenoh` participant — chosen at launch, publishing under one key scheme at a time. The two cannot be combined, because the key expressions are mutually exclusive. `rmw_zenoh` keys carry the domain, type name and REP-2016 type hash:
+
+```text
+0/camera/h264/foxglove_msgs::msg::dds_::CompressedVideo_/RIHS01_…
+```
+
+while the bridge route above works precisely because today's keys are the bare topic name. Upstream is explicit that [`rmw_zenoh` cannot interoperate with `zenoh-plugin-ros2dds`](https://github.com/ros2/rmw_zenoh), and no bridge between them exists. So a service in `rmw_zenoh` mode joins an `rmw_zenoh` graph directly and is not reachable through the DDS bridge; a service in Zenoh-native mode is the reverse. Which you want depends on which middleware your robots run.
 
 If you run EdgeFirst hardware alongside ROS 2 — AMRs, agriculture, industrial, ADAS — which RMW your robots use is still the most useful thing you can tell us. [Get in touch](https://www.au-zone.com).
 
