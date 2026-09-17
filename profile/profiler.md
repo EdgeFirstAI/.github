@@ -58,7 +58,7 @@ That distinction matters when reading results: an ONNX model on a CUDA host stil
 | macOS (Apple Silicon) | ONNX Runtime | CPU | Apple GPU / ANE via CoreML |
 | NXP i.MX 8M Plus | TFLite | CPU | VSI NPU delegate |
 | NXP i.MX 95 | TFLite | CPU | Neutron NPU delegate |
-| NVIDIA Jetson Orin | ONNX Runtime | CUDA GPU | TensorRT |
+| NVIDIA Jetson Orin | ONNX Runtime | CPU | CUDA GPU / TensorRT |
 | Raspberry Pi 5 | ONNX Runtime | CPU | Hailo-8 / 8L NPU via HailoRT |
 | NXP Ara240 | DVM via `ara2-proxy` | Ara240 NPU | — |
 
@@ -79,3 +79,5 @@ The profiler engine is closed source and distributed under the EdgeFirst EULA. T
 ---
 
 [Overview](README.md) · [Foundation](foundation.md) · [Middleware](zenoh.md) · [GStreamer](gstreamer.md) · [ROS 2](ros2.md) · [Platforms](platforms.md) · [Documentation](https://doc.edgefirst.ai/latest/profiler/)
+
+<img referrerpolicy="no-referrer" src="https://px.edgefirst.ai/a.png?x-pxid=dbc8ac12-5377-438b-877a-ee554cea5515" alt="" width="1" height="1" style="position:absolute; width:1px; height:1px; opacity:0; pointer-events:none;" />
