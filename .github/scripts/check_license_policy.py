@@ -23,6 +23,7 @@ ALLOWED_LICENSES: Set[str] = {
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
+    "NCSA",
     "0BSD",
     "Unlicense",
     "Zlib",
