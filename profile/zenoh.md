@@ -36,7 +36,7 @@ flowchart LR
     consumers["recorder · websrv · your application"]
 ```
 
-Read it as a Raivin. A Maivin runs the same graph without `radarpub`, `lidarpub`, and `fusion`; a Maivin+E1R swaps the radar branch for the LiDAR one. The binaries are identical in every case — see [Platforms](platforms.md).
+This is the superset of every platform, so no single product runs all of it. A Maivin runs the vision path alone, without `radarpub`, `lidarpub`, or `fusion`. A Raivin adds the radar branch; a Maivin+E1R adds the LiDAR branch instead. The binaries are identical in every case — see [Platforms](platforms.md).
 
 ## Following one frame through
 
@@ -74,7 +74,7 @@ Step 2 is the only place the full-resolution frame exists, and it is never copie
 ## Why Zenoh
 
 - **Small footprint.** No DDS discovery storm, and no ROS 2 installation on the device.
-- **Peer, routed, or bridged without changing the binary.** The same service works locally, across a network through `zenohd`, and inside a ROS 2 graph through [`zenoh-plugin-ros2dds`](https://github.com/eclipse-zenoh/zenoh-plugin-ros2dds).
+- **Peer or routed without changing the binary.** The same service works locally and across a network through `zenohd`. Reaching a ROS 2 graph is [not yet wired up](ros2.md#reaching-edgefirst-topics-from-ros-2) — that is what the `rmw_zenoh` work is for.
 - **The messages ROS 2 already uses.** Payloads are ROS 2 CDR, so a bridged topic is an ordinary ROS 2 topic on the other side. [ROS 2](ros2.md) covers exactly what that does and doesn't mean.
 
 ## Topics and namespaces
@@ -116,7 +116,7 @@ That distinction is what the [benchmark numbers](foundation.md#borrowing-cdr-dec
 Topics are visible only on the device by default. Enabling `zenohd` (TCP 7447) exposes them on the network:
 
 - **Your applications** — open a Zenoh session to the router and subscribe with `schemas`. See the [Developer Guide](https://doc.edgefirst.ai/latest/perception/dev/).
-- **ROS 2** — run `zenoh-plugin-ros2dds` to republish topics into a ROS 2 DDS graph. See [ROS 2](ros2.md).
+- **ROS 2** — the `zenoh-bridge-ros2dds` standalone executable (or the matching plugin loaded into `zenohd`) is the intended route, but the key mapping is unsolved. See [ROS 2](ros2.md#reaching-edgefirst-topics-from-ros-2).
 - **Foxglove** — record with `recorder` and open the MCAP file with the EdgeFirst plug-in.
 
 ## Recording and the data loop

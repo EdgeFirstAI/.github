@@ -10,8 +10,8 @@ The profiler answers the question that comes before everything else on this page
 # Linux and macOS
 curl -fsSL https://raw.githubusercontent.com/EdgeFirstAI/profiler-cli/main/install.sh | bash
 
-# or, into any Python environment
-pip install --user edgefirst-profiler
+# or, into the Python environment of your choice
+pip install edgefirst-profiler
 ```
 
 ```sh
@@ -20,7 +20,7 @@ edgefirst-profiler validate --model yolov8n.onnx --images ./val
 
 That run writes `metrics.yaml`, per-image predictions, a Perfetto trace, and a console summary to disk. Nothing is uploaded and no account is required.
 
-Windows has a PowerShell installer, and per-release container images are published to `ghcr.io/edgefirstai/profiler-cli` with the inference runtime already bundled. Running the binary with no arguments opens an interactive dashboard instead of a one-shot run. See [`profiler-cli`](https://github.com/EdgeFirstAI/profiler-cli) for all four distribution paths.
+Windows has a PowerShell installer — wheels for it are not published yet, so `pip` is a Linux and macOS path today. Per-release container images are published to `ghcr.io/edgefirstai/profiler-cli` with the inference runtime already bundled. Running the binary with no arguments opens an interactive dashboard instead of a one-shot run. See [`profiler-cli`](https://github.com/EdgeFirstAI/profiler-cli) for all four distribution paths.
 
 ## What it measures
 
@@ -47,17 +47,22 @@ Detection models can run each image as a grid of overlapping tiles rather than o
 
 ## Targets and backends
 
-The backend is chosen from the model file extension, and every vendor library is loaded dynamically — a runtime missing on one target never breaks the profiler on another.
+The model's file extension selects the **runtime family** — `.onnx` loads ONNX Runtime, `.tflite` loads TensorFlow Lite, `.hef` loads HailoRT, and so on. What that runtime then executes on is a separate choice, made by the provider and delegate flags you pass and by which vendor libraries are present. Every vendor library is loaded dynamically, so a runtime missing on one target never breaks the profiler on another.
 
-| Target | Default backend | Optional accelerator |
-|--------|-----------------|----------------------|
-| Linux (x86_64, aarch64) | ONNX Runtime (CPU) | TFLite XNNPACK |
-| macOS (Apple Silicon) | ONNX Runtime (CPU) | CoreML execution provider |
-| NXP i.MX 8M Plus | TFLite | VSI NPU delegate |
-| NXP i.MX 95 | TFLite | Neutron NPU delegate |
-| NVIDIA Jetson Orin | ONNX Runtime (CUDA) | TensorRT |
-| Raspberry Pi 5 | ONNX Runtime (CPU) | Hailo-8 / 8L via HailoRT |
-| NXP Ara240 | DVM via `ara2-proxy` | — |
+That distinction matters when reading results: an ONNX model on a CUDA host still runs on the CPU unless you select the CUDA provider.
+
+| Target | Runtime family | Executes on by default | Also available |
+|--------|----------------|------------------------|----------------|
+| Linux (x86_64, aarch64) | ONNX Runtime | CPU | CPU via TFLite XNNPACK |
+| Windows (x86_64) | ONNX Runtime | CPU | — |
+| macOS (Apple Silicon) | ONNX Runtime | CPU | Apple GPU / ANE via CoreML |
+| NXP i.MX 8M Plus | TFLite | CPU | VSI NPU delegate |
+| NXP i.MX 95 | TFLite | CPU | Neutron NPU delegate |
+| NVIDIA Jetson Orin | ONNX Runtime | CUDA GPU | TensorRT |
+| Raspberry Pi 5 | ONNX Runtime | CPU | Hailo-8 / 8L NPU via HailoRT |
+| NXP Ara240 | DVM via `ara2-proxy` | Ara240 NPU | — |
+
+XNNPACK is an optimized CPU kernel library rather than a hardware accelerator; it speeds up CPU inference but does not move work off the CPU.
 
 These are the same targets the [Foundation](foundation.md#supported-hardware) libraries run on, which is not a coincidence: the profiler uses [`hal`](https://github.com/EdgeFirstAI/hal) for accelerated decode and pre/post-processing, so the numbers it reports come from the same code path a deployed pipeline uses.
 

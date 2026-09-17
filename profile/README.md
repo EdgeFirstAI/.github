@@ -25,7 +25,7 @@ EdgeFirst Perception is an open-source stack for building camera, radar, and LiD
 
 The stack is built around one idea: **don't copy the data**. Camera frames move between processes as DMA-BUF handles, the image and tensor pipeline stays on accelerator-backed buffers, and messages are decoded by borrowing from the wire buffer instead of materializing a new structure.
 
-**ROS 2 in one sentence:** EdgeFirst services publish ROS 2 message definitions in ROS 2 CDR over [Eclipse Zenoh](https://zenoh.io), run without a ROS 2 installation, and join a ROS 2 graph through [`zenoh-plugin-ros2dds`](https://github.com/eclipse-zenoh/zenoh-plugin-ros2dds). They are not an RMW implementation. [Details →](ros2.md)
+**ROS 2 in one sentence:** EdgeFirst services publish ROS 2 message definitions in ROS 2 CDR over [Eclipse Zenoh](https://zenoh.io) and run without a ROS 2 installation, but they are not an RMW implementation and do not yet join a ROS 2 graph out of the box — native `rmw_zenoh` support is the plan. [Details →](ros2.md)
 
 ## How it fits together
 
@@ -48,14 +48,14 @@ flowchart TB
     found --> hw
 ```
 
-Two integration layers sit on one set of Foundation libraries. Pick the one that matches how your team already works — or bridge between them.
+Arrows read *builds on*: each layer depends on the one beneath it. Sensor data travels the other way, from hardware up — [How the services connect](zenoh.md#how-the-services-connect) shows that path. Two integration layers sit on one set of Foundation libraries; pick the one that matches how your team already works, or bridge between them.
 
 | Layer | What it is | Start here |
 |-------|------------|------------|
 | [**Foundation**](foundation.md) | Libraries shared by everything above: zero-copy tensors and image processing, video capture and encoding, message schemas, inference runtimes | [`hal`](https://github.com/EdgeFirstAI/hal), [`videostream`](https://github.com/EdgeFirstAI/videostream), [`schemas`](https://github.com/EdgeFirstAI/schemas) |
 | [**Perception Middleware**](zenoh.md) | One process per task, communicating as Zenoh peers with no broker. This is what runs on our platforms | [`camera`](https://github.com/EdgeFirstAI/camera), [`model`](https://github.com/EdgeFirstAI/model), [`fusion`](https://github.com/EdgeFirstAI/fusion) |
 | [**GStreamer**](gstreamer.md) | The same perception capabilities as GStreamer and NNStreamer elements, for teams already living in pipelines | [`gstreamer`](https://github.com/EdgeFirstAI/gstreamer) |
-| [**ROS 2**](ros2.md) | Standard ROS 2 messages today, reachable through the Zenoh DDS bridge; native `rmw_zenoh` support is the roadmap | [ROS 2 page](ros2.md) |
+| [**ROS 2**](ros2.md) | Standard ROS 2 message types already; joining a ROS 2 graph is roadmap work via native `rmw_zenoh` | [ROS 2 page](ros2.md) |
 | [**Profiler**](profiler.md) | A free binary that runs your model on the target and reports accuracy and per-stage timing | [`profiler-cli`](https://github.com/EdgeFirstAI/profiler-cli) |
 | [**Platforms**](platforms.md) | Maivin, Raivin, and LiDAR variants such as Maivin+E1R — the middleware composed into production hardware | [Platforms page](platforms.md), [EdgeFirst Modules](https://www.au-zone.com/edgefirstmodules) |
 

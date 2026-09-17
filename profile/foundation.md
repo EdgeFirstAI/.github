@@ -82,9 +82,9 @@ Each microservice is a thin process wrapped around Foundation libraries. The ser
 | `lidarpub` | `schemas` | Robosense and Ouster ingest, clustering, ground filter, `PointCloud2` and `Imu` |
 | `imu` | `bno08x-rs`, `schemas` | Orientation and motion to `sensor_msgs/Imu` |
 | `navsat` | `schemas` | GPS position from `gpsd` to `sensor_msgs/NavSatFix` |
-| `recorder` | — | Writes MCAP with the schemas embedded. It never decodes a message: CDR payloads pass from Zenoh to the file untouched, which is why recording cost is independent of what is being recorded |
+| `recorder` | — | Writes MCAP with the schemas embedded. It never decodes a message: CDR payloads pass from Zenoh to the file untouched, so the cost is independent of the message *type* — it still scales with bytes written |
 
-`recorder` is the clearest case for the architecture. Because every payload is already ROS 2 CDR with a schema attached, a recorder needs no knowledge of any message type — it copies bytes and embeds the schema definition alongside them.
+`recorder` is the clearest case for the architecture. Because every payload is already ROS 2 CDR with a schema attached, a recorder needs no knowledge of any message type — it copies bytes and embeds the schema definition alongside them. Adding a new message type costs it nothing; adding a high-rate one still costs disk bandwidth.
 
 ## Borrowing CDR decode
 

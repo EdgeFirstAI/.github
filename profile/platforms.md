@@ -82,7 +82,7 @@ On every platform:
 That is what lets a platform:
 
 - appear in Foxglove through its MCAP recordings,
-- feed a ROS 2 graph through the [Zenoh DDS bridge](ros2.md), and
+- carry the message types a [ROS 2 graph](ros2.md) expects, and
 - feed your own applications through [`schemas`](https://github.com/EdgeFirstAI/schemas).
 
 ## From recording to a better model
