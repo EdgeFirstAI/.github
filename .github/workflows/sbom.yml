@@ -25,6 +25,14 @@ on:
       timeout-minutes:
         type: number
         default: 20
+      targets:
+        description: Space-separated extra Rust target triples for the dependency graph
+        type: string
+        default: ''
+      extra-manifests:
+        description: Space-separated Cargo.toml paths outside the workspace
+        type: string
+        default: ''
       upload-name:
         type: string
         default: sbom
@@ -66,4 +74,6 @@ jobs:
           project-type: ${{ inputs.project-type }}
           version-file: ${{ inputs.version-file }}
           source-dirs: ${{ inputs.source-dirs }}
+          targets: ${{ inputs.targets }}
+          extra-manifests: ${{ inputs.extra-manifests }}
           upload-name: ${{ inputs.upload-name }}

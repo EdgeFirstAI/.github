@@ -68,13 +68,55 @@ generate_dependency_sbom() {
       echo "error: cargo-cyclonedx is required (install via taiki-e/install-action)" >&2
       exit 1
     fi
-    cargo cyclonedx --format json --all
-    python3 - "$DEP_SBOM" <<'PY'
+    # A dependency graph is resolved per target, so a host-only scan cannot see
+    # a target-conditional dependency -- the `windows-*` crates are the visible
+    # case, and none is reachable from a Linux runner. SBOM_TARGETS asks for the
+    # graph of each named triple as well; the literal `all` is cargo-cyclonedx's
+    # own value for "every possible target" and is usually what you want, since
+    # over-listing a dependency costs nothing and omitting one is the bug.
+    #
+    # SBOM_EXTRA_MANIFESTS covers packages that `--all` cannot reach because they
+    # are excluded from the workspace. Those are frequently the SHIPPED artifacts
+    # (a cdylib built as its own standalone package), so leaving them out
+    # understates exactly what the SBOM exists to describe.
+    #
+    # Both default to empty, which reproduces the previous behaviour exactly.
+    #
+    # Every scan is written under a run-unique --override-filename. cargo-cyclonedx
+    # drops one file per package beside its manifest, and a --target run drops
+    # another per package per target; they are build residue, usually gitignored,
+    # so a working tree accumulates scans from older dependency graphs while
+    # `git status` stays clean. Merging whatever is lying about makes the SBOM the
+    # union of every graph ever scanned there -- measured in one repository as 360
+    # components against 237 on a fresh checkout, carrying versions no current
+    # lockfile pinned. Naming this run's output makes provenance structural: the
+    # merge takes exactly the files it asked for, with no dependence on mtimes,
+    # on a filesystem's timestamp precision, or on clock agreement between the
+    # workspace and TMPDIR. Only those files are removed afterwards, so a
+    # caller's own residue is left exactly as it was found.
+    scan_prefix="ef-sbom-scan-$$-${RANDOM}"
+    cyclonedx_scan() {
+      cargo cyclonedx --format json --override-filename "$scan_prefix" "$@"
+    }
+    cyclonedx_scan --all
+    for manifest in ${SBOM_EXTRA_MANIFESTS:-}; do
+      cyclonedx_scan --manifest-path "$manifest"
+    done
+    for target in ${SBOM_TARGETS:-}; do
+      cyclonedx_scan --all --target "$target" --target-in-filename
+      for manifest in ${SBOM_EXTRA_MANIFESTS:-}; do
+        cyclonedx_scan --manifest-path "$manifest" --target "$target" --target-in-filename
+      done
+    done
+    python3 - "$DEP_SBOM" "$scan_prefix" <<'PY'
 import json, pathlib, sys
 out = pathlib.Path(sys.argv[1])
+# Exactly the files this run wrote: --override-filename gave them a name nothing
+# else in the tree can have. Residue from an older graph is invisible here.
+prefix = sys.argv[2]
 components = []
 seen = set()
-for path in pathlib.Path(".").rglob("*.cdx.json"):
+for path in sorted(pathlib.Path(".").rglob(f"{prefix}*")):
     if any(part in {".ef-ci", "target", "venv", ".venv", "node_modules", "sbom"} for part in path.parts):
         continue
     doc = json.loads(path.read_text(encoding="utf-8"))
@@ -96,6 +138,7 @@ with out.open("w", encoding="utf-8") as handle:
     handle.write("\n")
 print(f"merged {len(components)} components into {out}")
 PY
+    find . -name "${scan_prefix}*" -not -path "./.ef-ci/*" -delete
   elif [[ -f pyproject.toml ]]; then
     if command -v uv >/dev/null 2>&1; then
       uv run --with 'cyclonedx-bom==7.3.0' cyclonedx-py environment \

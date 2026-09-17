@@ -28,6 +28,20 @@ inputs:
     description: NOTICE path
     required: false
     default: NOTICE
+  targets:
+    description: >-
+      Space-separated Rust target triples to resolve the dependency graph for,
+      in addition to the host. A graph is per-target, so a host-only scan misses
+      every target-conditional dependency. Empty keeps the host-only behaviour.
+    required: false
+    default: ''
+  extra-manifests:
+    description: >-
+      Space-separated Cargo.toml paths outside the workspace, which `--all`
+      cannot reach. Workspace-excluded packages are often the shipped artifacts,
+      so omitting them understates what the SBOM describes.
+    required: false
+    default: ''
   upload-name:
     description: Artifact name; empty skips upload
     required: false
@@ -77,6 +91,8 @@ runs:
         SBOM_MODE: ${{ inputs.mode }}
         OUTPUT_DIR: ${{ inputs.output-dir }}
         NOTICE_FILE: ${{ inputs.notice-file }}
+        SBOM_TARGETS: ${{ inputs.targets }}
+        SBOM_EXTRA_MANIFESTS: ${{ inputs.extra-manifests }}
         SCRIPT_DIR: ${{ github.action_path }}/../../scripts
       run: |
         chmod +x "$SCRIPT_DIR/generate_sbom.sh"
