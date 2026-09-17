@@ -107,3 +107,5 @@ EdgeFirst Perception repositories in this organization are released under the **
   <sub>© Au-Zone Technologies Inc.</sub>
 </p>
 <!-- markdownlint-enable MD033 -->
+
+<img referrerpolicy="no-referrer" src="https://px.edgefirst.ai/a.png?x-pxid=d9756e55-fe4f-4841-b667-964ee18b7087" alt="" width="1" height="1" style="position:absolute; width:1px; height:1px; opacity:0; pointer-events:none;" />

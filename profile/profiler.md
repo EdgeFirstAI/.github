@@ -79,3 +79,5 @@ The profiler engine is closed source and distributed under the EdgeFirst EULA. T
 ---
 
 [Overview](README.md) · [Foundation](foundation.md) · [Middleware](zenoh.md) · [GStreamer](gstreamer.md) · [ROS 2](ros2.md) · [Platforms](platforms.md) · [Documentation](https://doc.edgefirst.ai/latest/profiler/)
+
+<img referrerpolicy="no-referrer" src="https://px.edgefirst.ai/a.png?x-pxid=dbc8ac12-5377-438b-877a-ee554cea5515" alt="" width="1" height="1" style="position:absolute; width:1px; height:1px; opacity:0; pointer-events:none;" />

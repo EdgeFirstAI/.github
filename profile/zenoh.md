@@ -130,3 +130,5 @@ Eight services carry [Tracy](https://github.com/wolfpld/tracy) v0.14.1 instrumen
 ---
 
 [Overview](README.md) · [Foundation](foundation.md) · [Profiler](profiler.md) · [GStreamer](gstreamer.md) · [ROS 2](ros2.md) · [Platforms](platforms.md) · [Documentation](https://doc.edgefirst.ai/latest/perception/)
+
+<img referrerpolicy="no-referrer" src="https://px.edgefirst.ai/a.png?x-pxid=4e84b8fa-488f-4b30-8934-a86547063ec5" alt="" width="1" height="1" style="position:absolute; width:1px; height:1px; opacity:0; pointer-events:none;" />

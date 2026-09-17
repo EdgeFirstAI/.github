@@ -48,3 +48,5 @@ If you run EdgeFirst hardware alongside ROS 2 — AMRs, agriculture, industrial,
 ---
 
 [Overview](README.md) · [Foundation](foundation.md) · [Middleware](zenoh.md) · [Profiler](profiler.md) · [GStreamer](gstreamer.md) · [Platforms](platforms.md) · [Documentation](https://doc.edgefirst.ai/latest/perception/)
+
+<img referrerpolicy="no-referrer" src="https://px.edgefirst.ai/a.png?x-pxid=0c76d54e-56c0-46ec-b74c-60e47e60493d" alt="" width="1" height="1" style="position:absolute; width:1px; height:1px; opacity:0; pointer-events:none;" />
