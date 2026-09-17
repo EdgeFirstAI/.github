@@ -1,11 +1,8 @@
 # EdgeFirstAI shared CI
 
-Reusable GitHub Actions for EdgeFirst and Maivin repositories. Product repos
-call these workflows by **commit SHA** (tag recorded in a comment). This
-repository is public so other public repos can `uses:` it.
+Reusable GitHub Actions for EdgeFirst and Maivin repositories. Product repos call these workflows by **commit SHA** (tag recorded in a comment). This repository is public so other public repos can `uses:` it.
 
-Design: [CICD Pipelines](https://au-zone.atlassian.net/wiki/spaces/EAM/pages/2750906369/CICD+Pipelines)
-Ticket: [EDGEAI-1553](https://au-zone.atlassian.net/browse/EDGEAI-1553)
+Design: [CICD Pipelines](https://au-zone.atlassian.net/wiki/spaces/EAM/pages/2750906369/CICD+Pipelines) Ticket: [EDGEAI-1553](https://au-zone.atlassian.net/browse/EDGEAI-1553)
 
 The organisation profile README lives in [`profile/`](profile/README.md).
 
@@ -34,14 +31,9 @@ The organisation profile README lives in [`profile/`](profile/README.md).
 uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@eec0cb31b6576a47735099b91e39a9bdb5fbde3a
 ```
 
-The `uses:` pin is the only place the shared commit appears, and Dependabot
-bumps it. CI rejects tag refs such as `@v1.0.0`.
+The `uses:` pin is the only place the shared commit appears, and Dependabot bumps it. CI rejects tag refs such as `@v1.0.0`.
 
-Internally each shared workflow checks itself out to reach its composite
-actions, using `job.workflow_repository` and `job.workflow_sha` — the repository
-and commit of the workflow file that defines the running job. Note that
-`github.workflow_sha` is the *caller's* commit and is not a git object in this
-repository; `job.workflow_sha` is the one that resolves here.
+Internally each shared workflow checks itself out to reach its composite actions, using `job.workflow_repository` and `job.workflow_sha` — the repository and commit of the workflow file that defines the running job. Note that `github.workflow_sha` is the *caller's* commit and is not a git object in this repository; `job.workflow_sha` is the one that resolves here.
 
 ## Tiers and labels
 
@@ -49,29 +41,20 @@ repository; `job.workflow_sha` is the one that resolves here.
 - **Full** — label `ci:full` (or `ci:hardware` for boards only).
 - **Nightly** — schedule, only if `main` moved.
 
-`ci-gate` is the only required check. See
-[`.github/copilot-instructions.md`](.github/copilot-instructions.md).
+`ci-gate` is the only required check. See [`.github/copilot-instructions.md`](.github/copilot-instructions.md).
 
 ## Runner classes
 
-Per-lane input `runner-class-linux` (and arm/mac/windows): `hosted` (default),
-`fleet`, or `larger`. Billed GitHub larger runners are an exception recorded in
-the caller and restricted by the `larger-runners` group.
+Per-lane input `runner-class-linux` (and arm/mac/windows): `hosted` (default), `fleet`, or `larger`. Billed GitHub larger runners are an exception recorded in the caller and restricted by the `larger-runners` group.
 
 ## Release chain
 
 1. PR `release/X.Y.Z` → `main` with `ci:full`.
-2. Merge. Shared tag workflow creates an annotated `vX.Y.Z` using
-   `RELEASE_TAG_TOKEN`.
-3. Tag runs `release-rust.yml`. crates.io trusted publishing uses the **caller**
-   `workflow_ref` and environment `crates-io`.
-4. PyPI trusted publishing **cannot** use this reusable workflow. The caller
-   keeps `publish-pypi` (see `templates/release.yml`).
+2. Merge. Shared tag workflow creates an annotated `vX.Y.Z` using `RELEASE_TAG_TOKEN`.
+3. Tag runs `release-rust.yml`. crates.io trusted publishing uses the **caller** `workflow_ref` and environment `crates-io`.
+4. PyPI trusted publishing **cannot** use this reusable workflow. The caller keeps `publish-pypi` (see `templates/release.yml`).
 
-Do not tag by hand. Org rulesets in `.github/rulesets/` enforce `ci-gate` on
-migrated repos and restrict `v*` tag creation. Org admins may merge their own
-PRs without a human approval; other authors still need a review. `ci-gate`
-is required for everyone.
+Do not tag by hand. Org rulesets in `.github/rulesets/` enforce `ci-gate` on migrated repos and restrict `v*` tag creation. Org admins may merge their own PRs without a human approval; other authors still need a review. `ci-gate` is required for everyone.
 
 ## Applying org settings
 
@@ -80,8 +63,6 @@ gh auth refresh -h github.com -s admin:org
 bash .github/rulesets/apply.sh
 ```
 
-Create runner groups from `.github/rulesets/runner-groups.md`. Register
-machines with `.github/runners/provision-*.sh` (EDGEAI-1577).
+Create runner groups from `.github/rulesets/runner-groups.md`. Register machines with `.github/runners/provision-*.sh` (EDGEAI-1577).
 
-Set organisation Copilot custom instructions to
-`.github/copilot-instructions.md`.
+Set organisation Copilot custom instructions to `.github/copilot-instructions.md`.
