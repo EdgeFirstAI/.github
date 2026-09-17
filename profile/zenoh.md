@@ -81,7 +81,7 @@ Step 2 is the only place the full-resolution frame exists, and it is never copie
 
 Services publish on bare keys such as `camera/h264`. Each session sets its namespace to the device hostname, so the key on the wire is `verdin-imx8mp-15141091/camera/h264`.
 
-This does four things: it keeps several devices on one network apart, it makes recordings from multiple devices mergeable, it lets a remote session subscribe to one device or to all of them with `**/camera/h264`, and it lets a ROS 2 bridge strip the prefix per device so two devices never collide on the same ROS topic names. See [ROS 2](ros2.md#using-edgefirst-with-ros-2-today).
+This does four things: it keeps several devices on one network apart, it makes recordings from multiple devices mergeable, it lets a remote session subscribe to one device or to all of them with `**/camera/h264`, and it lets a ROS 2 bridge strip the prefix per device so two devices never collide on the same ROS topic names. See [ROS 2](ros2.md#where-it-stands-today).
 
 The namespace replaces the `rt/` prefix used by earlier releases. Applications still hard-coded to `rt/...` will not receive data.
 
@@ -116,7 +116,7 @@ That distinction is what the [benchmark numbers](foundation.md#borrowing-cdr-dec
 Topics are visible only on the device by default. Enabling `zenohd` (TCP 7447) exposes them on the network:
 
 - **Your applications** — open a Zenoh session to the router and subscribe with `schemas`. See the [Developer Guide](https://doc.edgefirst.ai/latest/perception/dev/).
-- **ROS 2** — run the `zenoh-bridge-ros2dds` standalone executable, or load the matching plugin into `zenohd`, with the device hostname as its Zenoh namespace. See [ROS 2](ros2.md#using-edgefirst-with-ros-2-today).
+- **ROS 2** — run the `zenoh-bridge-ros2dds` standalone executable, or load the matching plugin into `zenohd`, with the device hostname as its Zenoh namespace. See [ROS 2](ros2.md#where-it-stands-today).
 - **Foxglove** — record with `recorder` and open the MCAP file with the EdgeFirst plug-in.
 
 ## Recording and the data loop
