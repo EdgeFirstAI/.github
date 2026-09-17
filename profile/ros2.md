@@ -86,7 +86,7 @@ EdgeFirst publishes `tf_static` as individual `geometry_msgs/TransformStamped` m
 
 rosbag2 compatibility is a separate question from Foxglove: `ros2 bag` expects its own storage profile and metadata alongside the MCAP, which the recorder does not write today. Whether recordings replay directly through rosbag2 has not been verified.
 
-## Performance when serialization is needed
+## What serialization costs
 
 A publisher encodes CDR once. The recorder, the network, and the bridge then move those encoded bytes without re-encoding them — only a subscriber that actually inspects fields pays a decode. [`schemas`](https://github.com/EdgeFirstAI/schemas) makes that decode cheap by reading CDR in place instead of materializing a copy. Against the codecs used by the two major ROS 2 middleware vendors, on a Raspberry Pi 5 ([BENCHMARKS.md](https://github.com/EdgeFirstAI/schemas/blob/main/BENCHMARKS.md)):
 
