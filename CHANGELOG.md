@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `publish-rust.yml`, the tag side of the release chain, and the rule it exists to enforce: **a tag deploys and never builds.** It resolves the `release.yml` run that built the tag's artifacts, binds that run to the tag, downloads the artifacts, publishes crates via OIDC and creates the GitHub Release. It compiles nothing except `cargo publish --no-verify`, which has no pre-built input and is bounded by the release branch having already packaged and tested the same tree. A missing artifact, an expired artifact or a binding mismatch fails the publish; there is deliberately no fallback to a build, because a deploy-only pipeline that cannot prove which build it is shipping is worse than one that rebuilds.
+
+  The binding is by **tree SHA, not commit SHA**. A squash merge gives the merge commit a different SHA from the release branch head while the tree is identical, so commit equality would reject every squash-merged release. Checking the tree also passes only when the release branch was up to date with `main` at merge, which is what a release wants anyway, so the check doubles as enforcement rather than merely as a guard.
+
+  Publishing is gated inside the shared workflow on `github.event_name == 'push'` and a `refs/tags/` ref, not in the caller. A `workflow_dispatch` therefore resolves, verifies, downloads, renders the release notes and publishes nothing — a complete rehearsal of the publish path at no cost and with no tag — and a caller cannot remove that gate by editing its own file.
+
+- `templates/publish.yml`, and `templates/release.yml` rewritten as the release-branch build. The two carry the migration hazard that neither a rehearsal nor CI can catch: PyPI and crates.io Trusted Publishers match on workflow **filename**, so splitting the chain breaks every publisher configuration until it is re-pointed from `release.yml` to `publish.yml`, and a rehearsal skips the upload. Re-point first, dispatch second, tag third.
+
+- `release/X.Y.Z-rcN` branches in `tag-release.yml`, producing `vX.Y.Z-rcN`. The suffix is restricted to `-rc<digits>` rather than the full SemVer pre-release grammar because the derived version is written unquoted to `GITHUB_OUTPUT`, and the anchored pattern is what stops a branch name forging a second output. `publish-rust.yml` marks such a tag as a GitHub pre-release and never moves `latest` onto it; the previous "latest" computation compared with `sort -V`, which ranks `0.33.0-rc1` above `0.32.0` and would have made a release candidate the latest release.
+
+- A changelog-section check on the release branch. `publish.yml` builds the GitHub Release body from the `## [X.Y.Z]` section, and an absent section previously produced a release with empty notes, discovered after the tag existed. It is now a red release PR. A `-rcN` branch is checked against its base version, since a candidate does not get its own section.
+
 - `NCSA` to the license policy's allowed list. The University of Illinois/NCSA Open Source License is OSI-approved and permissive, combining the MIT and BSD-3-Clause terms, and is satisfied by attribution alone. It is the licence LLVM used before moving to Apache-2.0 with the LLVM exception, both forms of which the list already allows. Reached today through `libfuzzer-sys`, a `cfg(fuzzing)` dependency of `rav1e`; a permissive licence blocking a build is a gap in the list rather than a finding about the dependency.
 
 - `targets` and `extra-manifests` on `sbom.yml` and the `sbom-tools` action, for the dependency-graph scan. Both default to empty, so no existing caller changes. A dependency graph is resolved per target, and `cargo cyclonedx --all` sees only the workspace, which leaves two holes in what an SBOM is supposed to describe. A host-only scan on a Linux runner cannot reach a target-conditional dependency -- in hal that is the fourteen `windows-*` crates, every one of them shipped in the Windows C archive and the Windows wheels, none of them in the SBOM. And a package excluded from the workspace is invisible to `--all` even when it is the *shipped* artifact: hal's five `-capi` cdylibs are each a standalone package with its own lockfile, and they are what the C archive contains. `targets` accepts triples or cargo-cyclonedx's own literal `all`, which is usually what you want -- naming a dependency that never ships costs nothing, omitting one that does is the defect. A target needs no toolchain installed, since `cargo metadata`'s platform filtering resolves it from the registry, so one Linux runner can produce the Windows, macOS, iOS and Android graphs.
@@ -47,6 +59,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `release-rust.yml` is now the **release-branch** side of the chain and no longer runs on a tag. It verifies version consistency across `Cargo.toml`, `pyproject.toml` and `VERSION` against the branch name, checks the changelog section, and produces the full SBOM. Callers trigger it from `on: push: branches: ['release/*.*.*']`.
+
+  It runs on `push` rather than `pull_request` deliberately. A `pull_request` run builds a merge-preview commit that exists nowhere in history, so its artifacts could never be bound to the tag; a `push` run builds the branch head, which is the commit the release PR merges.
+
 - `templates/` now pins every `EdgeFirstAI/.github` `uses:` to an all-zero placeholder instead of a real commit, and a new lint step enforces it. The pins had drifted to a commit from nine months ago, which is worse than it sounds: a stale SHA still *resolves*, so a copied skeleton silently ran old CI. This change made the failure mode concrete -- the skeleton referenced `advisories.yml`, which does not exist at the old pin, and forwarded a `force` input the old `nightly-gate` does not declare. An unresolvable ref fails immediately and says what to fix. Third-party actions in `templates/` keep real pins and can still be copied as-is.
 
 - `rust-full`'s `nightly-extra` job no longer runs `cargo audit`; that moved to `advisories.yml` so it is not gated. The job is now named **Feature combinations**, which is all it still does, and it skips entirely when `hack-args` is empty rather than booting a runner to install tools and run nothing. Callers wanting advisory scanning must add the `advisories.yml` job, as `templates/nightly.yml` now does.
@@ -62,6 +78,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   than the 15-to-20-job workflow it replaced, which is a failed migration, not
   a saving. The `larger` class maps to `ubuntu-24.04-xlarge` /
   `ubuntu-24.04-arm-xlarge` to match the hosted class.
+
+### Removed
+
+- The `wheels`, `c-archive`, `crates` and `github-release` jobs from `release-rust.yml`. The two publish jobs moved to `publish-rust.yml` unchanged in substance. The two build jobs were deleted rather than moved, and the build now stays in the product repository.
+
+  They had never run. `release-rust.yml`'s only caller was `ci-foundation-scratch`, which has no tags, so the workflow was never executed in any repository, and that caller still passed a `shared-sha` input removed in #22 — it would have failed on first use. EDGEAI-1553's acceptance criterion that a scratch repo complete `release/X.Y.Z` PR → merge → auto-tag → release dry run was therefore never met, which is how a release path shipped in 1.0.0 with no evidence behind it.
+
+  Nor could they have worked. `wheels` was a four-way `uvx maturin build` matrix and `c-archive` fell back to tarring the whole of `target/release`, intermediates included. The build is the one genuinely repository-specific part of a release: hal ships five wheels across eight targets plus ten C-API archives with codesigning, schemas ships ten wheels, videostream ships C. A shared matrix guessing at that is wrong for every caller, and a wrong shared job is worse than no job because the next migrator assumes it works. What is shared is everything around the build — version consistency, the changelog contract, the SBOM, and the whole publish side.
+
+  Two rules make a repository's own build work with `publish-rust.yml`: `retention-days: 30` or more, because the release-PR-to-tag gap is human-paced and publish fails on an expired artifact rather than rebuilding; and `if-no-files-found: error`, because a silently empty artifact is a silently incomplete release.
 
 ### Fixed
 

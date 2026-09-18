@@ -7,6 +7,10 @@ name: tag-release
 #
 # Creates an annotated tag object (not a lightweight ref) so `git describe`
 # sees the release. Unsigned: signing needs a runner-held key.
+#
+# The tag only names the release; it never builds it. release.yml has already
+# built and uploaded every artifact on pushes to the release branch, and
+# publish.yml consumes them when this tag appears.
 
 on:
   workflow_call:
@@ -32,8 +36,12 @@ jobs:
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           version="${HEAD_REF#release/}"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Branch '$HEAD_REF' is not a valid release/X.Y.Z branch"
+          # release/X.Y.Z and release/X.Y.Z-rcN. The suffix is restricted to
+          # -rc<digits> rather than the whole SemVer pre-release grammar: the
+          # value is written unquoted to GITHUB_OUTPUT below, so the anchored
+          # pattern is what keeps a branch name from forging a second output.
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$ ]]; then
+            echo "::error::Branch '$HEAD_REF' is not a valid release/X.Y.Z or release/X.Y.Z-rcN branch"
             exit 1
           fi
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
@@ -53,7 +61,9 @@ jobs:
 
           # POST git/refs alone creates a lightweight tag. Annotated tags are
           # created first via git/tags, then the ref is pointed at the tag object.
-          MESSAGE=$(printf 'Release %s\n\n%s' "$TAG" "$PR_URL")
+          kind=Release
+          case "$TAG" in *-rc*) kind="Release candidate" ;; esac
+          MESSAGE=$(printf '%s %s\n\n%s' "$kind" "$TAG" "$PR_URL")
           TAG_SHA=$(jq -n \
             --arg tag "$TAG" \
             --arg message "$MESSAGE" \
