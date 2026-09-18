@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.1.0] - 2026-09-18
 
-Everything here is exercised by a real release: `EdgeFirstAI/ara2-rs` v0.18.0 was built on a release branch, tagged on merge and published from those artifacts, using these workflows at 68dd89a — which is this tag. That migration is also what found most of what follows.
+Everything here is exercised by a real release: `EdgeFirstAI/ara2-rs` v0.18.0 was built on a release branch, tagged on merge and published from those artifacts, using these workflows at 68dd89a. That migration is also what found most of what follows.
 
 ### Added
 
