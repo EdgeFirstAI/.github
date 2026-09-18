@@ -76,10 +76,10 @@ jobs:
   # plain download with no run-id and no actions: read of its own.
   publish-pypi:
     needs: publish
-    # Runs on a rehearsal too, and only the upload is gated. A rehearsal whose
-    # job is skipped proves nothing about the wheels; the point of rehearsing
-    # is to discover an empty or wrong wheel set BEFORE the tag, not after the
-    # crates have already gone out.
+    # Runs on a rehearsal too, and only the upload is gated inside the action.
+    # A rehearsal whose job is skipped proves nothing about the files; the
+    # point of rehearsing is to discover an empty or wrong set BEFORE the tag,
+    # not after the crates have already gone out.
     if: ${{ always() && needs.publish.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -88,26 +88,21 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+      # The job stays here because it must: PyPI Trusted Publishing matches
+      # job_workflow_ref in the publishing repository, so a reusable workflow
+      # cannot be the publisher. An action inside the job does not change the
+      # claim, so the selection and verification are still shared.
+      #
+      # One call per distribution. A repository shipping several needs that
+      # anyway, since each has its own PyPI environment.
+      - uses: EdgeFirstAI/.github/.github/actions/publish-pypi@0000000000000000000000000000000000000000
         with:
-          name: release-artifacts
-          path: staged
-      - name: Collect wheels
-        run: |
-          # Wheels only, by extension. Do NOT widen this to *.tar.gz: a C-API
-          # archive is also a .tar.gz and PyPI will reject it, after the crates
-          # have already published. A project that ships an sdist adds its exact
-          # name here rather than a glob that catches tarballs it did not build.
-          mkdir -p dist
-          find staged -name '*.whl' -exec cp {} dist/ \;
-          ls -la dist
-          [[ -n "$(ls -A dist)" ]] || { echo "::error::no wheels in the build artifacts"; exit 1; }
-      - name: Upload to PyPI
-        # publish-registries, not publishing: it is false for a rehearsal AND
-        # for a release candidate whose manifests still carry the base version,
-        # where uploading would consume the immutable version the final release
-        # needs. The shared workflow decides; this job only obeys.
-        if: ${{ needs.publish.outputs.publish-registries == 'true' }}
-        uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e  # v1.13.0
-        with:
-          packages-dir: dist
+          distribution: your-distribution-name
+          # Asserts every selected file carries it. A PyPI version is immutable,
+          # so a file for the wrong one is found when it cannot be corrected.
+          version: ${{ needs.publish.outputs.version }}
+          # publish-registries, not publishing: false for a rehearsal AND for a
+          # release candidate whose manifests still carry the base version,
+          # where uploading would consume the version the final release needs.
+          # The shared workflow decides; this job obeys.
+          publish: ${{ needs.publish.outputs.publish-registries }}

@@ -188,7 +188,9 @@ Two rules make a repository's build work with `publish-rust.yml`:
 
 Both match on workflow **filename**. Splitting the chain moves publishing from `release.yml` to `publish.yml`, so **every publisher configuration must be re-pointed before the first tag** or the upload fails on a claim mismatch. The rehearsal will not catch it, because a rehearsal skips the upload. Re-point first, dispatch second, tag third.
 
-PyPI matches `job_workflow_ref` in the **publisher repository**, so a reusable workflow in `EdgeFirstAI/.github` cannot be a Trusted Publisher ([docs](https://docs.pypi.org/trusted-publishers/troubleshooting/)). `publish-rust.yml` stages the artifacts into the caller's run under the name `release-artifacts`, and each repo's `publish.yml` keeps a small `publish-pypi` job with `pypa/gh-action-pypi-publish` and environment `pypi`. Composite actions are fine inside that job. crates.io **does** work from the shared workflow (caller `workflow_ref`).
+PyPI matches `job_workflow_ref` in the **publisher repository**, so a reusable workflow in `EdgeFirstAI/.github` cannot be a Trusted Publisher ([docs](https://docs.pypi.org/trusted-publishers/troubleshooting/)). `publish-rust.yml` stages the artifacts into the caller's run under the name `release-artifacts`, and each repo's `publish.yml` keeps a small `publish-pypi` job with environment `pypi`. Composite actions are fine inside that job — only reusable workflows change the claim — so the body is the shared `publish-pypi` action and the repository writes four lines.
+
+That action selects by **filename**, not by artifact name: a wheel filename already carries the distribution and the version canonically, so nothing has to agree in advance about how a build names its artifacts. Call it once per distribution, which a repository shipping several needs anyway since each has its own environment. Naming the distribution also makes its sdist safe to take — an unscoped `*.tar.gz` matches a C API archive, and PyPI rejects it after the crates have already published. crates.io **does** work from the shared workflow (caller `workflow_ref`).
 
 ## License policy (zero tolerance)
 

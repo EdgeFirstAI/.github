@@ -21,7 +21,7 @@ The organisation profile README lives in [`profile/`](profile/README.md).
 | `.github/workflows/release-rust.yml` | release-branch side: version consistency, changelog section, `cargo package`, SBOM |
 | `.github/workflows/release-wheels.yml` | release-branch side: maturin wheels for a PyO3 binding, built on the `maturin-build` action |
 | `.github/workflows/publish-rust.yml` | tag side: resolve the build, verify the tree, crates OIDC, GitHub Release |
-| `.github/actions/` | `setup-rust`, `setup-python-uv`, `sbom-tools`, `board-run`, `resolve-release-build`, `maturin-build`, `workflow-lint` |
+| `.github/actions/` | `setup-rust`, `setup-python-uv`, `sbom-tools`, `board-run`, `resolve-release-build`, `maturin-build`, `publish-pypi`, `workflow-lint` |
 | `.github/scripts/` | license policy, the SHA-pin check, the workspace version check (single copy each) |
 | `.github/rulesets/` | `protect-main` (reviews; org-admin PR bypass), `protect-main-ci` (ci-gate, no bypass), `protect-release-tags` |
 | `.github/runners/` | ephemeral fleet provision scripts |
