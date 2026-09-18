@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-18
+
+Everything here is exercised by a real release: `EdgeFirstAI/ara2-rs` v0.18.0 was built on a release branch, tagged on merge and published from those artifacts, using these workflows at 68dd89a. That migration is also what found most of what follows.
+
 ### Added
 
 - **`release-wheels.yml`, the maturin wheel build every binding repository was writing for itself.** Six repositories carry their own copy of the same matrix — `hal`, `client`, `profiler`, `schemas`, `tflite-rs` and `ara2-rs` — and the wheel build is also where the tag-path failures were: a runner image without `git-lfs`, the same image without a C compiler, a toolchain component conflict. Those are properties of the build environment rather than of any one repository, so they are now fixed in one place. It takes a `runners` matrix (defaulting to manylinux2014 on x86_64 and aarch64 Linux with the sdist on x86_64, on the `larger` class the runner policy specifies for a release build), a `features` list for `pyo3/abi3-*`, and the `env` and `pre-command` hooks. Every step declares bash, since an overridden matrix may name a Windows image where the default shell is PowerShell. The C compiler it needs is guaranteed by `setup-rust`; it checks `git` itself, because maturin shells out to it for a vendored source. It checks each built wheel's version against the release branch: a wheel's version comes from the manifest, but a binding deriving it some other way can still produce a wheel naming a version the release is not, and a PyPI version is immutable once uploaded.
@@ -265,5 +269,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   precedence over `ci:hardware`. PyPI publish requires the reusable release
   job to succeed.
 
-[Unreleased]: https://github.com/EdgeFirstAI/.github/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/EdgeFirstAI/.github/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/EdgeFirstAI/.github/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/EdgeFirstAI/.github/releases/tag/v1.0.0
