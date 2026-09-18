@@ -1,0 +1,182 @@
+name: Resolve release build
+description: >
+  Find the release-branch build run that produced this tag's artifacts, and
+  prove it built what is being released. Publishes nothing and builds nothing;
+  it needs no checkout, which is what lets a rehearsal run before the tag
+  exists. Used by publish-rust.yml and by repositories whose publish mechanics
+  are their own.
+
+inputs:
+  build-workflow:
+    description: Workflow file whose run built the artifacts
+    required: false
+    default: release.yml
+  tag:
+    description: Tag to resolve; required when the ref is not a tag (a rehearsal)
+    required: false
+    default: ''
+  dry-run:
+    description: Force a rehearsal even on a tag push
+    required: false
+    default: 'false'
+  github-token:
+    description: >
+      Token with `actions: read` AND `contents: read` on this repository. Both
+      are needed: the workflow-run and artifact lookups are Actions APIs, while
+      the ref, tag-object and commit-tree lookups that do the binding are
+      Contents APIs. A caller granting only one of them fails part way through,
+      and on a private repository fails immediately.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  tag:
+    description: vX.Y.Z or vX.Y.Z-rcN
+    value: ${{ steps.tag.outputs.tag }}
+  version:
+    description: The tag without its leading v
+    value: ${{ steps.tag.outputs.version }}
+  prerelease:
+    description: "true for a -rcN tag"
+    value: ${{ steps.tag.outputs.prerelease }}
+  publishing:
+    description: "false when this run is a rehearsal; gate every publish step on it"
+    value: ${{ steps.tag.outputs.publishing }}
+  run-id:
+    description: Run of the build workflow that produced the artifacts
+    value: ${{ steps.run.outputs.id }}
+  sha:
+    description: Commit the artifacts were verified against; check this out rather than the tag
+    value: ${{ steps.run.outputs.sha }}
+
+runs:
+  using: composite
+  steps:
+    - name: Tag and mode
+      id: tag
+      shell: bash
+      env:
+        # Never interpolated into the script text; both may contain shell
+        # metacharacters.
+        REF: ${{ github.ref }}
+        INPUT_TAG: ${{ inputs.tag }}
+        EVENT: ${{ github.event_name }}
+        FORCE_DRY_RUN: ${{ inputs.dry-run }}
+      run: |
+        if [[ "$REF" == refs/tags/* ]]; then
+          tag="${REF#refs/tags/}"
+        elif [[ -n "$INPUT_TAG" ]]; then
+          tag="$INPUT_TAG"
+        else
+          echo "::error::Not a tag push and no 'tag' input given — nothing to publish."
+          exit 1
+        fi
+        if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$ ]]; then
+          echo "::error::'$tag' is not vX.Y.Z or vX.Y.Z-rcN"
+          exit 1
+        fi
+        version="${tag#v}"
+        prerelease=false
+        case "$version" in *-rc*) prerelease=true ;; esac
+
+        # Publish only from a real tag push. Everything else rehearses.
+        publishing=false
+        if [[ "$EVENT" == push && "$REF" == refs/tags/* && "$FORCE_DRY_RUN" != true ]]; then
+          publishing=true
+        fi
+        {
+          echo "tag=$tag"
+          echo "version=$version"
+          echo "prerelease=$prerelease"
+          echo "publishing=$publishing"
+        } >> "$GITHUB_OUTPUT"
+        if [[ "$publishing" == true ]]; then
+          echo "### Publishing $tag" >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "### Rehearsal for $tag — nothing will be published" >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+    # Needs no checkout, on purpose. The rehearsal exists to be run BEFORE the
+    # tag is created, so nothing here may assume the tag resolves as a ref.
+    - name: Find the run that built this release
+      id: run
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ github.repository }}
+        TAG: ${{ steps.tag.outputs.tag }}
+        VERSION: ${{ steps.tag.outputs.version }}
+        BUILD_WORKFLOW: ${{ inputs.build-workflow }}
+        PUBLISHING: ${{ steps.tag.outputs.publishing }}
+      run: |
+        branch="release/${VERSION}"
+
+        # No event filter: a workflow_dispatch rebuild of the release branch is
+        # as valid a source as the original push, and the tree check below is
+        # what actually binds a run to what is being released.
+        run_json="$(gh api \
+          "repos/${REPO}/actions/workflows/${BUILD_WORKFLOW}/runs?branch=${branch}&status=success&per_page=1" \
+          --jq '.workflow_runs[0] // empty')"
+        if [[ -z "$run_json" ]]; then
+          echo "::error::No successful ${BUILD_WORKFLOW} run on '${branch}'."
+          echo "::error::The artifacts for ${TAG} are built by pushing to that branch; publish never builds them."
+          exit 1
+        fi
+        run_id="$(jq -r '.id' <<<"$run_json")"
+        build_sha="$(jq -r '.head_sha' <<<"$run_json")"
+        build_tree="$(gh api "repos/${REPO}/commits/${build_sha}" --jq '.commit.tree.sha')"
+
+        # What the build is compared against depends on whether the tag exists
+        # yet. On a real tag push it is the tag, which is the binding that
+        # matters. On a pre-tag rehearsal there is no tag, so it is the release
+        # branch head — which proves the branch has no commits the build has
+        # not seen, the same failure the tag check would catch.
+        if ref_json="$(gh api "repos/${REPO}/git/ref/tags/${TAG}" 2>/dev/null)"; then
+          against="tag ${TAG}"
+          sha="$(jq -r '.object.sha' <<<"$ref_json")"
+          # Annotated tags point at a tag object, not at the commit.
+          if [[ "$(jq -r '.object.type' <<<"$ref_json")" == tag ]]; then
+            sha="$(gh api "repos/${REPO}/git/tags/${sha}" --jq '.object.sha')"
+          fi
+        elif [[ "$PUBLISHING" == true ]]; then
+          echo "::error::Publishing ${TAG} but the tag ref does not exist."
+          exit 1
+        else
+          against="branch ${branch} (rehearsal: ${TAG} does not exist yet)"
+          sha="$(gh api "repos/${REPO}/git/ref/heads/${branch}" --jq '.object.sha' 2>/dev/null || true)"
+          if [[ -z "$sha" ]]; then
+            echo "::error::Neither tag ${TAG} nor branch ${branch} exists — nothing to rehearse against."
+            exit 1
+          fi
+        fi
+        against_tree="$(gh api "repos/${REPO}/commits/${sha}" --jq '.commit.tree.sha')"
+
+        # Bind by TREE, not by commit. A squash merge gives the merge commit a
+        # different SHA from the release branch head while the tree is
+        # identical, so commit equality would reject every squash-merged
+        # release. A tree mismatch means the thing being released is not the
+        # thing that was built.
+        if [[ "$against_tree" != "$build_tree" ]]; then
+          echo "::error::Tree mismatch: $against is $against_tree, run $run_id built $build_tree ($build_sha)."
+          echo "::error::Push the release branch so it rebuilds, then re-cut the tag."
+          exit 1
+        fi
+
+        expired="$(gh api "repos/${REPO}/actions/runs/${run_id}/artifacts" \
+          --jq '[.artifacts[] | select(.expired) | .name] | join(", ")')"
+        if [[ -n "$expired" ]]; then
+          echo "::error::Artifacts from run $run_id have expired: $expired"
+          echo "::error::Raise retention-days on the release build; publish does not rebuild."
+          exit 1
+        fi
+
+        {
+          echo "id=$run_id"
+          echo "sha=$sha"
+        } >> "$GITHUB_OUTPUT"
+        {
+          echo "- build run: [$run_id](${GITHUB_SERVER_URL}/${REPO}/actions/runs/${run_id})"
+          echo "- build commit: \`${build_sha}\`"
+          echo "- verified against: $against"
+          echo "- tree: \`${build_tree}\`"
+        } >> "$GITHUB_STEP_SUMMARY"

@@ -20,7 +20,7 @@ The organisation profile README lives in [`profile/`](profile/README.md).
 | `.github/workflows/tag-release.yml` | `release/X.Y.Z[-rcN]` merge → annotated `vX.Y.Z[-rcN]` |
 | `.github/workflows/release-rust.yml` | release-branch side: version consistency, changelog section, SBOM |
 | `.github/workflows/publish-rust.yml` | tag side: resolve the build, verify the tree, crates OIDC, GitHub Release |
-| `.github/actions/` | `setup-rust`, `setup-python-uv`, `sbom-tools`, `board-run` |
+| `.github/actions/` | `setup-rust`, `setup-python-uv`, `sbom-tools`, `board-run`, `resolve-release-build` |
 | `.github/scripts/` | license policy (single copy) |
 | `.github/rulesets/` | `protect-main` (reviews; org-admin PR bypass), `protect-main-ci` (ci-gate, no bypass), `protect-release-tags` |
 | `.github/runners/` | ephemeral fleet provision scripts |
@@ -59,7 +59,7 @@ Three workflows, one action each. **A tag deploys; it never builds.**
 | `publish.yml` | push of a `v*.*.*` tag | **publish** what was built | `publish-rust.yml` |
 
 1. PR `release/X.Y.Z` (or `release/X.Y.Z-rcN`) → `main` with `ci:full`. Every push to that branch builds the artifacts and uploads them with `retention-days: 30`.
-2. Merge. The shared tag workflow creates an annotated `vX.Y.Z` using `RELEASE_TAG_TOKEN` — but only if `release.yml` is green for the exact commit being merged, when the caller sets `require-build: release.yml`. Branch protection requires `ci-gate` and nothing else, and the release build runs on a branch push rather than on the PR, so merging is not itself blocked; refusing the tag is where "the artifacts exist before the tag does" is enforced. A merged PR with a red build leaves no tag rather than a tag nothing can honour.
+2. Merge. The shared tag workflow creates an annotated `vX.Y.Z` using `RELEASE_TAG_TOKEN` — but only if `release.yml` is green for the release-branch head being merged, when the caller sets `require-build: release.yml`. Branch protection requires `ci-gate` and nothing else, and the release build runs on a branch push rather than on the PR, so merging is not itself blocked; refusing the tag is where "the artifacts exist before the tag does" is enforced. A merged PR with a red build leaves no tag rather than a tag nothing can honour.
 3. The tag runs `publish.yml`. It finds the `release.yml` run for the matching branch, checks that run's **tree SHA** equals the tag's — a squash merge changes the commit but not the tree — downloads the artifacts and publishes. A missing artifact, an expired artifact or a tree mismatch fails the publish; there is no fallback to a build.
 4. `cargo publish --no-verify` is the one exception, because `cargo publish` has no pre-built input. crates.io trusted publishing uses the **caller** `workflow_ref` and environment `crates-io`.
 5. PyPI trusted publishing **cannot** use a reusable workflow. The caller keeps `publish-pypi` (see `templates/publish.yml`).
