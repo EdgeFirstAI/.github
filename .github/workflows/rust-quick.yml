@@ -170,6 +170,10 @@ jobs:
         with:
           components: rustfmt, clippy
           targets: ${{ !inputs.skip-cross-clippy && inputs.cross-targets || '' }}
+          # rustup's std for a triple is not a C toolchain for it. The
+          # cross-clippy pass below builds every build script in the tree, and
+          # cc-rs needs a compiler for the target.
+          cross-cc-targets: ${{ !inputs.skip-cross-clippy && inputs.cross-targets || '' }}
           tools: nextest,cargo-cyclonedx
           cache-key: ${{ inputs.cache-key }}
 

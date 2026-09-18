@@ -107,12 +107,19 @@ Copy the caller skeletons from [`templates/`](https://github.com/EdgeFirstAI/.gi
 
 Inputs that matter:
 
-- `rust-quick`: `python` (ruff lint), `python-tests` (adds maturin develop + pytest), `ruff-paths`, `ruff-version` (exact ruff for uvx; empty takes whatever the runner's uv cache holds), `timeout-minutes` (hal: 15), `cross-targets`, `runner`, `clippy-args`, `clippy-extra-args` (optional second host pass), `cross-clippy-args` (narrow the per-target pass rather than disabling it with `skip-cross-clippy`), `workflow-lint` (actionlint + SHA-pin policy, on by default), `env` (KEY=VALUE lines), `pre-command` (caller setup after checkout)
+- `rust-quick`: `python` (ruff lint), `python-tests` (adds maturin develop + pytest), `ruff-paths`, `ruff-version` (exact ruff for uvx; empty takes whatever the runner's uv cache holds), `timeout-minutes` (hal: 15), `cross-targets`, `runner`, `clippy-args`, `clippy-extra-args` (optional second host pass), `cross-clippy-args` (narrow the per-target pass rather than disabling it with `skip-cross-clippy`), `workflow-lint` (actionlint + SHA-pin policy, on by default), `env` (KEY=VALUE lines), `pre-command` (caller setup after checkout). The cross-clippy pass installs the cross C toolchain for its `cross-targets`, so a workspace with a build-script dependency no longer has to disable the lane
 - `rust-full`: `lanes` (`all` \| `host` \| `hardware`), `boards`, `nightly`, `runner-class-linux` / `-linux-arm` / `-macos` / `-windows`, `env` (KEY=VALUE lines, every lane), `pre-command` (host jobs), `board-pre-command` (board; falls back to `pre-command`), `board-extra-args` (`-j 1` and similar; not used for archive), `archive-args` (nextest archive features/packages; empty uses `nextest-args`). The SonarCloud job is skipped automatically when the repository has no `sonar-project.properties`.
 - `sbom`: `mode` `dependency` \| `full`
 - `release-rust` (release-branch side): `sbom`, `sbom-targets`, `sbom-extra-manifests`, `changelog`, `project-name`, `package-crates`, `crate-packages` (package names in dependency order), `package-runner`, `package-env` and `package-pre-command` (the packaging job compiles, so a crate whose build scripts need an OpenCV root or a sysroot configures it here). It verifies, scans, and runs `cargo package` — which compiles, so that job is on the `larger` class. It builds no distribution artifact beyond the `.crate` files; wheels are `release-wheels`, and anything else stays in the product repository — see the release chain below
 - `release-wheels` (release-branch side): `manifest` **or** `builds` (JSON array of `{manifest, features, args}` for a workspace shipping several bindings, looped inside one job; a `runners` entry may carry its own to vary it per platform), `runners` (JSON matrix; defaults to the `larger` class), `python-version`, `maturin-spec`, `features`, `lfs`, `artifact-prefix`, `env`, `pre-command`, `post-command` (assertions over the built wheels, before the upload), `verify-version`
 - `publish-rust` (tag side): `tag` (rehearsal), `build-workflow`, `publish-crates`, `crate-packages` (dependency order; the list `release-rust` recorded is authoritative and a different value here fails the publish), `changelog`, `require-sbom`, `release-files`, `dry-run`
+
+Every lane reaches its toolchain through the `setup-rust` action, which also
+guarantees the things a lane assumes rather than checks: a committed
+`Cargo.lock` (`require-lockfile`), the channel from `rust-toolchain.toml`, and
+a C compiler (`require-cc`). The organisation's larger-runner images are not
+the GitHub-hosted images and do not all carry one — Rust links through `cc`,
+so without it every build script fails before a test runs.
 
 ### The `pre-command` hook
 
