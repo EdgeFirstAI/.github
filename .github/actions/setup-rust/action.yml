@@ -24,6 +24,17 @@ inputs:
     description: rust-cache workspaces argument
     required: false
     default: ""
+  require-lockfile:
+    description: >-
+      Fail with a policy message when Cargo.lock is absent. Every shared lane
+      runs --locked, so a repository that gitignores its lockfile otherwise
+      fails partway through with cargo's own wording rather than at setup.
+    required: false
+    default: "true"
+outputs:
+  toolchain:
+    description: The toolchain channel that was installed
+    value: ${{ steps.channel.outputs.channel }}
 runs:
   using: composite
   steps:
@@ -34,9 +45,61 @@ runs:
         echo "CARGO_NET_RETRY=10" >> "$GITHUB_ENV"
         echo "CARGO_TERM_COLOR=always" >> "$GITHUB_ENV"
 
+    # Every lane passes --locked. Without a lockfile cargo reports "cannot
+    # create the lock file ... because --locked was passed", which is accurate
+    # but reads as a cargo problem rather than as the CI contract it is, and it
+    # arrives after the toolchain and cache steps have already run.
+    - name: Cargo.lock is committed
+      if: inputs.require-lockfile == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ -f Cargo.lock ]]; then
+          exit 0
+        fi
+        if [[ ! -f Cargo.toml ]]; then
+          echo "::notice::No Cargo.toml at the repository root; skipping the lockfile check."
+          exit 0
+        fi
+        echo "::error::Cargo.lock is not present. Every shared lane runs --locked."
+        echo "::error::Commit it: drop any Cargo.lock entry from .gitignore, run"
+        echo "::error::'cargo check', and commit the result. A lockfile in a library"
+        echo "::error::is ignored by downstream consumers, so this costs them nothing."
+        exit 1
+
+    # rust-toolchain.toml is the repository's pin and the thing cargo obeys: it
+    # switches to that channel on the first cargo invocation whatever is
+    # installed here. Installing `stable` regardless would fetch a second
+    # toolchain and, worse, put `components` and `targets` on it -- so a
+    # repository pinning a channel without listing components in its toml would
+    # reach `cargo clippy` with no clippy on the active toolchain. Reading the
+    # pin here means one toolchain, carrying the components the lanes need.
+    - name: Resolve toolchain channel
+      id: channel
+      shell: bash
+      run: |
+        set -euo pipefail
+        channel=stable
+        for f in rust-toolchain.toml rust-toolchain; do
+          [[ -f "$f" ]] || continue
+          # `channel = "1.94.0"` in the TOML form; a bare channel name in the
+          # legacy plain-text form.
+          found="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$f" | head -1)"
+          if [[ -z "$found" && "$f" == rust-toolchain ]]; then
+            found="$(tr -d '[:space:]' < "$f")"
+          fi
+          if [[ -n "$found" ]]; then
+            channel="$found"
+            echo "Pinned by $f: $channel"
+          fi
+          break
+        done
+        echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7  # stable
       with:
+        toolchain: ${{ steps.channel.outputs.channel }}
         components: ${{ inputs.components }}
         targets: ${{ inputs.targets }}
 

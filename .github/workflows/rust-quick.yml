@@ -54,6 +54,43 @@ on:
       cache-key:
         type: string
         default: quick-x86_64
+      cross-clippy-args:
+        description: >-
+          Arguments for the per-target check-only clippy pass. `--target
+          <triple>` is prepended for each of `cross-targets`. A workspace
+          containing a crate that cannot cross-compile -- a PyO3 extension
+          with no interpreter for the target, anything needing a sysroot --
+          narrows the pass here (`--exclude <crate>`) instead of turning the
+          whole lane off with `skip-cross-clippy`, which is the only choice a
+          fixed argument list leaves and costs the aarch64 lint coverage that
+          an aarch64 product most needs.
+        type: string
+        default: --workspace --locked --all-targets -- -D warnings
+      clippy-extra-args:
+        description: >-
+          A second host clippy pass, run only when set. A crate whose
+          off-by-default features gate real code gets no PR signal from the
+          default pass, and the nightly feature-combination lane is up to a
+          day away. Empty runs one pass.
+        type: string
+        default: ""
+      workflow-lint:
+        description: >-
+          Run actionlint over .github/workflows and fail on an unpinned action
+          reference. Hash-pinning is a standing requirement that nothing
+          enforced, so a `@master` reference could sit in a repository until
+          someone read the file.
+        type: boolean
+        default: true
+      env:
+        description: >-
+          Newline-separated KEY=VALUE pairs exported for every later step.
+          For build configuration a lane cannot infer -- PYO3_CROSS_*, OpenCV
+          or CUDA roots, sysroot paths. Values are written verbatim and never
+          interpolated into a script. Use `pre-command` for work, this for
+          configuration.
+        type: string
+        default: ""
       pre-command:
         description: Caller setup (OpenCV, ANGLE, testdata). Passed through env, never interpolated.
         type: string
@@ -94,6 +131,26 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: .ef-ci
           persist-credentials: false
+
+      # Before pre-command, so a setup script can read what the caller set.
+      - name: Caller environment
+        if: ${{ inputs.env != '' }}
+        env:
+          CALLER_ENV: ${{ inputs.env }}
+        run: |
+          set -euo pipefail
+          # Appended verbatim. A value is never interpolated into a script, and
+          # a malformed line is rejected rather than silently dropped.
+          while IFS= read -r line; do
+            [[ -z "${line// }" ]] && continue
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            if [[ ! "$line" =~ ^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*= ]]; then
+              echo "::error::env line is not KEY=VALUE: $line"
+              exit 1
+            fi
+            echo "${line#"${line%%[![:space:]]*}"}" >> "$GITHUB_ENV"
+          done <<< "$CALLER_ENV"
+          echo "Exported $(grep -c . <<< "$CALLER_ENV") caller environment line(s)."
 
       - name: Caller pre-command
         if: ${{ inputs.pre-command != '' }}
@@ -148,11 +205,16 @@ jobs:
       - name: Host clippy
         run: cargo clippy ${{ inputs.clippy-args }}
 
+      - name: Host clippy (extra)
+        if: ${{ inputs.clippy-extra-args != '' }}
+        run: cargo clippy ${{ inputs.clippy-extra-args }}
+
       - name: Cross-target clippy
         if: ${{ !inputs.skip-cross-clippy }}
         env:
           PKG_CONFIG_ALLOW_CROSS: "1"
           CROSS_TARGETS: ${{ inputs.cross-targets }}
+          CROSS_ARGS: ${{ inputs.cross-clippy-args }}
         run: |
           set -euo pipefail
           IFS=',' read -ra targets <<< "$CROSS_TARGETS"
@@ -161,7 +223,8 @@ jobs:
             [[ -z "$target" ]] && continue
             rustup target add "$target"
             echo "clippy --target $target (check-only; native sysroots deferred to Full)"
-            cargo clippy --target "$target" --workspace --locked --all-targets -- -D warnings
+            # shellcheck disable=SC2086  # CROSS_ARGS is an argument list and must split
+            cargo clippy --target "$target" $CROSS_ARGS
           done
 
       - name: nextest
@@ -175,6 +238,14 @@ jobs:
             uv run maturin develop --locked || maturin develop --locked
             uv run pytest -q || pytest -q
           fi
+
+      # Design principle: every action is hash-pinned. Nothing enforced it, so
+      # a floating reference survived until someone happened to read the file.
+      # actionlint also catches expression and shell errors in the caller's own
+      # workflows, which otherwise only fail once the workflow runs.
+      - name: Workflow lint
+        if: ${{ inputs.workflow-lint }}
+        uses: ./.ef-ci/.github/actions/workflow-lint
 
       - name: Dependency license policy
         uses: ./.ef-ci/.github/actions/sbom-tools

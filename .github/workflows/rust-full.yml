@@ -61,6 +61,15 @@ on:
       scancode:
         type: boolean
         default: true
+      env:
+        description: >-
+          Newline-separated KEY=VALUE pairs exported for every later step in
+          every lane. For build configuration a lane cannot infer --
+          PYO3_CROSS_*, OpenCV or CUDA roots, sysroot paths. Values are written
+          verbatim and never interpolated into a script. Use `pre-command` for
+          work, this for configuration.
+        type: string
+        default: ""
       pre-command:
         description: Caller setup (OpenCV, ANGLE, testdata). Passed through env, never interpolated.
         type: string
@@ -131,8 +140,24 @@ jobs:
       do_hardware: ${{ steps.map.outputs.do_hardware }}
       do_nightly: ${{ steps.map.outputs.do_nightly }}
       board_matrix: ${{ steps.map.outputs.board_matrix }}
+      has_sonar: ${{ steps.sonar.outputs.present }}
       same_repo: ${{ steps.map.outputs.same_repo }}
     steps:
+      # Shallow, and only so the sonar gate below can ask whether this
+      # repository has a SonarCloud project at all. `hashFiles` is not
+      # available in a job-level `if`, so the question is answered here and
+      # passed down as an output.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - id: sonar
+        run: |
+          set -euo pipefail
+          present=false
+          [[ -f sonar-project.properties ]] && present=true
+          echo "present=$present" >> "$GITHUB_OUTPUT"
+
       - id: map
         env:
           LANES: ${{ inputs.lanes }}
@@ -278,6 +303,22 @@ jobs:
           path: .ef-ci
           persist-credentials: false
 
+      - name: Caller environment
+        if: ${{ inputs.env != '' }}
+        env:
+          CALLER_ENV: ${{ inputs.env }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r line; do
+            [[ -z "${line// }" ]] && continue
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            if [[ ! "$line" =~ ^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*= ]]; then
+              echo "::error::env line is not KEY=VALUE: $line"
+              exit 1
+            fi
+            echo "${line#"${line%%[![:space:]]*}"}" >> "$GITHUB_ENV"
+          done <<< "$CALLER_ENV"
+
       - name: Caller pre-command
         if: ${{ inputs.pre-command != '' }}
         env:
@@ -352,6 +393,22 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: .ef-ci
           persist-credentials: false
+
+      - name: Caller environment
+        if: ${{ inputs.env != '' }}
+        env:
+          CALLER_ENV: ${{ inputs.env }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r line; do
+            [[ -z "${line// }" ]] && continue
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            if [[ ! "$line" =~ ^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*= ]]; then
+              echo "::error::env line is not KEY=VALUE: $line"
+              exit 1
+            fi
+            echo "${line#"${line%%[![:space:]]*}"}" >> "$GITHUB_ENV"
+          done <<< "$CALLER_ENV"
 
       - name: Caller pre-command
         if: ${{ inputs.pre-command != '' }}
@@ -519,6 +576,22 @@ jobs:
           path: .ef-ci
           persist-credentials: false
 
+      - name: Caller environment
+        if: ${{ inputs.env != '' }}
+        env:
+          CALLER_ENV: ${{ inputs.env }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r line; do
+            [[ -z "${line// }" ]] && continue
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            if [[ ! "$line" =~ ^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*= ]]; then
+              echo "::error::env line is not KEY=VALUE: $line"
+              exit 1
+            fi
+            echo "${line#"${line%%[![:space:]]*}"}" >> "$GITHUB_ENV"
+          done <<< "$CALLER_ENV"
+
       - name: Caller pre-command
         if: ${{ inputs.pre-command != '' }}
         env:
@@ -585,6 +658,22 @@ jobs:
           path: .ef-ci
           persist-credentials: false
 
+      - name: Caller environment
+        if: ${{ inputs.env != '' }}
+        env:
+          CALLER_ENV: ${{ inputs.env }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r line; do
+            [[ -z "${line// }" ]] && continue
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            if [[ ! "$line" =~ ^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*= ]]; then
+              echo "::error::env line is not KEY=VALUE: $line"
+              exit 1
+            fi
+            echo "${line#"${line%%[![:space:]]*}"}" >> "$GITHUB_ENV"
+          done <<< "$CALLER_ENV"
+
       - name: Caller pre-command
         if: ${{ inputs.pre-command != '' }}
         env:
@@ -641,6 +730,22 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: .ef-ci
           persist-credentials: false
+
+      - name: Caller environment
+        if: ${{ inputs.env != '' }}
+        env:
+          CALLER_ENV: ${{ inputs.env }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r line; do
+            [[ -z "${line// }" ]] && continue
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            if [[ ! "$line" =~ ^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*= ]]; then
+              echo "::error::env line is not KEY=VALUE: $line"
+              exit 1
+            fi
+            echo "${line#"${line%%[![:space:]]*}"}" >> "$GITHUB_ENV"
+          done <<< "$CALLER_ENV"
 
       - name: Caller pre-command
         if: ${{ inputs.board-pre-command != '' || inputs.pre-command != '' }}
@@ -779,6 +884,22 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: .ef-ci
           persist-credentials: false
+      - name: Caller environment
+        if: ${{ inputs.env != '' }}
+        env:
+          CALLER_ENV: ${{ inputs.env }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r line; do
+            [[ -z "${line// }" ]] && continue
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            if [[ ! "$line" =~ ^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*= ]]; then
+              echo "::error::env line is not KEY=VALUE: $line"
+              exit 1
+            fi
+            echo "${line#"${line%%[![:space:]]*}"}" >> "$GITHUB_ENV"
+          done <<< "$CALLER_ENV"
+
       - name: Caller pre-command
         if: ${{ inputs.pre-command != '' }}
         env:
@@ -838,7 +959,16 @@ jobs:
   sonar:
     name: SonarCloud
     needs: [setup, linux, linux-arm, macos, windows, process-hardware-coverage]
-    if: always() && inputs.sonar == true && needs.setup.outputs.do_host == 'true' && needs.linux.result == 'success'
+    # Without sonar-project.properties the scan step was skipped but the job
+    # still booted a runner, checked out, downloaded every coverage artifact
+    # and merged lcov. Callers with no SonarCloud project paid that on every
+    # Full run unless they knew to pass sonar:false. `hashFiles` is not
+    # available in a job-level `if`, so `setup` answers it as an output.
+    if: >-
+      always() && inputs.sonar == true
+      && needs.setup.outputs.do_host == 'true'
+      && needs.linux.result == 'success'
+      && needs.setup.outputs.has_sonar == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

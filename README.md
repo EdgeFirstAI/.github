@@ -18,10 +18,11 @@ The organisation profile README lives in [`profile/`](profile/README.md).
 | `.github/workflows/advisories.yml` | `cargo audit`, run ungated so a new advisory is still reported |
 | `.github/workflows/sbom.yml` | `dependency` or `full` scancode |
 | `.github/workflows/tag-release.yml` | `release/X.Y.Z[-rcN]` merge → annotated `vX.Y.Z[-rcN]` |
-| `.github/workflows/release-rust.yml` | release-branch side: version consistency, changelog section, SBOM |
+| `.github/workflows/release-rust.yml` | release-branch side: version consistency, changelog section, `cargo package`, SBOM |
+| `.github/workflows/release-wheels.yml` | release-branch side: maturin wheels for a PyO3 binding |
 | `.github/workflows/publish-rust.yml` | tag side: resolve the build, verify the tree, crates OIDC, GitHub Release |
-| `.github/actions/` | `setup-rust`, `setup-python-uv`, `sbom-tools`, `board-run`, `resolve-release-build` |
-| `.github/scripts/` | license policy (single copy) |
+| `.github/actions/` | `setup-rust`, `setup-python-uv`, `sbom-tools`, `board-run`, `resolve-release-build`, `workflow-lint` |
+| `.github/scripts/` | license policy and the SHA-pin check (single copy each) |
 | `.github/rulesets/` | `protect-main` (reviews; org-admin PR bypass), `protect-main-ci` (ci-gate, no bypass), `protect-release-tags` |
 | `.github/runners/` | ephemeral fleet provision scripts |
 | `templates/` | per-repo `ci.yml`, `nightly.yml`, `release.yml`, `tag-release.yml`, `publish.yml` |
@@ -54,7 +55,7 @@ Three workflows, one action each. **A tag deploys; it never builds.**
 
 | Caller | Trigger | Action | Shared workflow |
 | --- | --- | --- | --- |
-| `release.yml` | push to `release/*.*.*` | **build** every artifact | `release-rust.yml` (verify + SBOM; the build itself stays in the product repo) |
+| `release.yml` | push to `release/*.*.*` | **build** every artifact | `release-rust.yml` (verify + `cargo package` + SBOM) and `release-wheels.yml` (wheels); anything else stays in the product repo |
 | `tag-release.yml` | `release/*.*.*` PR merged to `main` | **tag** | `tag-release.yml` |
 | `publish.yml` | push of a `v*.*.*` tag | **publish** what was built | `publish-rust.yml` |
 

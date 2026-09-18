@@ -1,0 +1,53 @@
+name: Workflow lint
+description: actionlint plus the SHA-pin policy over a repository's workflows
+inputs:
+  roots:
+    description: Space-separated roots to scan for `uses:` references
+    required: false
+    default: .github
+  actionlint-args:
+    description: Extra arguments for actionlint
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    # Pinned by version AND checksum. An unpinned linter is the same mutable
+    # third-party code the pin check below exists to reject, and a linter runs
+    # on every pull request in the fleet.
+    - name: Install actionlint
+      shell: bash
+      env:
+        ACTIONLINT_VERSION: "1.7.12"
+        ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+      run: |
+        set -euo pipefail
+        if command -v actionlint >/dev/null 2>&1; then
+          actionlint -version
+          exit 0
+        fi
+        curl -fsSL -o actionlint.tgz \
+          "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+        echo "${ACTIONLINT_SHA256}  actionlint.tgz" | sha256sum -c
+        tar xzf actionlint.tgz actionlint
+        sudo mv actionlint /usr/local/bin/actionlint
+        rm -f actionlint.tgz
+        actionlint -version
+
+    - name: actionlint
+      shell: bash
+      env:
+        EXTRA: ${{ inputs.actionlint-args }}
+      run: |
+        set -euo pipefail
+        # shellcheck disable=SC2086  # EXTRA is an argument list and must split
+        actionlint -color $EXTRA
+
+    - name: SHA-pin policy
+      shell: bash
+      env:
+        ROOTS: ${{ inputs.roots }}
+      run: |
+        set -euo pipefail
+        # shellcheck disable=SC2086  # ROOTS is a path list and must split
+        python3 "${GITHUB_ACTION_PATH}/../../scripts/check_action_pins.py" $ROOTS

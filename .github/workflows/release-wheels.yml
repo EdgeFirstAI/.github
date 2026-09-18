@@ -1,0 +1,229 @@
+name: release-wheels
+
+# Build Python wheels for a PyO3/maturin package on a release branch.
+#
+# Called from a repository's `release.yml`, beside `release-rust.yml`. It
+# builds and uploads; it publishes nothing. `publish-rust.yml` collects what
+# this produced, and the caller's own `publish-pypi` job uploads it, because
+# PyPI Trusted Publishing matches `job_workflow_ref` in the publishing
+# repository and a reusable workflow cannot be the publisher.
+#
+# It exists because the wheel matrix was the one part of the release every
+# repository wrote for itself, and it is also where the tag-path failures
+# were: a runner image without git-lfs, the same image without a C compiler, a
+# toolchain component conflict. Those are properties of the build environment,
+# not of any one repository, so they are fixed once here.
+#
+# Retention is 30 days and `if-no-files-found: error`, both non-negotiable:
+# the release-PR-to-tag gap is human-paced, and a silently empty artifact
+# becomes a silently incomplete release.
+
+on:
+  workflow_call:
+    inputs:
+      manifest:
+        description: Path to the binding crate's Cargo.toml
+        type: string
+        required: true
+      runners:
+        description: >-
+          JSON array of {name, runner, args} objects, one per wheel target.
+          `args` is appended to `maturin build`. The default builds
+          manylinux2014 wheels for x86_64 and aarch64 Linux, with the sdist on
+          x86_64 only, which is what every EdgeFirst binding ships today.
+        type: string
+        default: >-
+          [{"name": "x86_64-linux", "runner": "ubuntu-24.04",
+            "args": "--sdist --zig --compatibility manylinux2014"},
+           {"name": "aarch64-linux", "runner": "ubuntu-24.04-arm",
+            "args": "--zig --compatibility manylinux2014"}]
+      python-version:
+        type: string
+        default: "3.11"
+      maturin-spec:
+        description: >-
+          pip requirement for maturin. Pinned by the caller when a release
+          must be reproducible against one maturin version.
+        type: string
+        default: maturin[patchelf,zig]
+      features:
+        description: Cargo features for the wheel build, e.g. pyo3/abi3-py311
+        type: string
+        default: ""
+      lfs:
+        type: boolean
+        default: false
+      timeout-minutes:
+        type: number
+        default: 45
+      artifact-prefix:
+        description: >-
+          Artifact name prefix. `publish-rust.yml` downloads every artifact
+          from the run, so this only has to be unique within it.
+        type: string
+        default: wheels
+      pre-command:
+        description: Caller setup, run from the repository root before the build.
+        type: string
+        default: ""
+      env:
+        description: Newline-separated KEY=VALUE pairs exported for every later step.
+        type: string
+        default: ""
+      verify-version:
+        description: >-
+          Check that each built wheel's version matches the release branch.
+          A wheel carrying the wrong version publishes to the wrong PyPI
+          release, and the version is immutable once uploaded.
+        type: boolean
+        default: true
+
+jobs:
+  wheels:
+    name: Wheel ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
+    permissions:
+      contents: read
+    strategy:
+      # One broken target must not hide the state of the others: a release
+      # needs to know everything that is wrong in one run, not one thing per
+      # push.
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.runners) }}
+    steps:
+      # Some org-provisioned runner images ship without git-lfs, and an lfs
+      # checkout fails before any repository code exists to fix it.
+      - name: Ensure git-lfs
+        if: ${{ inputs.lfs && runner.os == 'Linux' }}
+        run: |
+          set -euo pipefail
+          command -v git-lfs >/dev/null 2>&1 && exit 0
+          echo "::notice::git-lfs missing on this runner image; installing"
+          sudo apt-get update
+          sudo apt-get install -y git-lfs
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          lfs: ${{ inputs.lfs }}
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .ef-ci
+          persist-credentials: false
+
+      - name: Caller environment
+        if: ${{ inputs.env != '' }}
+        env:
+          CALLER_ENV: ${{ inputs.env }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r line; do
+            [[ -z "${line// }" ]] && continue
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            if [[ ! "$line" =~ ^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*= ]]; then
+              echo "::error::env line is not KEY=VALUE: $line"
+              exit 1
+            fi
+            echo "${line#"${line%%[![:space:]]*}"}" >> "$GITHUB_ENV"
+          done <<< "$CALLER_ENV"
+
+      - name: Caller pre-command
+        if: ${{ inputs.pre-command != '' }}
+        env:
+          PRE_COMMAND: ${{ inputs.pre-command }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
+
+      # The repository's own pin, so a wheel is built with the compiler its
+      # tests ran on. Also the C compiler check below: a maturin build shells
+      # out to cc for any crate with a build script, and a runner image without
+      # one fails deep inside a dependency rather than here.
+      - uses: ./.ef-ci/.github/actions/setup-rust
+        with:
+          components: ""
+          cache-key: release-wheels-${{ matrix.name }}
+
+      - name: Toolchain preflight
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cc git; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "::error::'$tool' is not on this runner image; the wheel build needs it"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install maturin
+        env:
+          MATURIN_SPEC: ${{ inputs.maturin-spec }}
+        run: pip install "$MATURIN_SPEC"
+
+      - name: Build wheels
+        env:
+          MANIFEST: ${{ inputs.manifest }}
+          MATURIN_ARGS: ${{ matrix.args }}
+          FEATURES: ${{ inputs.features }}
+        run: |
+          set -euo pipefail
+          args=(--release --locked -m "$MANIFEST")
+          [[ -n "$FEATURES" ]] && args+=(--features "$FEATURES")
+          # shellcheck disable=SC2086  # MATURIN_ARGS is an argument list and must split
+          maturin build "${args[@]}" $MATURIN_ARGS
+          ls -la target/wheels/
+
+      # A wheel's version comes from the manifest, and verify-version has
+      # already checked the manifest against the branch -- but only for the
+      # files it knows about. A binding whose version is derived some other way
+      # (a build script, a dynamic backend) can still produce a wheel naming a
+      # version this release is not. PyPI versions are immutable, so a wrong
+      # one is discovered when it can no longer be corrected.
+      - name: Wheel version matches the release branch
+        if: ${{ inputs.verify-version }}
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          case "$REF_NAME" in
+            release/*) version="${REF_NAME#release/}" ;;
+            *)
+              echo "::notice::Not a release branch ($REF_NAME); skipping the wheel version check."
+              exit 0
+              ;;
+          esac
+          # PEP 440 spells a candidate 1.2.0rc1 where the branch says
+          # 1.2.0-rc1, and a wheel filename replaces '-' with '_'.
+          pep440="${version//-rc/rc}"
+          base="${version%-rc*}"
+          fail=0
+          shopt -s nullglob
+          for whl in target/wheels/*.whl target/wheels/*.tar.gz; do
+            name="$(basename "$whl")"
+            found="$(sed -E 's/^[^-]+-([^-]+)-.*\.whl$/\1/; s/^.*-([0-9][^-]*)\.tar\.gz$/\1/' <<< "$name")"
+            if [[ "$found" == "$pep440" || "$found" == "$base" ]]; then
+              echo "ok  $name  ($found)"
+            else
+              echo "::error::$name carries version '$found', expected '$pep440' or '$base'"
+              fail=1
+            fi
+          done
+          exit "$fail"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: ${{ inputs.artifact-prefix }}-${{ matrix.name }}
+          path: target/wheels/*
+          if-no-files-found: error
+          retention-days: 30

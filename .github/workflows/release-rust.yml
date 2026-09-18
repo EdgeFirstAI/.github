@@ -44,6 +44,18 @@ on:
       sbom-extra-manifests:
         type: string
         default: ""
+      crate-packages:
+        description: >-
+          Space-separated `-p` arguments, in dependency order, to package with
+          `cargo package --locked`. Empty packages the workspace root; the
+          literal string `none` skips packaging entirely for a repository that
+          publishes no crate. The resulting `.crate` files are uploaded, so a
+          packaging failure -- an excluded file, a path dependency without a
+          version, a dirty tree -- is a red release PR rather than a failure
+          inside `cargo publish` on the tag. Pass the SAME list to
+          `publish-rust.yml`: it publishes what this packaged.
+        type: string
+        default: ""
       timeout-minutes:
         type: number
         default: 20
@@ -135,6 +147,30 @@ jobs:
           if [[ -f VERSION ]]; then
             check VERSION "$(tr -d '[:space:]' < VERSION)"
           fi
+
+          # A workspace that versions its internal crates through
+          # [workspace.dependencies] carries the release version in one place
+          # per member on top of [workspace.package]. Bumping only the latter
+          # leaves each member depending on the PREVIOUS release of its
+          # sibling -- a version that exists on crates.io, so cargo publishes
+          # it without complaint and ships a wrong dependency graph. Nothing
+          # downstream catches that: `cargo package` resolves the path
+          # dependency locally, and the tag only ever sees the result.
+          if [[ -f Cargo.toml ]] && grep -q '^\[workspace.dependencies\]' Cargo.toml; then
+            while IFS= read -r line; do
+              dep="${line%%[[:space:]]*}"
+              dep="${dep%%=*}"
+              dep="$(echo "$dep" | xargs)"
+              [[ -n "$dep" ]] || continue
+              # Only members of this workspace: a path dependency that also
+              # declares a version is what gets published.
+              [[ "$line" == *path\ =* || "$line" == *path=* ]] || continue
+              found="$(sed -n 's/.*[^-a-z]version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' <<< "$line" | head -1)"
+              [[ -n "$found" ]] || continue
+              check "Cargo.toml [workspace.dependencies.$dep]" "$found"
+            done < <(sed -n '/^\[workspace.dependencies\]/,/^\[/p' Cargo.toml | grep -E '^[A-Za-z0-9_-]+[[:space:]]*=.*path')
+          fi
+
           if [[ "$fail" -eq 0 && "$exact" -eq 0 ]]; then
             echo "::notice::Manifests carry $base, not $VERSION. publish.yml will attach the artifacts to a GitHub pre-release and SKIP crates.io and PyPI, so the final release can still claim $base. Give the manifests the pre-release version if the candidate should reach the registries."
             echo "- registries: **skipped** for this candidate (manifests carry \`$base\`)" >> "$GITHUB_STEP_SUMMARY"
@@ -163,6 +199,64 @@ jobs:
             exit 1
           fi
           echo "ok  $CHANGELOG has a section for $base"
+
+  # `publish-rust.yml` runs `cargo publish --no-verify`, which skips the
+  # verification compile precisely so the tag path builds nothing. That is only
+  # safe because packaging was already exercised on the release branch -- here.
+  package:
+    name: Package crates
+    needs: verify-version
+    if: ${{ inputs.crate-packages != 'none' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .ef-ci
+          persist-credentials: false
+
+      - uses: ./.ef-ci/.github/actions/setup-rust
+        with:
+          components: ""
+          cache-key: release-package
+
+      - name: cargo package
+        env:
+          PACKAGES: ${{ inputs.crate-packages }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [[ -n "$PACKAGES" ]]; then
+            # Dependency order matters: packaging a crate whose sibling is a
+            # path+version dependency resolves that sibling locally, so the
+            # order here is the order publish-rust.yml will upload in.
+            for pkg in $PACKAGES; do
+              args+=(-p "$pkg")
+            done
+          fi
+          cargo package --locked "${args[@]}"
+          ls -la target/package/*.crate
+          {
+            echo "### Packaged crates"
+            for f in target/package/*.crate; do
+              echo "- \`$(basename "$f")\` ($(du -h "$f" | cut -f1))"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: crates
+          path: target/package/*.crate
+          if-no-files-found: error
+          # The release-PR-to-tag gap is human-paced; publish.yml fails on an
+          # expired artifact rather than rebuilding.
+          retention-days: 30
 
   sbom:
     name: Release SBOM
