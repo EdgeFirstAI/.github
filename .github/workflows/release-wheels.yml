@@ -49,10 +49,22 @@ on:
         default: ""
       runners:
         description: >-
-          JSON array of {name, runner, args} objects, one per wheel target.
-          `args` is appended to `maturin build`. The default builds
-          manylinux2014 wheels for x86_64 and aarch64 Linux, with the sdist on
-          x86_64 only, which is what every EdgeFirst binding ships today.
+          JSON array of one object per wheel target. `name` labels the lane and
+          the artifact, `runner` is the image, and `args` is appended to
+          `maturin build`.
+
+          An entry may also carry `builds` and `maturin-spec`, each overriding
+          the workflow-level input for that lane alone. `maturin-spec` is what
+          a repository shipping Linux and non-Linux wheels needs: `zig` is what
+          produces the manylinux wheels, while `patchelf` is a Linux-only PyPI
+          package with no wheel for macOS or Windows, so one specification
+          cannot serve both. There is no working around it in `pre-command`,
+          which runs before `setup-python` — an install there lands in the
+          system interpreter and is overwritten by the step below.
+
+          The default builds manylinux2014 wheels for x86_64 and aarch64 Linux,
+          with the sdist on x86_64 only, which is what every EdgeFirst binding
+          ships today.
         type: string
         # runner-class: larger -- a wheel build compiles, so the runner
         # selection policy puts it on the larger class; it runs once per push
@@ -68,8 +80,9 @@ on:
         default: "3.11"
       maturin-spec:
         description: >-
-          pip requirement for maturin. Pinned by the caller when a release
-          must be reproducible against one maturin version.
+          pip requirement for maturin, for every lane that does not override it
+          in `runners`. Pinned by the caller when a release must be
+          reproducible against one maturin version.
         type: string
         default: maturin[patchelf,zig]
       features:
@@ -238,7 +251,20 @@ jobs:
       - name: Install maturin
         env:
           MATURIN_SPEC: ${{ inputs.maturin-spec }}
-        run: pip install "$MATURIN_SPEC"
+          # Bracket syntax because the key has a hyphen: `matrix.maturin-spec`
+          # parses as a subtraction. A scalar, so unlike `builds` it needs no
+          # toJSON -- an absent key renders as the empty string.
+          MATURIN_SPEC_MATRIX: ${{ matrix['maturin-spec'] }}
+        run: |
+          set -euo pipefail
+          spec="${MATURIN_SPEC_MATRIX:-}"
+          [[ -n "$spec" ]] || spec="$MATURIN_SPEC"
+          if [[ -z "$spec" ]]; then
+            echo "::error::no maturin specification for lane '${{ matrix.name }}'"
+            exit 1
+          fi
+          echo "installing $spec"
+          pip install "$spec"
 
       - name: Build wheels
         env:
