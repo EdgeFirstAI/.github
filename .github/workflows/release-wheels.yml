@@ -22,9 +22,31 @@ on:
   workflow_call:
     inputs:
       manifest:
-        description: Path to the binding crate's Cargo.toml
+        description: >-
+          Path to the binding crate's Cargo.toml. The simple form, for a
+          repository shipping one binding. A workspace shipping several uses
+          `builds` instead.
         type: string
-        required: true
+        default: ""
+      builds:
+        description: >-
+          JSON array of {manifest, features, args} objects built in this job,
+          for a workspace shipping more than one binding. `features` and `args`
+          are optional and override the workflow-level `features` and add to
+          the matrix entry's `args`.
+
+          It exists because the reusable-workflow boundary is per job, so one
+          call per binding means one job per binding: hal ships five
+          distributions and builds each for abi3-py311 and abi3-py38, which is
+          forty jobs across four platforms against the four it runs today, each
+          paying its own checkout, toolchain, cache restore and link. Looping
+          inside the job keeps one `target/` and one warm cache.
+
+          A matrix entry in `runners` may carry its own `builds` to override
+          this for that platform, which is how a caller builds an sdist on one
+          platform only.
+        type: string
+        default: ""
       runners:
         description: >-
           JSON array of {name, runner, args} objects, one per wheel target.
@@ -68,6 +90,15 @@ on:
         default: wheels
       pre-command:
         description: Caller setup, run from the repository root before the build.
+        type: string
+        default: ""
+      post-command:
+        description: >-
+          Caller assertions over the built wheels, run from the repository root
+          after the build and before the upload. Same contract as
+          `pre-command`. A wheel that fails here never reaches the artifact
+          store, which is the point: publish.yml ships what the build produced
+          without re-examining it, and a PyPI version is immutable.
         type: string
         default: ""
       env:
@@ -198,14 +229,47 @@ jobs:
       - name: Build wheels
         env:
           MANIFEST: ${{ inputs.manifest }}
+          # A matrix entry may carry its own build list, so one platform can
+          # produce the sdist while the others do not.
+          BUILDS: ${{ matrix.builds != '' && matrix.builds || inputs.builds }}
           MATURIN_ARGS: ${{ matrix.args }}
           FEATURES: ${{ inputs.features }}
         run: |
           set -euo pipefail
-          args=(--release --locked -m "$MANIFEST")
-          [[ -n "$FEATURES" ]] && args+=(--features "$FEATURES")
-          # shellcheck disable=SC2086  # MATURIN_ARGS is an argument list and must split
-          maturin build "${args[@]}" $MATURIN_ARGS
+
+          if [[ -n "${BUILDS:-}" ]]; then
+            builds="$BUILDS"
+          elif [[ -n "$MANIFEST" ]]; then
+            builds="$(jq -nc --arg m "$MANIFEST" --arg f "$FEATURES" \
+              '[{manifest: $m, features: $f}]')"
+          else
+            echo "::error::release-wheels needs either 'manifest' or 'builds'."
+            exit 1
+          fi
+          if ! jq -e 'type == "array" and length > 0' >/dev/null 2>&1 <<< "$builds"; then
+            echo "::error::'builds' is not a non-empty JSON array: $builds"
+            exit 1
+          fi
+
+          # Read from a process substitution rather than a pipeline, so the
+          # loop runs in this shell and a failing build aborts the step.
+          while IFS= read -r entry; do
+            m="$(jq -r '.manifest // empty' <<< "$entry")"
+            if [[ -z "$m" ]]; then
+              echo "::error::build entry has no manifest: $entry"
+              exit 1
+            fi
+            f="$(jq -r '.features // empty' <<< "$entry")"
+            [[ -n "$f" ]] || f="$FEATURES"
+            extra="$(jq -r '.args // empty' <<< "$entry")"
+
+            args=(--release --locked -m "$m")
+            [[ -n "$f" ]] && args+=(--features "$f")
+            echo "==> $m ${f:+($f)}"
+            # shellcheck disable=SC2086  # both are argument lists and must split
+            maturin build "${args[@]}" $MATURIN_ARGS $extra
+          done < <(jq -c '.[]' <<< "$builds")
+
           ls -la target/wheels/
 
       # A wheel's version comes from the manifest, and verify-version has
@@ -244,6 +308,28 @@ jobs:
             fi
           done
           exit "$fail"
+
+      # Runs before the upload, deliberately. A wheel that fails a caller's
+      # own assertion must never reach the artifact store, because
+      # publish.yml's whole contract is that it ships what the build produced
+      # without re-examining it -- and a PyPI version is immutable, so a bad
+      # wheel discovered later cannot be replaced.
+      #
+      # hal is the motivating case: rustc strips Apple binaries with its own
+      # in-process Mach-O writer, which leaves the LINKEDIT string pool
+      # 4-byte aligned whenever a binary's nindirectsyms is odd, and dyld on
+      # macOS 26+ then refuses to load the wheel. The parity is a coin flip per
+      # binary, so an import smoke test on one build proves nothing about the
+      # next; the check parses every wheel instead.
+      - name: Caller post-command
+        if: ${{ inputs.post-command != '' }}
+        env:
+          POST_COMMAND: ${{ inputs.post-command }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash --noprofile --norc -euo pipefail -c "$POST_COMMAND"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
