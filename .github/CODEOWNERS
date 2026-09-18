@@ -1,6 +1,13 @@
 # Reviewers for the shared CI source of truth.
-# Catch-all is omitted so this file is safe if GitHub treats the .github
-# repository as org-wide default community health files.
+#
+# Path-scoped rather than a catch-all, so the entries say which areas are
+# owned. The earlier reason given here -- that a catch-all might leak to other
+# repositories through default community health files -- was unfounded:
+# CODEOWNERS is not in that set, and ownership does not cross repository
+# boundaries. Adding a catch-all here would be safe; it is left out because
+# the paths below already cover everything this repository ships.
+#
+# The last matching pattern wins, so anything more specific goes below.
 .github/workflows/ @sebastient
 .github/actions/ @sebastient
 .github/scripts/ @sebastient

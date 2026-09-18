@@ -956,6 +956,31 @@ jobs:
           fi
           echo "version $version matches"
 
+      # Caught here, where it is still fixable. The release build runs on the
+      # branch head and the tag goes on the merge commit; those carry the same
+      # tree only while the base has not moved. tag-release.yml refuses to tag
+      # a tree nothing built, but it runs on `pull_request: closed` -- by then
+      # the merge has happened and the branch cannot be re-merged. A behind
+      # branch is a pre-merge problem and this is the pre-merge check for it.
+      - name: Release branch is not behind its base
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          behind="$(gh api "repos/${REPO}/compare/${BASE_REF}...${HEAD_SHA}" --jq '.behind_by')"
+          if [[ "$behind" -gt 0 ]]; then
+            echo "::error::This branch is $behind commit(s) behind ${BASE_REF}."
+            echo "::error::Merging would produce a tree the release build never built, and the"
+            echo "::error::tag would be refused after the merge, when it can no longer be undone."
+            echo "::error::Update this branch from ${BASE_REF} and let it rebuild."
+            exit 1
+          fi
+          echo "ok  up to date with ${BASE_REF}; the merge will carry the tree that was built"
+
   sonar:
     name: SonarCloud
     needs: [setup, linux, linux-arm, macos, windows, process-hardware-coverage]

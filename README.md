@@ -25,7 +25,7 @@ The organisation profile README lives in [`profile/`](profile/README.md).
 | `.github/scripts/` | license policy, the SHA-pin check, the workspace version check (single copy each) |
 | `.github/rulesets/` | `protect-main` (reviews; org-admin PR bypass), `protect-main-ci` (ci-gate, no bypass), `protect-release-tags` |
 | `.github/runners/` | ephemeral fleet provision scripts |
-| `templates/` | per-repo `ci.yml`, `nightly.yml`, `release.yml`, `tag-release.yml`, `publish.yml` |
+| `templates/` | per-repo `ci.yml`, `nightly.yml`, `release.yml`, `tag-release.yml`, `publish.yml`, plus `CODEOWNERS` and `dependabot.yml` |
 
 ## Pinning
 

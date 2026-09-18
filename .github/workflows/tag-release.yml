@@ -67,6 +67,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
           BUILD_WORKFLOW: ${{ inputs.require-build }}
           TAG: ${{ steps.version.outputs.tag }}
         run: |
@@ -80,6 +81,41 @@ jobs:
             exit 1
           fi
           echo "ok  ${BUILD_WORKFLOW} is green for ${HEAD_SHA}"
+
+          # The build ran on the release-branch head; the tag goes on the merge
+          # commit. Those are different objects, and they carry the same tree
+          # only when main did not move between the build and the merge. When
+          # it did, the tag names a tree nothing ever built -- publish binds by
+          # tree and would reject it, but only after the tag exists and the
+          # release ruleset has made it immutable.
+          #
+          # This is the backstop, not the primary check. rust-full.yml refuses a
+          # release pull request whose branch is behind its base, which is the
+          # same condition while it is still cheap to fix. By the time this
+          # runs the merge has happened, so there is no "merge again" -- the
+          # recovery below is the real one, and it is deliberately spelled out
+          # rather than left to whoever reads a red workflow at release time.
+          head_tree="$(gh api "repos/${REPO}/git/commits/${HEAD_SHA}" --jq '.tree.sha')"
+          merge_tree="$(gh api "repos/${REPO}/git/commits/${MERGE_SHA}" --jq '.tree.sha')"
+          if [[ "$head_tree" != "$merge_tree" ]]; then
+            echo "::error::${TAG} was NOT created: the merge commit is not the tree that was built."
+            echo "::error::  built  ${HEAD_SHA} -> tree ${head_tree}"
+            echo "::error::  merged ${MERGE_SHA} -> tree ${merge_tree}"
+            echo "::error::The base moved between the build and the merge, so ${MERGE_SHA} carries"
+            echo "::error::a tree no release build produced. The release content is on the base"
+            echo "::error::branch, untagged, and this pull request cannot be merged again."
+            echo "::error::"
+            echo "::error::To recover, build the merged tree and then tag it:"
+            echo "::error::  1. Point the release branch at ${MERGE_SHA} and push it. That is a"
+            echo "::error::     release/*.*.* push, so release.yml builds exactly this tree."
+            echo "::error::  2. When it is green, create ${TAG} at ${MERGE_SHA} through the"
+            echo "::error::     organisation tag-ruleset bypass, the same route a maintenance"
+            echo "::error::     tag uses. publish.yml then binds to the build from step 1."
+            echo "::error::Preferably do not get here: keep release branches up to date so the"
+            echo "::error::pre-merge check in rust-full.yml catches this first."
+            exit 1
+          fi
+          echo "ok  merge commit carries the tree that was built ($head_tree)"
 
       - name: Create release tag
         env:

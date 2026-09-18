@@ -13,6 +13,29 @@ Everything here is exercised by a real release: `EdgeFirstAI/ara2-rs` v0.18.0 wa
 
 ### Added
 
+- **`templates/CODEOWNERS` and `templates/dependabot.yml`.** A migrated repository should request review automatically on every pull request and keep its own dependencies current; neither was inherited from the templates, so both were left to each repository to remember. The CODEOWNERS template carries a catch-all, and states the two GitHub rules that are easy to get backwards: the last matching pattern wins rather than the most specific one, so the catch-all goes first; and CODEOWNERS is not a default community health file, so ownership does not cross repository boundaries and every repository needs its own copy. This repository's own file claimed otherwise and is corrected.
+
+### Changed
+
+- **The migration order is now stated: land the workflow callers in their own pull request, before any release PR.** Section 4.5.6 requires a `publish.yml` rehearsal before a repository's first tag, and on a first migration it cannot be run at all — GitHub refuses to dispatch a workflow that is not on the default branch, and merging the release PR fires `tag-release.yml` immediately, so the file arrives and the tag is created in the same instant. ara2-rs hit this and released without the rehearsal. Splitting the migration from the release restores the window.
+
+  The same note records what the rehearsal cannot cover in any case: a Trusted Publisher still pointing at `release.yml` is invisible to it, because a rehearsal skips the upload. ara2-rs v0.18.0 failed on exactly that, with crates.io answering `Expected workflow filenames: release.yml`. Verify the publisher configuration rather than assuming it.
+
+### Fixed
+
+- **`tag-release.yml` verified the build against one commit and tagged another.** The build runs on the release-branch head; the tag goes on the merge commit. Those carry the same tree only while `main` has not moved, and when it has, the tag names a tree no build ever produced — which `publish-rust.yml` rejects by design, but only once the tag exists and the release ruleset has made it immutable. The design answered this with "require branches to be up to date before merging", a repository setting nothing verifies. The enforcement is in two places, because the two have different powers.
+
+  `rust-full.yml` refuses a release pull request whose branch is behind its base. That is the same condition while it is still cheap — the branch gets updated, the push rebuilds it, and the merge then carries the tree that was built. It is the check that can actually be acted on.
+
+  `tag-release.yml` compares the head and merge trees and refuses to tag a mismatch. It runs on `pull_request: closed`, so by then the merge has happened and there is no "merge again"; it is a backstop against a release PR that skipped Full, and its message now spells out the real recovery — point the release branch at the merge commit so `release.yml` builds that exact tree, then create the tag through the organisation tag-ruleset bypass, the route a maintenance tag already uses. Runs wherever `require-build` is set, which is the signal that a repository is on the release chain.
+
+
+## [1.1.0] - 2026-09-18
+
+Everything here is exercised by a real release: `EdgeFirstAI/ara2-rs` v0.18.0 was built on a release branch, tagged on merge and published from those artifacts, using these workflows at 68dd89a — which is this tag. That migration is also what found most of what follows.
+
+### Added
+
 - **`release-wheels.yml`, the maturin wheel build every binding repository was writing for itself.** Six repositories carry their own copy of the same matrix — `hal`, `client`, `profiler`, `schemas`, `tflite-rs` and `ara2-rs` — and the wheel build is also where the tag-path failures were: a runner image without `git-lfs`, the same image without a C compiler, a toolchain component conflict. Those are properties of the build environment rather than of any one repository, so they are now fixed in one place. It takes a `runners` matrix (defaulting to manylinux2014 on x86_64 and aarch64 Linux with the sdist on x86_64, on the `larger` class the runner policy specifies for a release build), a `features` list for `pyo3/abi3-*`, and the `env` and `pre-command` hooks. Every step declares bash, since an overridden matrix may name a Windows image where the default shell is PowerShell. The C compiler it needs is guaranteed by `setup-rust`; it checks `git` itself, because maturin shells out to it for a vendored source. It checks each built wheel's version against the release branch: a wheel's version comes from the manifest, but a binding deriving it some other way can still produce a wheel naming a version the release is not, and a PyPI version is immutable once uploaded.
 
 - **A `runners` entry may override `maturin-spec`**, which is what a repository shipping both Linux and non-Linux wheels needs. `zig` is what produces the manylinux wheels, and `patchelf` is a Linux-only PyPI package with no wheel for macOS or Windows, so a single workflow-level specification cannot serve both: hal installs `maturin[patchelf,zig]` on its two Linux lanes and plain `maturin` on macOS and Windows. `pre-command` is not a workaround, because it runs before `setup-python` — an install there lands in the system interpreter and the workflow's own install step overwrites it afterwards. This was the last input keeping `hal`, the repository with the largest wheel matrix in the fleet, on its own copy of the build.
