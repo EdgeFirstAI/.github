@@ -143,15 +143,17 @@ Three workflows, one action each. **A tag deploys; it never builds.**
 
 1. Branch `release/X.Y.Z` (or `release/X.Y.Z-rcN`), bump versions and CHANGELOG, open a PR to `main`. Label `ci:full`.
 2. Every push to that branch runs `release.yml`: the shared `release-rust.yml` checks version consistency and the changelog section and produces the SBOM, and the repository's own build jobs produce the artifacts and upload them with `retention-days: 30` or more.
-3. Merge the PR. The shared `tag-release.yml` creates an **annotated** `vX.Y.Z` tag at the merge commit using `RELEASE_TAG_TOKEN`.
+3. Merge the PR. The shared `tag-release.yml` creates an **annotated** `vX.Y.Z` tag at the merge commit using `RELEASE_TAG_TOKEN`, after checking that `release.yml` is green for the merged commit (`require-build`). Leave `require-build` empty only in a repository whose release still builds on the tag.
 4. The tag starts `publish.yml`, which calls `publish-rust.yml`: it finds the successful `release.yml` run for the matching release branch, verifies that run's tree SHA equals the tag's, downloads the artifacts, publishes crates via OIDC (environment `crates-io`), and creates the GitHub Release from the CHANGELOG. Pre-release tags are marked as such and never become `latest`; maintenance tags never displace semver `latest`.
+
+**Release candidates and the registries.** crates.io and PyPI versions are immutable, so a candidate may upload to them only when the manifest version is exactly the tag version. `release/1.2.0-rc1` whose manifests still say `1.2.0` gets a GitHub pre-release with every artifact attached and **no** registry upload — publishing `1.2.0` from the candidate would permanently consume the version the final release needs. Give the manifests the pre-release spelling (`1.2.0-rc.1` for cargo, `1.2.0rc1` for PEP 440) when the candidate is meant to be installable from a registry. The rule is mechanical and needs no input: exact match publishes, base version does not.
 5. **Never tag by hand.** The one exception is a maintenance line cut from an older tag (`release/X.Y.Z` not merged to `main`); maintainers may create that tag through the OrganizationAdmin tag-ruleset bypass (`RELEASE_TAG_TOKEN` must be a token owned by an org admin). The artifacts still come from a `release.yml` run on that branch.
 
 ### Why the build is not on the tag
 
 A tag-triggered workflow cannot be run by a pull request, so anything it builds is built at the one point in the process where nothing can test it, and its failures are only ever found after the tag exists. Measured on hal before this split: five of nine release tags failed, and **every one of those was a build failure at deploy time, never a publishing failure**. v0.32.0 failed three times in a row and each retry required deleting and re-pushing a tag that `protect-release-tags` exists to make immutable.
 
-Accepting the release PR is the gate instead. It cannot merge until the build is green, and a green build means every artifact the release ships already exists.
+The release PR is where a build failure now surfaces, hours before a tag is involved. Be precise about what enforces it: branch protection requires `ci-gate` only, and the release build runs on a branch push rather than on the pull request, so a red build does not block the merge button. What it blocks is the **tag** — `tag-release.yml` with `require-build: release.yml` refuses to create one unless the build is green for the exact commit being merged. A merged PR with a broken build therefore leaves no tag, rather than a tag whose artifacts do not exist.
 
 ### The build itself stays in the product repository
 
@@ -164,7 +166,7 @@ Two rules make a repository's build work with `publish-rust.yml`:
 
 ### Rehearse before the first tag
 
-`publish.yml` carries a `workflow_dispatch` with a tag input, and its publishing steps are gated inside the shared workflow on a real tag push. A dispatch therefore resolves the build, verifies the tree binding, downloads every artifact, renders the release notes and publishes nothing. It is free, it is the only pre-tag test the publish path has, and it is a **required** step of every repository's migration.
+`publish.yml` carries a `workflow_dispatch` with a tag input, and its publishing steps are gated inside the shared workflow on a real tag push. A dispatch therefore resolves the build, verifies the tree binding, downloads every artifact, collects the wheel set, renders the release notes and publishes nothing. The tag does not need to exist — rehearsing *before* the tag is the entire point — so a dispatch binds the build to the release branch head instead of to the tag. It is free, it is the only pre-tag test the publish path has, and it is a **required** step of every repository's migration.
 
 ### PyPI and crates.io trusted publishing
 

@@ -46,6 +46,14 @@ inputs:
     description: Artifact name; empty skips upload
     required: false
     default: sbom
+  retention-days:
+    description: >
+      Artifact retention. Empty keeps the default, which is tuned for a CI
+      artifact nothing outlives the run. A release SBOM is consumed by
+      publish.yml after the release PR merges, which is human-paced, so the
+      release path passes 30 or more.
+    required: false
+    default: ''
 runs:
   using: composite
   steps:
@@ -105,4 +113,4 @@ runs:
         name: ${{ inputs.upload-name }}
         path: ${{ inputs.output-dir }}/sbom.json
         if-no-files-found: error
-        retention-days: ${{ inputs.mode == 'full' && 7 || 1 }}
+        retention-days: ${{ inputs.retention-days != '' && inputs.retention-days || (inputs.mode == 'full' && 7 || 1) }}

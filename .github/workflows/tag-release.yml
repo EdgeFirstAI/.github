@@ -14,6 +14,15 @@ name: tag-release
 
 on:
   workflow_call:
+    inputs:
+      require-build:
+        description: >
+          Workflow file that must have a successful run for the merged PR's
+          head commit before a tag is created. Empty disables the check, which
+          is the default so a repository whose release still builds on the tag
+          is not blocked mid-migration. Turn it on as part of the split.
+        type: string
+        default: ''
     secrets:
       RELEASE_TAG_TOKEN:
         required: true
@@ -29,6 +38,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
+      actions: read
     steps:
       - name: Derive version from branch name
         id: version
@@ -45,6 +55,31 @@ jobs:
             exit 1
           fi
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      # Branch protection requires ci-gate and nothing else, and the release
+      # build runs on a branch push rather than on the pull request, so a
+      # release PR can merge while its build is pending or red. Refusing to
+      # create the tag is where that is actually enforceable: a merged PR with
+      # a broken build then leaves no tag rather than a tag nothing can honour.
+      - name: Release build must be green for this commit
+        if: ${{ inputs.require-build }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BUILD_WORKFLOW: ${{ inputs.require-build }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          count="$(gh api \
+            "repos/${REPO}/actions/workflows/${BUILD_WORKFLOW}/runs?head_sha=${HEAD_SHA}&status=success&per_page=1" \
+            --jq '.workflow_runs | length')"
+          if [[ "$count" -eq 0 ]]; then
+            echo "::error::No successful ${BUILD_WORKFLOW} run for ${HEAD_SHA}."
+            echo "::error::${TAG} was NOT created. A tag publishes artifacts that must already exist;"
+            echo "::error::push the release branch again, let it build, then re-open and merge."
+            exit 1
+          fi
+          echo "ok  ${BUILD_WORKFLOW} is green for ${HEAD_SHA}"
 
       - name: Create release tag
         env:

@@ -103,18 +103,26 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.value }}
         run: |
-          # A pre-release branch carries the base version in its manifests:
-          # release/1.2.0-rc1 is a candidate for 1.2.0 and the crate version
-          # does not change between the candidate and the release.
+          # On a pre-release branch the manifests may carry either the base
+          # version (1.2.0) or the exact pre-release spelling. The choice
+          # decides whether the candidate can reach crates.io and PyPI at all,
+          # because a registry version is immutable: publishing 1.2.0 from
+          # release/1.2.0-rc1 permanently consumes the version the final
+          # release needs. It is reported here rather than discovered at
+          # the tag, where nothing can be undone.
           base="${VERSION%-rc*}"
           fail=0
+          exact=1
           check() {
             local file="$1" found="$2"
-            if [[ "$found" != "$base" ]]; then
-              echo "::error file=$file::$file version '$found' != release branch version '$base'"
-              fail=1
-            else
+            if [[ "$found" == "$VERSION" ]]; then
+              echo "ok  $file  $found  (exact)"
+            elif [[ "$found" == "$base" ]]; then
+              [[ "$VERSION" == "$base" ]] || exact=0
               echo "ok  $file  $found"
+            else
+              echo "::error file=$file::$file version '$found' is neither '$VERSION' nor '$base'"
+              fail=1
             fi
           }
           if [[ -f Cargo.toml ]]; then
@@ -126,6 +134,10 @@ jobs:
           fi
           if [[ -f VERSION ]]; then
             check VERSION "$(tr -d '[:space:]' < VERSION)"
+          fi
+          if [[ "$fail" -eq 0 && "$exact" -eq 0 ]]; then
+            echo "::notice::Manifests carry $base, not $VERSION. publish.yml will attach the artifacts to a GitHub pre-release and SKIP crates.io and PyPI, so the final release can still claim $base. Give the manifests the pre-release version if the candidate should reach the registries."
+            echo "- registries: **skipped** for this candidate (manifests carry \`$base\`)" >> "$GITHUB_STEP_SUMMARY"
           fi
           exit "$fail"
 
@@ -143,7 +155,10 @@ jobs:
           # publish.yml builds the GitHub Release body from this section. An
           # absent section is a release with empty notes, discovered after the
           # tag exists; catching it here makes it a red release PR instead.
-          if ! grep -qE "^## \[?${base//./\\.}\]?" "$CHANGELOG"; then
+          # The version must be a complete token. A prefix match accepts
+          # '## [1.2.30]' as the section for 1.2.3 and ships the wrong notes.
+          esc="${base//./\\.}"
+          if ! grep -qE "^## (\[${esc}\]|${esc}([[:space:]]|$))" "$CHANGELOG"; then
             echo "::error file=$CHANGELOG::no '## [$base]' section in $CHANGELOG"
             exit 1
           fi
@@ -161,3 +176,6 @@ jobs:
       targets: ${{ inputs.sbom-targets }}
       extra-manifests: ${{ inputs.sbom-extra-manifests }}
       upload-name: sbom
+      # publish.yml requires this SBOM after the release PR merges, which is
+      # human-paced. The 7-day CI default would expire a release held a week.
+      retention-days: "30"

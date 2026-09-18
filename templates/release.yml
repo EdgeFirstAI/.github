@@ -60,6 +60,10 @@ jobs:
     needs: verify
     strategy:
       fail-fast: false            # one broken target must not hide the rest
+      # The documented default for a release build is the `larger` class (see
+      # the runner selection policy). These hosted labels are placeholders so a
+      # copied skeleton cannot bill before anyone has reviewed it; pick the
+      # class deliberately when you replace the build below.
       matrix:
         include:
           - os: ubuntu-24.04
@@ -76,16 +80,13 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          repository: EdgeFirstAI/.github
-          ref: 0000000000000000000000000000000000000000
-          path: .ef-ci
-          persist-credentials: false
-      - uses: ./.ef-ci/.github/actions/setup-rust
-        with:
-          cache-key: release-${{ matrix.target }}
 
+      # Deliberately no second checkout of EdgeFirstAI/.github here. The
+      # `uses:` pin above is the only place the shared commit may appear --
+      # a `ref:` on a second checkout is a separate source of truth that
+      # Dependabot does not bump, so the two drift and a run silently mixes
+      # versions. Set the toolchain up with the same actions this repository's
+      # ci.yml already uses.
       - name: Build distribution artifacts
         run: |
           echo "Replace with this repository's real build."

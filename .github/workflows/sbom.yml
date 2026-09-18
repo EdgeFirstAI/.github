@@ -36,6 +36,10 @@ on:
       upload-name:
         type: string
         default: sbom
+      retention-days:
+        description: Artifact retention; empty keeps the per-mode default (full 7, dependency 1)
+        type: string
+        default: ''
 
 jobs:
   sbom:
@@ -77,3 +81,4 @@ jobs:
           targets: ${{ inputs.targets }}
           extra-manifests: ${{ inputs.extra-manifests }}
           upload-name: ${{ inputs.upload-name }}
+          retention-days: ${{ inputs.retention-days }}
