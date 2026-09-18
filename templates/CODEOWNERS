@@ -1,0 +1,21 @@
+# Copy into the product repository as .github/CODEOWNERS.
+#
+# GitHub requests review from the owners of the changed paths when a pull
+# request opens, which is what makes review a property of the repository
+# rather than something the author has to remember.
+#
+# Requesting a review is not requiring one. This file decides WHO is asked;
+# the `main` ruleset decides whether the answer is needed before merge. Both
+# are needed, and neither substitutes for the other.
+#
+# More specific paths win over less specific ones, which is the mechanism for
+# routing an area to whoever owns it. Add those entries below the catch-all.
+#
+# Note EdgeFirstAI/.github omits its own catch-all on purpose: GitHub treats
+# that repository's community health files as org-wide defaults, so a
+# catch-all there can reach repositories that never asked for one. An
+# ordinary repository wants the catch-all.
+* @sebastient
+
+# Example of routing a path to its owner, once there is more than one:
+# .github/workflows/ @sebastient

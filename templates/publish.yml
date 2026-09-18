@@ -9,12 +9,23 @@
 # downloads them and publishes. A missing artifact, an expired artifact or a
 # tree mismatch fails the publish rather than falling back to a build.
 #
+# MIGRATE THE WORKFLOWS FIRST, IN THEIR OWN PULL REQUEST.
+#
+# GitHub will not dispatch a workflow that is not on the default branch, and
+# merging a release PR fires tag-release.yml immediately — so a repository that
+# introduces this file *in* its release PR can never rehearse: the file is
+# absent from main until the merge, and the merge creates the tag. Land ci.yml,
+# nightly.yml, release.yml, tag-release.yml and publish.yml as an ordinary pull
+# request, then cut the release branch. Step 2 below depends on it.
+#
 # BEFORE THE FIRST TAG in a repository, in this order:
 #
 #   1. Re-point every PyPI and crates.io Trusted Publisher from release.yml to
 #      publish.yml. Both match on workflow FILENAME, so splitting the chain
 #      breaks them until they are updated — and the rehearsal below will NOT
-#      catch it, because a rehearsal skips the upload.
+#      catch it, because a rehearsal skips the upload. VERIFY it rather than
+#      assume it: ara2-rs v0.18.0 failed on exactly this, with crates.io
+#      answering "Expected workflow filenames: release.yml".
 #   2. Run the workflow_dispatch rehearsal below against a release branch that
 #      has a green build. It resolves, verifies and downloads everything and
 #      publishes nothing.

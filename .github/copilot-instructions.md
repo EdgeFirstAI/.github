@@ -103,7 +103,11 @@ jobs:
 
 The `uses:` pin is the only place the shared commit appears. The shared workflows resolve their own repository and commit from `job.workflow_repository` and `job.workflow_sha` to reach their composite actions, so there is no second SHA to keep in sync and Dependabot's bump is complete on its own.
 
-Copy the caller skeletons from [`templates/`](https://github.com/EdgeFirstAI/.github/tree/main/templates). Repository-specific steps (ANGLE, LFS testdata, OpenCV, `vcan0`) become **inputs**, not pasted jobs.
+Copy the caller skeletons from [`templates/`](https://github.com/EdgeFirstAI/.github/tree/main/templates). Repository-specific steps (ANGLE, LFS testdata, OpenCV, `vcan0`) become **inputs**, not pasted jobs. `templates/` also carries `CODEOWNERS` and `dependabot.yml`: a migrated repository requests review automatically on every pull request, and keeps its dependencies current itself.
+
+**Migrate the workflows in their own pull request, before any release PR.** GitHub will not dispatch a workflow that is not on the default branch, and merging a release PR fires `tag-release.yml` immediately — so a repository that introduces `publish.yml` *in* its release PR can never run the rehearsal that Section 4.5.6 requires: the file is absent from `main` until the merge, and the merge creates the tag. Land the five callers as an ordinary PR, then prepare the release on top.
+
+**Bring dependencies current before preparing a release, not after.** A release cut on stale dependencies is behind the moment it ships, and adopting `dependabot.yml` in the same change opens a wave of PRs immediately after the tag — which is what ara2-rs did, with five `build(deps)` PRs arriving while v0.18.0 was still publishing.
 
 Inputs that matter:
 

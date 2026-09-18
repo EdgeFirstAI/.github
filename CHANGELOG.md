@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`templates/CODEOWNERS` and `templates/dependabot.yml`.** A migrated repository should request review automatically on every pull request and keep its own dependencies current; neither was inherited from the templates, so both were left to each repository to remember. The CODEOWNERS template carries a catch-all — deliberately, and deliberately unlike this repository's own, whose community health files GitHub treats as org-wide defaults.
+
+### Changed
+
+- **The migration order is now stated: land the workflow callers in their own pull request, before any release PR.** Section 4.5.6 requires a `publish.yml` rehearsal before a repository's first tag, and on a first migration it cannot be run at all — GitHub refuses to dispatch a workflow that is not on the default branch, and merging the release PR fires `tag-release.yml` immediately, so the file arrives and the tag is created in the same instant. ara2-rs hit this and released without the rehearsal. Splitting the migration from the release restores the window.
+
+  The same note records what the rehearsal cannot cover in any case: a Trusted Publisher still pointing at `release.yml` is invisible to it, because a rehearsal skips the upload. ara2-rs v0.18.0 failed on exactly that, with crates.io answering `Expected workflow filenames: release.yml`. Verify the publisher configuration rather than assuming it.
+
+### Fixed
+
+- **`tag-release.yml` verified the build against one commit and tagged another.** The build runs on the release-branch head; the tag goes on the merge commit. Those carry the same tree only while `main` has not moved, and when it has, the tag names a tree no build ever produced — which `publish-rust.yml` rejects by design, but only once the tag exists and the release ruleset has made it immutable. The design answered this with "require branches to be up to date before merging", a repository setting nothing verifies. The trees are now compared before the tag is created, so the failure costs a rebase rather than a tag deletion. Runs wherever `require-build` is set, which is the signal that a repository is on the release chain.
+
+
 ## [1.1.0] - 2026-09-18
 
 Everything here is exercised by a real release: `EdgeFirstAI/ara2-rs` v0.18.0 was built on a release branch, tagged on merge and published from those artifacts, using these workflows at 68dd89a — which is this tag. That migration is also what found most of what follows.

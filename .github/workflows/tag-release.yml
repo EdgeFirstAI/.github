@@ -67,6 +67,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
           BUILD_WORKFLOW: ${{ inputs.require-build }}
           TAG: ${{ steps.version.outputs.tag }}
         run: |
@@ -80,6 +81,30 @@ jobs:
             exit 1
           fi
           echo "ok  ${BUILD_WORKFLOW} is green for ${HEAD_SHA}"
+
+          # The build ran on the release-branch head; the tag goes on the merge
+          # commit. Those are different objects, and they carry the same tree
+          # only when main did not move between the build and the merge. When
+          # it did, the tag names a tree nothing ever built -- publish binds by
+          # tree and would reject it, but only after the tag exists and the
+          # release ruleset has made it immutable.
+          #
+          # Refusing here costs a rebase. Discovering it at publish costs a tag
+          # deletion, which is what the ruleset exists to prevent. The design
+          # answers this with "require branches to be up to date before
+          # merging", which is a repository setting nothing verifies; this is
+          # the same invariant, enforced.
+          head_tree="$(gh api "repos/${REPO}/git/commits/${HEAD_SHA}" --jq '.tree.sha')"
+          merge_tree="$(gh api "repos/${REPO}/git/commits/${MERGE_SHA}" --jq '.tree.sha')"
+          if [[ "$head_tree" != "$merge_tree" ]]; then
+            echo "::error::${TAG} was NOT created: the merge commit is not the tree that was built."
+            echo "::error::  built  ${HEAD_SHA} -> tree ${head_tree}"
+            echo "::error::  merged ${MERGE_SHA} -> tree ${merge_tree}"
+            echo "::error::main moved between the build and the merge. Update the release branch"
+            echo "::error::from main, let it rebuild, and merge again."
+            exit 1
+          fi
+          echo "ok  merge commit carries the tree that was built ($head_tree)"
 
       - name: Create release tag
         env:

@@ -1,0 +1,39 @@
+# Copy into the product repository as .github/dependabot.yml.
+#
+# Dependabot bumps action SHAs in workflow YAML, including the
+# `uses: EdgeFirstAI/.github@…` pins. That bump is complete on its own: the
+# shared workflows resolve their own commit from the job context, so there is
+# no second value to update alongside it.
+#
+# Each bump PR is itself the test — it runs Quick on the revision it proposes.
+#
+# Land dependency updates BEFORE preparing a release, not after. A release cut
+# on stale dependencies is behind the moment it ships, and adopting this file
+# in the same change as a release opens a wave of PRs immediately after the
+# tag. Bring dependencies current, let CI go green, then cut the release
+# branch.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 5
+
+  # Cargo.lock is committed — every shared lane runs --locked — so a
+  # transitive bump needs a commit. Group crates that release together and
+  # must move together: a partial bump of a set whose types appear in each
+  # other's public API is a type-unification failure, not a version skew.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      edgefirst-hal:
+        patterns:
+          - "edgefirst-*"
+    open-pull-requests-limit: 5
