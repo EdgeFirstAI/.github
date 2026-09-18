@@ -39,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `release-wheels.yml` attested before the caller's `post-command` ran, so a wheel that the assertion was about to reject already carried provenance. This is correct when `maturin-build` is called directly—it attests what it built—but wrong through this workflow, which has a rejection step after it. The workflow now passes `attest: false` and attests itself, after `post-command` and before the upload, so provenance covers exactly the set that reaches the artifact store. hal worked around this by hand; a caller should not have to know to.
+
 - **`tag-release.yml` verified the build against one commit and tagged another.** The build runs on the release-branch head; the tag goes on the merge commit. Those carry the same tree only while `main` has not moved, and when it has, the tag names a tree no build ever produced — which `publish-rust.yml` rejects by design, but only once the tag exists and the release ruleset has made it immutable. The design answered this with "require branches to be up to date before merging", a repository setting nothing verifies. The enforcement is in two places, because the two have different powers.
 
   `rust-full.yml` refuses a release pull request whose branch is behind its base. That is the same condition while it is still cheap — the branch gets updated, the push rebuilds it, and the merge then carries the tree that was built. It is the check that can actually be acted on.
