@@ -4,18 +4,22 @@
 # request opens, which is what makes review a property of the repository
 # rather than something the author has to remember.
 #
+# Every repository needs its own copy. CODEOWNERS is NOT one of the default
+# community health files an organisation's .github repository provides to
+# repositories that lack them — that set is CODE_OF_CONDUCT.md,
+# CONTRIBUTING.md, discussion category forms, FUNDING.yml, issue and pull
+# request templates, SECURITY.md and SUPPORT.md. Ownership does not cross
+# repository boundaries.
+#
 # Requesting a review is not requiring one. This file decides WHO is asked;
 # the `main` ruleset decides whether the answer is needed before merge. Both
 # are needed, and neither substitutes for the other.
 #
-# More specific paths win over less specific ones, which is the mechanism for
-# routing an area to whoever owns it. Add those entries below the catch-all.
-#
-# Note EdgeFirstAI/.github omits its own catch-all on purpose: GitHub treats
-# that repository's community health files as org-wide defaults, so a
-# catch-all there can reach repositories that never asked for one. An
-# ordinary repository wants the catch-all.
+# ORDER MATTERS, AND IT IS NOT SPECIFICITY. The last matching pattern wins,
+# so the catch-all goes FIRST and path-scoped entries go below it. A
+# catch-all placed at the bottom would override every specific owner above
+# it, which is the opposite of what it looks like it does.
 * @sebastient
 
-# Example of routing a path to its owner, once there is more than one:
+# Path-scoped owners go below, most-specific last:
 # .github/workflows/ @sebastient

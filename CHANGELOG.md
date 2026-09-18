@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`templates/CODEOWNERS` and `templates/dependabot.yml`.** A migrated repository should request review automatically on every pull request and keep its own dependencies current; neither was inherited from the templates, so both were left to each repository to remember. The CODEOWNERS template carries a catch-all — deliberately, and deliberately unlike this repository's own, whose community health files GitHub treats as org-wide defaults.
+- **`templates/CODEOWNERS` and `templates/dependabot.yml`.** A migrated repository should request review automatically on every pull request and keep its own dependencies current; neither was inherited from the templates, so both were left to each repository to remember. The CODEOWNERS template carries a catch-all, and states the two GitHub rules that are easy to get backwards: the last matching pattern wins rather than the most specific one, so the catch-all goes first; and CODEOWNERS is not a default community health file, so ownership does not cross repository boundaries and every repository needs its own copy. This repository's own file claimed otherwise and is corrected.
 
 ### Changed
 
@@ -19,7 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`tag-release.yml` verified the build against one commit and tagged another.** The build runs on the release-branch head; the tag goes on the merge commit. Those carry the same tree only while `main` has not moved, and when it has, the tag names a tree no build ever produced — which `publish-rust.yml` rejects by design, but only once the tag exists and the release ruleset has made it immutable. The design answered this with "require branches to be up to date before merging", a repository setting nothing verifies. The trees are now compared before the tag is created, so the failure costs a rebase rather than a tag deletion. Runs wherever `require-build` is set, which is the signal that a repository is on the release chain.
+- **`tag-release.yml` verified the build against one commit and tagged another.** The build runs on the release-branch head; the tag goes on the merge commit. Those carry the same tree only while `main` has not moved, and when it has, the tag names a tree no build ever produced — which `publish-rust.yml` rejects by design, but only once the tag exists and the release ruleset has made it immutable. The design answered this with "require branches to be up to date before merging", a repository setting nothing verifies. The enforcement is in two places, because the two have different powers.
+
+  `rust-full.yml` refuses a release pull request whose branch is behind its base. That is the same condition while it is still cheap — the branch gets updated, the push rebuilds it, and the merge then carries the tree that was built. It is the check that can actually be acted on.
+
+  `tag-release.yml` compares the head and merge trees and refuses to tag a mismatch. It runs on `pull_request: closed`, so by then the merge has happened and there is no "merge again"; it is a backstop against a release PR that skipped Full, and its message now spells out the real recovery — point the release branch at the merge commit so `release.yml` builds that exact tree, then create the tag through the organisation tag-ruleset bypass, the route a maintenance tag already uses. Runs wherever `require-build` is set, which is the signal that a repository is on the release chain.
 
 
 ## [1.1.0] - 2026-09-18

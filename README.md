@@ -23,10 +23,9 @@ The organisation profile README lives in [`profile/`](profile/README.md).
 | `.github/workflows/publish-rust.yml` | tag side: resolve the build, verify the tree, crates OIDC, GitHub Release |
 | `.github/actions/` | `setup-rust`, `setup-python-uv`, `sbom-tools`, `board-run`, `resolve-release-build`, `workflow-lint` |
 | `.github/scripts/` | license policy, the SHA-pin check, the workspace version check (single copy each) |
-| `templates/` | caller skeletons, plus `CODEOWNERS` and `dependabot.yml` for a migrated repository |
 | `.github/rulesets/` | `protect-main` (reviews; org-admin PR bypass), `protect-main-ci` (ci-gate, no bypass), `protect-release-tags` |
 | `.github/runners/` | ephemeral fleet provision scripts |
-| `templates/` | per-repo `ci.yml`, `nightly.yml`, `release.yml`, `tag-release.yml`, `publish.yml` |
+| `templates/` | per-repo `ci.yml`, `nightly.yml`, `release.yml`, `tag-release.yml`, `publish.yml`, plus `CODEOWNERS` and `dependabot.yml` |
 
 ## Pinning
 
