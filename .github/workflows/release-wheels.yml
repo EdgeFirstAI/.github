@@ -81,10 +81,17 @@ on:
       maturin-spec:
         description: >-
           pip requirement for maturin, for every lane that does not override it
-          in `runners`. Pinned by the caller when a release must be
-          reproducible against one maturin version.
+          in `runners`.
+
+          Empty, the default, lets each lane derive it from its own runner OS:
+          `zig` is what produces the manylinux wheels and `patchelf` is a
+          Linux-only PyPI package with no wheel for macOS or Windows, so a
+          value set here is a value every lane gets whether it can install it
+          or not. Set it to pin a maturin version for reproducibility, and
+          expect to override it per lane in `runners` if the matrix is not
+          all one OS.
         type: string
-        default: maturin[patchelf,zig]
+        default: ""
       features:
         description: Cargo features for the wheel build, e.g. pyo3/abi3-py311
         type: string
@@ -286,6 +293,10 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: ${{ inputs.artifact-prefix }}-${{ matrix.name }}
+          # Matches the maturin-build action's `wheel-dir` default, which is
+          # what it passes to maturin as --out. This workflow does not expose
+          # that input, so the two agree by construction; exposing it means
+          # changing both.
           path: target/wheels/*
           if-no-files-found: error
           retention-days: 30

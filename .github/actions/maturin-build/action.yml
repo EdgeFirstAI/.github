@@ -16,8 +16,10 @@ inputs:
   builds:
     description: >-
       JSON array of {manifest, features, args} objects, built in order in this
-      job. `features` falls back to the `features` input; `args` is appended
-      after `args`. Looping here rather than calling once per binding is
+      job. An entry's `features` replaces the action's `features` input for
+      that build; an entry's `args` is appended after the action's `args`
+      input, so the lane-wide arguments come first and the per-build ones
+      refine them. Looping here rather than calling once per binding is
       deliberate: the reusable-workflow boundary is per job, so one call per
       binding is one job per binding, and none of them share a `target/`
       directory or a warm cargo cache.
@@ -45,7 +47,11 @@ inputs:
     required: false
     default: ""
   wheel-dir:
-    description: Where maturin writes; also what is verified and attested.
+    description: >-
+      Where maturin writes, and therefore what is verified and attested. Passed
+      as `--out`, so this is the one place the output location is set — putting
+      `--out` in `args` instead leaves this input describing a directory
+      nothing writes to.
     required: false
     default: target/wheels
   verify-version:
@@ -136,7 +142,7 @@ runs:
           [[ -n "$f" ]] || f="$FEATURES"
           extra="$(jq -r '.args // empty' <<< "$entry")"
 
-          args=(--release --locked -m "$m")
+          args=(--release --locked -m "$m" --out "$WHEEL_DIR")
           [[ -n "$f" ]] && args+=(--features "$f")
           echo "==> $m ${f:+($f)}"
           # shellcheck disable=SC2086  # both are argument lists and must split
