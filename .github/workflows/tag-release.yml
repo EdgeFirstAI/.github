@@ -61,7 +61,7 @@ jobs:
       # release PR can merge while its build is pending or red. Refusing to
       # create the tag is where that is actually enforceable: a merged PR with
       # a broken build then leaves no tag rather than a tag nothing can honour.
-      - name: Release build must be green for this commit
+      - name: Release build must be green for the release-branch head
         if: ${{ inputs.require-build }}
         env:
           GH_TOKEN: ${{ github.token }}
