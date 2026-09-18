@@ -20,7 +20,12 @@ inputs:
     required: false
     default: 'false'
   github-token:
-    description: Token with actions:read on this repository
+    description: >
+      Token with `actions: read` AND `contents: read` on this repository. Both
+      are needed: the workflow-run and artifact lookups are Actions APIs, while
+      the ref, tag-object and commit-tree lookups that do the binding are
+      Contents APIs. A caller granting only one of them fails part way through,
+      and on a private repository fails immediately.
     required: false
     default: ${{ github.token }}
 
