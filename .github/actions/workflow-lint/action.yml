@@ -1,0 +1,93 @@
+name: Workflow lint
+description: actionlint plus the SHA-pin policy over a repository's workflows
+inputs:
+  roots:
+    description: Space-separated roots to scan for `uses:` references
+    required: false
+    default: .github
+  actionlint-args:
+    description: Extra arguments for actionlint
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    # Pinned by version AND checksum, per platform. An unpinned linter is the
+    # same mutable third-party code the pin check below exists to reject, so
+    # the archive is always downloaded and verified: a copy already on PATH is
+    # of unknown provenance and is not trusted, and the binary is installed
+    # into a directory this action controls rather than onto the system path.
+    #
+    # Quick runs on `ubuntu-24.04-arm` and on macOS in some callers, and this
+    # action is on by default, so the platform is resolved rather than assumed.
+    - name: Install actionlint
+      shell: bash
+      env:
+        ACTIONLINT_VERSION: "1.7.12"
+        SHA256_LINUX_AMD64: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        SHA256_LINUX_ARM64: 325e971b6ba9bfa504672e29be93c24981eeb1c07576d730e9f7c8805afff0c6
+        SHA256_DARWIN_AMD64: 5b44c3bc2255115c9b69e30efc0fecdf498fdb63c5d58e17084fd5f16324c644
+        SHA256_DARWIN_ARM64: aba9ced2dee8d27fecca3dc7feb1a7f9a52caefa1eb46f3271ea66b6e0e6953f
+        SHA256_WINDOWS_AMD64: 6e7241b51e6817ea6a047693d8e6fed13b31819c9a0dd6c5a726e1592d22f6e9
+        RUNNER_OS_IN: ${{ runner.os }}
+        RUNNER_ARCH_IN: ${{ runner.arch }}
+      run: |
+        set -euo pipefail
+
+        case "$RUNNER_OS_IN" in
+          Linux)   os=linux ;;
+          macOS)   os=darwin ;;
+          Windows) os=windows ;;
+          *) echo "::error::actionlint: unsupported runner OS '$RUNNER_OS_IN'"; exit 1 ;;
+        esac
+        case "$RUNNER_ARCH_IN" in
+          X64)   arch=amd64 ;;
+          ARM64) arch=arm64 ;;
+          *) echo "::error::actionlint: unsupported runner arch '$RUNNER_ARCH_IN'"; exit 1 ;;
+        esac
+
+        # actionlint publishes no windows_arm64 archive; say so rather than
+        # 404ing halfway through a lint step.
+        ext=tar.gz
+        [[ "$os" == windows ]] && ext=zip
+        var="SHA256_$(echo "${os}_${arch}" | tr '[:lower:]' '[:upper:]')"
+        sum="${!var:-}"
+        if [[ -z "$sum" ]]; then
+          echo "::error::actionlint publishes no ${os}_${arch} archive at v${ACTIONLINT_VERSION}"
+          exit 1
+        fi
+
+        dest="${RUNNER_TEMP}/actionlint-bin"
+        mkdir -p "$dest"
+        archive="${RUNNER_TEMP}/actionlint.${ext}"
+        curl -fsSL -o "$archive" \
+          "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_${os}_${arch}.${ext}"
+        echo "${sum}  ${archive}" | sha256sum -c
+
+        if [[ "$ext" == zip ]]; then
+          unzip -o -q "$archive" actionlint.exe -d "$dest"
+        else
+          tar xzf "$archive" -C "$dest" actionlint
+        fi
+        rm -f "$archive"
+        # Prepended, so the verified copy wins over anything preinstalled.
+        echo "$dest" >> "$GITHUB_PATH"
+        "$dest"/actionlint* -version
+
+    - name: actionlint
+      shell: bash
+      env:
+        EXTRA: ${{ inputs.actionlint-args }}
+      run: |
+        set -euo pipefail
+        # shellcheck disable=SC2086  # EXTRA is an argument list and must split
+        actionlint -color $EXTRA
+
+    - name: SHA-pin policy
+      shell: bash
+      env:
+        ROOTS: ${{ inputs.roots }}
+      run: |
+        set -euo pipefail
+        # shellcheck disable=SC2086  # ROOTS is a path list and must split
+        python3 "${GITHUB_ACTION_PATH}/../../scripts/check_action_pins.py" $ROOTS

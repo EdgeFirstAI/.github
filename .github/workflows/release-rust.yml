@@ -44,6 +44,47 @@ on:
       sbom-extra-manifests:
         type: string
         default: ""
+      package-runner:
+        description: >-
+          Runner for the packaging job. Defaults to the `larger` class because
+          `cargo package` compiles; see the runner selection policy.
+        type: string
+        default: ubuntu-24.04-xlarge
+      package-env:
+        description: >-
+          Newline-separated KEY=VALUE pairs for the packaging job. `cargo
+          package` runs a verification compile, so a crate whose build scripts
+          need an OpenCV root, a sysroot or an ANGLE path needs the same
+          configuration here that its other lanes get -- and a reusable
+          workflow inherits nothing from the caller's job.
+        type: string
+        default: ""
+      package-pre-command:
+        description: >-
+          Caller setup for the packaging job, run from the repository root
+          before `cargo package`. Same contract as `rust-quick`'s
+          `pre-command`.
+        type: string
+        default: ""
+      package-crates:
+        description: >-
+          Run `cargo package`. Mirrors `publish-crates` on `publish-rust.yml`;
+          set false for a repository that publishes no crate.
+        type: boolean
+        default: true
+      crate-packages:
+        description: >-
+          Space-separated package NAMES (not `-p` arguments), in dependency
+          order. Empty packages the workspace root. The resulting `.crate`
+          files are uploaded together with the resolved list, so a packaging
+          failure -- an excluded file, a path dependency without a version, a
+          dirty tree -- is a red release PR rather than a failure inside
+          `cargo publish` on the tag.
+
+          `publish-rust.yml` reads the uploaded list and refuses to publish a
+          different one, so the two cannot drift; pass the same value there.
+        type: string
+        default: ""
       timeout-minutes:
         type: number
         default: 20
@@ -70,6 +111,13 @@ jobs:
       prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .ef-ci
+          persist-credentials: false
 
       - name: Version from release branch
         id: version
@@ -135,11 +183,20 @@ jobs:
           if [[ -f VERSION ]]; then
             check VERSION "$(tr -d '[:space:]' < VERSION)"
           fi
+
           if [[ "$fail" -eq 0 && "$exact" -eq 0 ]]; then
             echo "::notice::Manifests carry $base, not $VERSION. publish.yml will attach the artifacts to a GitHub pre-release and SKIP crates.io and PyPI, so the final release can still claim $base. Give the manifests the pre-release version if the candidate should reach the registries."
             echo "- registries: **skipped** for this candidate (manifests carry \`$base\`)" >> "$GITHUB_STEP_SUMMARY"
           fi
           exit "$fail"
+
+      # Cargo accepts `[workspace.dependencies.foo]` as well as the inline
+      # form, and a line-oriented scan sees only the second, so the manifest is
+      # parsed rather than grepped.
+      - name: Workspace internal versions
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: python3 .ef-ci/.github/scripts/check_workspace_versions.py "$VERSION"
 
       - name: Changelog has a section
         if: ${{ inputs.changelog != '' }}
@@ -163,6 +220,107 @@ jobs:
             exit 1
           fi
           echo "ok  $CHANGELOG has a section for $base"
+
+  # `publish-rust.yml` runs `cargo publish --no-verify`, which skips the
+  # verification compile precisely so the tag path builds nothing. That is only
+  # safe because packaging was already exercised on the release branch -- here.
+  package:
+    name: Package crates
+    needs: verify-version
+    if: ${{ inputs.package-crates }}
+    # runner-class: larger -- `cargo package` runs a verification compile, so
+    # this is a release build, and the runner selection policy puts release
+    # builds on the larger class. It runs once per push to a release branch,
+    # not per push to a PR. A caller that wants the free class passes
+    # `package-runner: ubuntu-24.04` deliberately.
+    runs-on: ${{ inputs.package-runner }}
+    timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        # package-runner is caller-overridable and may name a Windows image,
+        # where the default shell is PowerShell and every block below is bash.
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .ef-ci
+          persist-credentials: false
+
+      - name: Caller environment
+        if: ${{ inputs.package-env != '' }}
+        env:
+          CALLER_ENV: ${{ inputs.package-env }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r line; do
+            [[ -z "${line// }" ]] && continue
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            if [[ ! "$line" =~ ^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*= ]]; then
+              echo "::error::package-env line is not KEY=VALUE: $line"
+              exit 1
+            fi
+            echo "${line#"${line%%[![:space:]]*}"}" >> "$GITHUB_ENV"
+          done <<< "$CALLER_ENV"
+
+      - name: Caller pre-command
+        if: ${{ inputs.package-pre-command != '' }}
+        env:
+          PRE_COMMAND: ${{ inputs.package-pre-command }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
+
+      - uses: ./.ef-ci/.github/actions/setup-rust
+        with:
+          components: ""
+          cache-key: release-package
+
+      - name: cargo package
+        env:
+          PACKAGES: ${{ inputs.crate-packages }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [[ -n "$PACKAGES" ]]; then
+            # Dependency order matters: packaging a crate whose sibling is a
+            # path+version dependency resolves that sibling locally, so the
+            # order here is the order publish-rust.yml will upload in.
+            for pkg in $PACKAGES; do
+              args+=(-p "$pkg")
+            done
+          fi
+          cargo package --locked "${args[@]}"
+          ls -la target/package/*.crate
+
+          # The authoritative list, written next to what it produced.
+          # publish-rust.yml reads this rather than trusting its own input, so
+          # packaging `foo` and publishing `bar` is not expressible.
+          printf '%s\n' "$PACKAGES" > target/package/PACKAGES
+          {
+            echo "### Packaged crates"
+            for f in target/package/*.crate; do
+              echo "- \`$(basename "$f")\` ($(du -h "$f" | cut -f1))"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: crates
+          path: |
+            target/package/*.crate
+            target/package/PACKAGES
+          if-no-files-found: error
+          # The release-PR-to-tag gap is human-paced; publish.yml fails on an
+          # expired artifact rather than rebuilding.
+          retention-days: 30
 
   sbom:
     name: Release SBOM

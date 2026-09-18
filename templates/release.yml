@@ -43,12 +43,33 @@ jobs:
     uses: EdgeFirstAI/.github/.github/workflows/release-rust.yml@0000000000000000000000000000000000000000
     with:
       sbom: true
+      # Package NAMES the release ships, in dependency order. The list is
+      # recorded beside the .crate files and publish.yml refuses to publish a
+      # different one, so the value here and in publish.yml cannot drift.
+      # `cargo publish --no-verify` on the tag is only safe because packaging
+      # was exercised here. Set `package-crates: false` for a repository that
+      # publishes no crate.
+      crate-packages: ""
+    secrets: inherit
+
+  # Wheels, for a repository shipping a PyO3/maturin binding. Delete this job
+  # if it ships none. The default matrix is manylinux2014 for x86_64 and
+  # aarch64 Linux with the sdist on x86_64, which is what the EdgeFirst
+  # bindings ship; override `runners` for anything else.
+  wheels:
+    needs: verify
+    uses: EdgeFirstAI/.github/.github/workflows/release-wheels.yml@0000000000000000000000000000000000000000
+    with:
+      manifest: crates/your-python-crate/Cargo.toml
+      # features: pyo3/abi3-py311
+      # env: PYO3_CROSS_PYTHON_VERSION=3.11
     secrets: inherit
 
   # ---------------------------------------------------------------------
-  # Your build goes here. It stays in this repository because it is the one
-  # genuinely repository-specific part of a release. Two rules make it work
-  # with publish.yml:
+  # Anything the two shared jobs above do not build goes here -- C API
+  # archives, container images, binaries. Crates and wheels are no longer
+  # repository-specific and should not be re-implemented below. Two rules make
+  # whatever is left work with publish.yml:
   #
   #   1. retention-days must be 30 or more. The release-PR-to-tag gap is
   #      human-paced, and publish.yml fails on an expired artifact rather
