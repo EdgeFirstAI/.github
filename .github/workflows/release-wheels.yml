@@ -127,9 +127,10 @@ on:
         default: ""
       attest:
         description: >-
-          Generate build provenance for the wheels, in the job that built them.
-          The calling job must grant `id-token: write` and `attestations:
-          write`; see templates/release.yml.
+          Generate build provenance for the wheels, in the job that built them
+          and after `post-command` has accepted them. The calling job must
+          grant `id-token: write` and `attestations: write`; see
+          templates/release.yml.
         type: boolean
         default: true
       verify-version:
@@ -244,7 +245,7 @@ jobs:
         with:
           python-version: ${{ inputs.python-version }}
 
-      # Install, build, verify and attest. The body of this job lives in a
+      # Install, build and verify. The body of this job lives in a
       # composite action so that a repository whose matrix does not fit this
       # workflow -- hal builds five distributions twice each, interleaved with
       # an SDK fetch and two Mach-O assertions -- gets the same implementation
@@ -265,8 +266,12 @@ jobs:
           # derive it from the runner OS, which is what it is a property of.
           maturin-spec: ${{ matrix['maturin-spec'] || inputs.maturin-spec }}
           verify-version: ${{ inputs.verify-version }}
-          attest: ${{ inputs.attest }}
           lane: ${{ matrix.name }}
+          # Attested below instead, after `post-command`. The action attests as
+          # soon as it has built, which is right when it is called directly but
+          # wrong here: a wheel this workflow is about to reject would already
+          # carry provenance.
+          attest: false
 
       # Runs before the upload, deliberately. A wheel that fails a caller's
       # own assertion must never reach the artifact store, because
@@ -289,6 +294,17 @@ jobs:
         run: |
           set -euo pipefail
           bash --noprofile --norc -euo pipefail -c "$POST_COMMAND"
+
+      # After the caller's assertions and before the upload, so provenance
+      # covers exactly the set that reaches the artifact store. Attesting
+      # earlier would describe a wheel `post-command` is about to reject, which
+      # is provenance for something nobody can install; attesting later is not
+      # possible, because the upload is what publish.yml consumes.
+      - name: Attest build provenance
+        if: ${{ inputs.attest }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-path: target/wheels/*
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
