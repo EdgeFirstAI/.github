@@ -13,6 +13,11 @@ silently changes which CI a repository runs.
 Local references (`./path`, `.ef-ci/...`) are skipped: a local action lives in
 the same reviewed commit as the workflow calling it.
 
+A `docker://` reference is held to the same standard by its own rule. It is not
+exempt -- `uses: docker://vendor/image:latest` pulls whatever that tag points at
+today and runs it with the repository's token -- but a registry image is
+immutable by digest rather than by git SHA, so it must carry `@sha256:<64 hex>`.
+
 Usage: check_action_pins.py [root ...]   (default: .github)
 """
 
@@ -22,6 +27,7 @@ import sys
 
 USES = re.compile(r"^\s*-?\s*uses:\s*(.+)$")
 SHA = re.compile(r"^[0-9a-fA-F]{40}$")
+DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 def scan(roots: list[pathlib.Path]) -> list[str]:
@@ -37,7 +43,15 @@ def scan(roots: list[pathlib.Path]) -> list[str]:
                 if not match:
                     continue
                 ref = match.group(1).split("#", 1)[0].strip().strip("'\"")
-                if ref.startswith(("./", ".ef-ci/", "docker://")):
+                if ref.startswith(("./", ".ef-ci/")):
+                    continue
+                if ref.startswith("docker://"):
+                    # Registry images pin by manifest digest, not by git SHA.
+                    digest = ref.rsplit("@", 1)[-1] if "@" in ref else ""
+                    if not DIGEST.fullmatch(digest):
+                        fails.append(
+                            f"{path}:{lineno}: docker image not pinned by digest: {line.strip()}"
+                        )
                     continue
                 if "@" not in ref:
                     fails.append(f"{path}:{lineno}: missing pin: {line.strip()}")

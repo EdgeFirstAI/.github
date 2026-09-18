@@ -32,10 +32,14 @@ on:
           manylinux2014 wheels for x86_64 and aarch64 Linux, with the sdist on
           x86_64 only, which is what every EdgeFirst binding ships today.
         type: string
+        # runner-class: larger -- a wheel build compiles, so the runner
+        # selection policy puts it on the larger class; it runs once per push
+        # to a release branch, not per push to a PR. A caller that wants the
+        # free class names the hosted labels here deliberately.
         default: >-
-          [{"name": "x86_64-linux", "runner": "ubuntu-24.04",
+          [{"name": "x86_64-linux", "runner": "ubuntu-24.04-xlarge",
             "args": "--sdist --zig --compatibility manylinux2014"},
-           {"name": "aarch64-linux", "runner": "ubuntu-24.04-arm",
+           {"name": "aarch64-linux", "runner": "ubuntu-24.04-arm-xlarge",
             "args": "--zig --compatibility manylinux2014"}]
       python-version:
         type: string
@@ -85,6 +89,11 @@ jobs:
     timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
     permissions:
       contents: read
+    defaults:
+      run:
+        # `runners` is caller-overridable and may name a Windows image, where
+        # the default shell is PowerShell and every block below is bash.
+        shell: bash
     strategy:
       # One broken target must not hide the state of the others: a release
       # needs to know everything that is wrong in one run, not one thing per
@@ -150,17 +159,32 @@ jobs:
           components: ""
           cache-key: release-wheels-${{ matrix.name }}
 
-      - name: Toolchain preflight
+      # maturin shells out to `cc` for any dependency with a build script, and
+      # to git for a vendored source. A runner image missing either fails deep
+      # inside a dependency with an error that names neither. On Linux the gap
+      # is closed here rather than reported, which is the difference between
+      # this being fixed centrally and merely being detected earlier. On macOS
+      # and Windows the toolchain comes from the image and cannot be installed
+      # in-line, so there the check reports and stops.
+      - name: Build toolchain
         run: |
           set -euo pipefail
-          missing=0
-          for tool in cc git; do
-            if ! command -v "$tool" >/dev/null 2>&1; then
-              echo "::error::'$tool' is not on this runner image; the wheel build needs it"
-              missing=1
-            fi
-          done
-          exit "$missing"
+          need=()
+          command -v cc  >/dev/null 2>&1 || need+=(build-essential)
+          command -v git >/dev/null 2>&1 || need+=(git)
+          if [[ ${#need[@]} -eq 0 ]]; then
+            echo "ok  cc and git are present"
+            exit 0
+          fi
+          if [[ "$RUNNER_OS" != Linux ]]; then
+            echo "::error::missing ${need[*]} on this $RUNNER_OS image, and it cannot be installed in-line."
+            echo "::error::Use a runner image that provides the build toolchain."
+            exit 1
+          fi
+          echo "::notice::installing ${need[*]} (absent from this runner image)"
+          sudo apt-get update
+          sudo apt-get install -y "${need[@]}"
+          command -v cc >/dev/null 2>&1 || { echo "::error::cc still absent after install"; exit 1; }
 
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:

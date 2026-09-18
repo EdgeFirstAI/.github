@@ -82,9 +82,12 @@ runs:
         channel=stable
         for f in rust-toolchain.toml rust-toolchain; do
           [[ -f "$f" ]] || continue
-          # `channel = "1.94.0"` in the TOML form; a bare channel name in the
-          # legacy plain-text form.
-          found="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$f" | head -1)"
+          # TOML accepts both quote forms, so `channel = '1.85.0'` is as valid
+          # a pin as `channel = "1.85.0"`. Reading only one of them would
+          # reinstate exactly the mismatch this step exists to remove: cargo
+          # would switch to the pinned channel while the components went to
+          # `stable`. The legacy plain-text file is a bare channel name.
+          found="$(sed -n -E 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/p; s/^[[:space:]]*channel[[:space:]]*=[[:space:]]*'"'"'([^'"'"']*)'"'"'.*/\1/p' "$f" | head -1)"
           if [[ -z "$found" && "$f" == rust-toolchain ]]; then
             found="$(tr -d '[:space:]' < "$f")"
           fi

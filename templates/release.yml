@@ -43,10 +43,12 @@ jobs:
     uses: EdgeFirstAI/.github/.github/workflows/release-rust.yml@0000000000000000000000000000000000000000
     with:
       sbom: true
-      # The .crate files crates.io will receive, in dependency order. Pass the
-      # SAME list to publish.yml: it publishes what this packaged. `cargo
-      # publish --no-verify` on the tag is only safe because packaging was
-      # exercised here. Set to `none` for a repository that publishes no crate.
+      # Package NAMES the release ships, in dependency order. The list is
+      # recorded beside the .crate files and publish.yml refuses to publish a
+      # different one, so the value here and in publish.yml cannot drift.
+      # `cargo publish --no-verify` on the tag is only safe because packaging
+      # was exercised here. Set `package-crates: false` for a repository that
+      # publishes no crate.
       crate-packages: ""
     secrets: inherit
 
