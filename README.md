@@ -20,7 +20,7 @@ The organisation profile README lives in [`profile/`](profile/README.md).
 | `.github/workflows/tag-release.yml` | `release/X.Y.Z[-rcN]` merge → annotated `vX.Y.Z[-rcN]` |
 | `.github/workflows/release-rust.yml` | release-branch side: version consistency, changelog section, SBOM |
 | `.github/workflows/publish-rust.yml` | tag side: resolve the build, verify the tree, crates OIDC, GitHub Release |
-| `.github/actions/` | `setup-rust`, `setup-python-uv`, `sbom-tools`, `board-run` |
+| `.github/actions/` | `setup-rust`, `setup-python-uv`, `sbom-tools`, `board-run`, `resolve-release-build` |
 | `.github/scripts/` | license policy (single copy) |
 | `.github/rulesets/` | `protect-main` (reviews; org-admin PR bypass), `protect-main-ci` (ci-gate, no bypass), `protect-release-tags` |
 | `.github/runners/` | ephemeral fleet provision scripts |
