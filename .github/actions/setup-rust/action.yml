@@ -24,6 +24,23 @@ inputs:
     description: rust-cache workspaces argument
     required: false
     default: ""
+  require-cc:
+    description: >-
+      Ensure a C compiler is present. Rust links through `cc`, and any
+      dependency with a build script needs one, so a runner image without it
+      fails on the first crate rather than at setup. Installed on Linux where
+      that is possible; reported on macOS and Windows, where the toolchain is
+      a property of the image.
+    required: false
+    default: "true"
+  cross-cc-targets:
+    description: >-
+      Comma-separated target triples that will be compiled FOR. Installs the
+      matching cross C toolchain and points the cargo linker at it. A
+      check-only pass still runs cc-rs for any dependency with a build script,
+      which needs a compiler for the target, not for the host.
+    required: false
+    default: ""
   require-lockfile:
     description: >-
       Fail with a policy message when Cargo.lock is absent. Every shared lane
@@ -112,6 +129,101 @@ runs:
         shared-key: ${{ inputs.cache-key }}
         save-if: ${{ inputs.save-cache == 'true' || (inputs.save-cache == '' && github.ref == 'refs/heads/main') }}
         workspaces: ${{ inputs.workspaces }}
+
+    # Rust links through `cc`. The GitHub-hosted images provide one, but the
+    # organisation's larger-runner images are a different build: measured on
+    # ubuntu-24.04-arm-xlarge, where every build script in a workspace failed
+    # with `linker "cc" not found` before a single test ran
+    # (EdgeFirstAI/ara2-rs run 35382211407). Installing it here rather than in
+    # each lane means one implementation for all eleven setup-rust call sites.
+    - name: C compiler
+      if: inputs.require-cc == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # Windows is not probed. Its toolchain is MSVC, which presents as
+        # `cl.exe` rather than `cc` and is normally not on PATH at all -- the
+        # `cc` crate locates it through vswhere and the registry. Requiring a
+        # command here would reject an image that builds perfectly well.
+        # Verifying MSVC properly means initialising the developer
+        # environment, which belongs in a caller's `pre-command` for the one
+        # repository that needs it rather than in a probe every lane pays for.
+        if [[ "$RUNNER_OS" == Windows ]]; then
+          echo "ok  Windows: MSVC is resolved by the cc crate, not through PATH"
+          exit 0
+        fi
+
+        if command -v cc >/dev/null 2>&1; then
+          echo "ok  cc is present"
+          exit 0
+        fi
+
+        # macOS gets its compiler from the Xcode command line tools, which are
+        # part of the image and cannot be installed in-line.
+        if [[ "$RUNNER_OS" != Linux ]]; then
+          echo "::error::no C compiler on this $RUNNER_OS image, and it cannot be installed in-line."
+          echo "::error::Use a runner image that provides the build toolchain."
+          exit 1
+        fi
+
+        echo "::notice::installing build-essential (absent from this runner image)"
+        sudo apt-get update
+        sudo apt-get install -y build-essential
+        command -v cc >/dev/null 2>&1 || { echo "::error::cc still absent after install"; exit 1; }
+
+    # A cross pass compiles build-script C for the TARGET. rustup's std for the
+    # triple is not enough: cc-rs looks for <triple>-gcc and fails the whole
+    # lane when it is missing, which is how an aarch64 clippy pass dies on an
+    # x86_64 runner over a single dependency.
+    - name: Cross C toolchain
+      if: inputs.cross-cc-targets != ''
+      shell: bash
+      env:
+        TARGETS: ${{ inputs.cross-cc-targets }}
+      run: |
+        set -euo pipefail
+        if [[ "$RUNNER_OS" != Linux ]]; then
+          echo "::notice::cross C toolchains are installed on Linux only; skipping."
+          exit 0
+        fi
+        pkgs=()
+        declare -A linker_for=()
+        IFS=',' read -ra triples <<< "$TARGETS"
+        for t in "${triples[@]}"; do
+          t="$(echo "$t" | xargs)"
+          [[ -z "$t" ]] && continue
+          case "$t" in
+            aarch64-unknown-linux-gnu)      pkg=gcc-aarch64-linux-gnu;     cc=aarch64-linux-gnu-gcc ;;
+            armv7-unknown-linux-gnueabihf)  pkg=gcc-arm-linux-gnueabihf;   cc=arm-linux-gnueabihf-gcc ;;
+            arm-unknown-linux-gnueabihf)    pkg=gcc-arm-linux-gnueabihf;   cc=arm-linux-gnueabihf-gcc ;;
+            riscv64gc-unknown-linux-gnu)    pkg=gcc-riscv64-linux-gnu;     cc=riscv64-linux-gnu-gcc ;;
+            x86_64-unknown-linux-gnu)       continue ;;  # the host on every hosted Linux runner
+            *)
+              echo "::notice::no known cross C package for '$t'; relying on the image."
+              continue
+              ;;
+          esac
+          # Already present, or the runner IS that architecture.
+          if command -v "$cc" >/dev/null 2>&1; then
+            linker_for["$t"]="$cc"
+            continue
+          fi
+          pkgs+=("$pkg")
+          linker_for["$t"]="$cc"
+        done
+        if [[ ${#pkgs[@]} -gt 0 ]]; then
+          echo "::notice::installing ${pkgs[*]}"
+          sudo apt-get update
+          sudo apt-get install -y "${pkgs[@]}"
+        fi
+        # cargo reads CARGO_TARGET_<TRIPLE>_LINKER with the triple uppercased
+        # and dashes as underscores.
+        for t in "${!linker_for[@]}"; do
+          var="CARGO_TARGET_$(echo "$t" | tr 'a-z-' 'A-Z_')_LINKER"
+          echo "${var}=${linker_for[$t]}" >> "$GITHUB_ENV"
+          echo "ok  $t -> ${linker_for[$t]}"
+        done
 
     - name: Install cargo tools
       if: inputs.tools != ''

@@ -190,46 +190,23 @@ jobs:
           components: ""
           cache-key: release-wheels-${{ matrix.name }}
 
-      # maturin shells out to a C compiler for any dependency with a build
-      # script, and to git for a vendored source. A runner image missing
-      # either fails deep inside a dependency with an error that names
-      # neither. On Linux the gap is closed here rather than reported, which
-      # is the difference between this being fixed centrally and merely being
-      # detected earlier. On macOS the toolchain is a property of the image
-      # and cannot be installed in-line, so there the check reports and stops.
-      #
-      # Windows is checked for git only. A Windows toolchain is MSVC, which
-      # presents as `cl.exe` rather than `cc` and is normally not on PATH at
-      # all: the `cc` crate locates it through vswhere and the registry, so
-      # requiring a command here would reject an image that builds perfectly
-      # well. Verifying MSVC properly means initialising the developer
-      # environment, which belongs in the caller's `pre-command` for the one
-      # repository that needs it, not in a preflight for everyone.
-      - name: Build toolchain
+      # setup-rust above guarantees a C compiler. git is checked here because
+      # maturin shells out to it for a vendored source, and the failure is
+      # otherwise reported from inside a dependency that does not name it.
+      - name: git present
         run: |
           set -euo pipefail
-          need=()
-          command -v git >/dev/null 2>&1 || need+=(git)
-          if [[ "$RUNNER_OS" != Windows ]]; then
-            command -v cc >/dev/null 2>&1 || need+=(build-essential)
-          fi
-          if [[ ${#need[@]} -eq 0 ]]; then
-            if [[ "$RUNNER_OS" == Windows ]]; then
-              echo "ok  git present; MSVC is located by the cc crate, not by PATH"
-            else
-              echo "ok  cc and git are present"
-            fi
+          if command -v git >/dev/null 2>&1; then
+            echo "ok  git is present"
             exit 0
           fi
           if [[ "$RUNNER_OS" != Linux ]]; then
-            echo "::error::missing ${need[*]} on this $RUNNER_OS image, and it cannot be installed in-line."
-            echo "::error::Use a runner image that provides the build toolchain."
+            echo "::error::git is absent from this $RUNNER_OS image."
             exit 1
           fi
-          echo "::notice::installing ${need[*]} (absent from this runner image)"
+          echo "::notice::installing git (absent from this runner image)"
           sudo apt-get update
-          sudo apt-get install -y "${need[@]}"
-          command -v cc >/dev/null 2>&1 || { echo "::error::cc still absent after install"; exit 1; }
+          sudo apt-get install -y git
 
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
