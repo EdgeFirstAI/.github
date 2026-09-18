@@ -50,6 +50,22 @@ on:
           `cargo package` compiles; see the runner selection policy.
         type: string
         default: ubuntu-24.04-xlarge
+      package-env:
+        description: >-
+          Newline-separated KEY=VALUE pairs for the packaging job. `cargo
+          package` runs a verification compile, so a crate whose build scripts
+          need an OpenCV root, a sysroot or an ANGLE path needs the same
+          configuration here that its other lanes get -- and a reusable
+          workflow inherits nothing from the caller's job.
+        type: string
+        default: ""
+      package-pre-command:
+        description: >-
+          Caller setup for the packaging job, run from the repository root
+          before `cargo package`. Same contract as `rust-quick`'s
+          `pre-command`.
+        type: string
+        default: ""
       package-crates:
         description: >-
           Run `cargo package`. Mirrors `publish-crates` on `publish-rust.yml`;
@@ -221,6 +237,11 @@ jobs:
     timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
     permissions:
       contents: read
+    defaults:
+      run:
+        # package-runner is caller-overridable and may name a Windows image,
+        # where the default shell is PowerShell and every block below is bash.
+        shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -230,6 +251,32 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: .ef-ci
           persist-credentials: false
+
+      - name: Caller environment
+        if: ${{ inputs.package-env != '' }}
+        env:
+          CALLER_ENV: ${{ inputs.package-env }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r line; do
+            [[ -z "${line// }" ]] && continue
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            if [[ ! "$line" =~ ^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*= ]]; then
+              echo "::error::package-env line is not KEY=VALUE: $line"
+              exit 1
+            fi
+            echo "${line#"${line%%[![:space:]]*}"}" >> "$GITHUB_ENV"
+          done <<< "$CALLER_ENV"
+
+      - name: Caller pre-command
+        if: ${{ inputs.package-pre-command != '' }}
+        env:
+          PRE_COMMAND: ${{ inputs.package-pre-command }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
 
       - uses: ./.ef-ci/.github/actions/setup-rust
         with:

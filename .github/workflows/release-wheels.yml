@@ -190,21 +190,35 @@ jobs:
           components: ""
           cache-key: release-wheels-${{ matrix.name }}
 
-      # maturin shells out to `cc` for any dependency with a build script, and
-      # to git for a vendored source. A runner image missing either fails deep
-      # inside a dependency with an error that names neither. On Linux the gap
-      # is closed here rather than reported, which is the difference between
-      # this being fixed centrally and merely being detected earlier. On macOS
-      # and Windows the toolchain comes from the image and cannot be installed
-      # in-line, so there the check reports and stops.
+      # maturin shells out to a C compiler for any dependency with a build
+      # script, and to git for a vendored source. A runner image missing
+      # either fails deep inside a dependency with an error that names
+      # neither. On Linux the gap is closed here rather than reported, which
+      # is the difference between this being fixed centrally and merely being
+      # detected earlier. On macOS the toolchain is a property of the image
+      # and cannot be installed in-line, so there the check reports and stops.
+      #
+      # Windows is checked for git only. A Windows toolchain is MSVC, which
+      # presents as `cl.exe` rather than `cc` and is normally not on PATH at
+      # all: the `cc` crate locates it through vswhere and the registry, so
+      # requiring a command here would reject an image that builds perfectly
+      # well. Verifying MSVC properly means initialising the developer
+      # environment, which belongs in the caller's `pre-command` for the one
+      # repository that needs it, not in a preflight for everyone.
       - name: Build toolchain
         run: |
           set -euo pipefail
           need=()
-          command -v cc  >/dev/null 2>&1 || need+=(build-essential)
           command -v git >/dev/null 2>&1 || need+=(git)
+          if [[ "$RUNNER_OS" != Windows ]]; then
+            command -v cc >/dev/null 2>&1 || need+=(build-essential)
+          fi
           if [[ ${#need[@]} -eq 0 ]]; then
-            echo "ok  cc and git are present"
+            if [[ "$RUNNER_OS" == Windows ]]; then
+              echo "ok  git present; MSVC is located by the cc crate, not by PATH"
+            else
+              echo "ok  cc and git are present"
+            fi
             exit 0
           fi
           if [[ "$RUNNER_OS" != Linux ]]; then
@@ -229,16 +243,33 @@ jobs:
       - name: Build wheels
         env:
           MANIFEST: ${{ inputs.manifest }}
+          BUILDS: ${{ inputs.builds }}
           # A matrix entry may carry its own build list, so one platform can
-          # produce the sdist while the others do not.
-          BUILDS: ${{ matrix.builds != '' && matrix.builds || inputs.builds }}
+          # produce the sdist while the others do not. `runners` is parsed by
+          # fromJSON, so this arrives as an array rather than as text --
+          # toJSON serialises it back, and yields the string `null` when the
+          # entry has no `builds` key at all.
+          BUILDS_MATRIX: ${{ toJSON(matrix.builds) }}
           MATURIN_ARGS: ${{ matrix.args }}
           FEATURES: ${{ inputs.features }}
         run: |
           set -euo pipefail
 
-          if [[ -n "${BUILDS:-}" ]]; then
+          builds=""
+          if [[ -n "${BUILDS_MATRIX:-}" && "$BUILDS_MATRIX" != null ]]; then
+            builds="$BUILDS_MATRIX"
+          elif [[ -n "${BUILDS:-}" ]]; then
             builds="$BUILDS"
+          fi
+          # A caller may pass the list as JSON text rather than as a JSON
+          # array -- unavoidable for the workflow-level input, which is typed
+          # string. Unwrap one level so both spellings behave the same.
+          if [[ -n "$builds" ]] && jq -e 'type == "string"' >/dev/null 2>&1 <<< "$builds"; then
+            builds="$(jq -r '.' <<< "$builds")"
+          fi
+
+          if [[ -n "$builds" ]]; then
+            :
           elif [[ -n "$MANIFEST" ]]; then
             builds="$(jq -nc --arg m "$MANIFEST" --arg f "$FEATURES" \
               '[{manifest: $m, features: $f}]')"
