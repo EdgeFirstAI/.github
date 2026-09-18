@@ -255,12 +255,17 @@ jobs:
           # parses as a subtraction. A scalar, so unlike `builds` it needs no
           # toJSON -- an absent key renders as the empty string.
           MATURIN_SPEC_MATRIX: ${{ matrix['maturin-spec'] }}
+          # Through env like everything else here. `runners` is caller JSON, so
+          # a lane name interpolated into the script text would be shell code
+          # rather than a shell string -- the same reasoning tag-release.yml
+          # records for a branch name.
+          LANE: ${{ matrix.name }}
         run: |
           set -euo pipefail
           spec="${MATURIN_SPEC_MATRIX:-}"
           [[ -n "$spec" ]] || spec="$MATURIN_SPEC"
           if [[ -z "$spec" ]]; then
-            echo "::error::no maturin specification for lane '${{ matrix.name }}'"
+            echo "::error::no maturin specification for lane '$LANE'"
             exit 1
           fi
           echo "installing $spec"
