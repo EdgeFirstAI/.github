@@ -1,47 +1,65 @@
 name: release-rust
 
-# Builds distribution artifacts and publishes crates via OIDC trusted publishing.
-# PyPI Trusted Publishing cannot use reusable workflows (job_workflow_ref must
-# live in the publisher repo; warehouse#11096 / PR 20083). This workflow uploads
-# wheels as artifacts; the caller's release.yml keeps a publish-pypi job.
+# Release-branch side of the three-workflow release chain.
+#
+#   release.yml   push to release/*.*.*  -> BUILD every artifact   (this file)
+#   tag-release.yml  release PR merged   -> annotated vX.Y.Z tag
+#   publish.yml   push of a v*.*.* tag   -> PUBLISH what was built
+#
+# A tag deploys and never builds. Anything a tag builds is built where no pull
+# request can run it, so its failures are only ever found after the tag exists.
+# Accepting the release PR is the gate instead: it cannot merge until this
+# workflow is green, which means every artifact the release will ship exists.
+#
+# THIS WORKFLOW DOES NOT BUILD THE ARTIFACTS. The build belongs to the calling
+# repository, beside this call in its own release.yml, because it is the one
+# part of a release that is genuinely repository-specific: hal ships five
+# wheels across eight targets plus ten C-API archives with codesigning, schemas
+# ships ten wheels, videostream ships C. A shared matrix guessing at that was
+# carried here through 1.0.0 and never ran in any repository, in either the
+# scratch repo or a product one. What is shared is everything around the build
+# -- version consistency, the SBOM, and the publish side in publish-rust.yml.
+#
+# The caller uploads its artifacts with actions/upload-artifact and
+# retention-days: 30 or more. publish-rust.yml finds this run by branch and
+# verifies its tree against the tag before downloading them.
 
 on:
   workflow_call:
     inputs:
-      dry-run:
-        description: Build and attach artifacts but do not publish or create a GitHub Release
-        type: boolean
-        default: false
-      publish-crates:
-        type: boolean
-        default: true
-      build-wheels:
-        type: boolean
-        default: false
-      build-c-archive:
-        type: boolean
-        default: false
-      crate-packages:
-        description: Space-separated -p arguments for cargo publish; empty publishes the workspace root
-        type: string
-        default: ""
       project-name:
         type: string
         default: ${{ github.event.repository.name }}
       changelog:
+        description: Changelog path; empty skips the changelog section check
         type: string
         default: CHANGELOG.md
-    secrets:
-      SONAR_TOKEN:
-        required: false
-
-concurrency:
-  group: release-${{ github.repository }}-${{ github.ref }}
-  cancel-in-progress: false
+      sbom:
+        description: Run the full scancode SBOM as part of the release build
+        type: boolean
+        default: true
+      sbom-targets:
+        type: string
+        default: ""
+      sbom-extra-manifests:
+        type: string
+        default: ""
+      timeout-minutes:
+        type: number
+        default: 20
+    outputs:
+      version:
+        description: X.Y.Z or X.Y.Z-rcN, from the release branch name
+        value: ${{ jobs.verify-version.outputs.version }}
+      tag:
+        description: The tag tag-release.yml will create on merge
+        value: ${{ jobs.verify-version.outputs.tag }}
+      prerelease:
+        value: ${{ jobs.verify-version.outputs.prerelease }}
 
 jobs:
-  prepare:
-    name: Verify tag
+  verify-version:
+    name: Verify version
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -49,233 +67,115 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.value }}
       tag: ${{ steps.version.outputs.tag }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - id: version
+
+      - name: Version from release branch
+        id: version
         env:
-          REF: ${{ github.ref }}
+          # Never interpolated into the script text; a ref name may contain
+          # shell metacharacters.
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          tag="${REF#refs/tags/}"
-          version="${tag#v}"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Ref $REF is not a vX.Y.Z tag"
+          case "$REF_NAME" in
+            release/*) version="${REF_NAME#release/}" ;;
+            *)
+              echo "::error::release-rust.yml runs on a release branch; got '$REF_NAME'."
+              echo "::error::Trigger it with: on: push: branches: ['release/*.*.*']"
+              exit 1
+              ;;
+          esac
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$ ]]; then
+            echo "::error::Branch '$REF_NAME' is not release/X.Y.Z or release/X.Y.Z-rcN"
             exit 1
           fi
-          if [[ -f Cargo.toml ]]; then
-            manifest="$(grep -E '^version\s*=' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')"
-            if [[ "$manifest" != "$version" ]]; then
-              echo "::error::Cargo.toml version $manifest != tag $version"
-              exit 1
+          prerelease=false
+          case "$version" in *-rc*) prerelease=true ;; esac
+          {
+            echo "value=$version"
+            echo "tag=v$version"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+          echo "Release $version (prerelease=$prerelease)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Manifests match the branch
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          # On a pre-release branch the manifests may carry either the base
+          # version (1.2.0) or the exact pre-release spelling. The choice
+          # decides whether the candidate can reach crates.io and PyPI at all,
+          # because a registry version is immutable: publishing 1.2.0 from
+          # release/1.2.0-rc1 permanently consumes the version the final
+          # release needs. It is reported here rather than discovered at
+          # the tag, where nothing can be undone.
+          base="${VERSION%-rc*}"
+          fail=0
+          exact=1
+          check() {
+            local file="$1" found="$2"
+            if [[ "$found" == "$VERSION" ]]; then
+              echo "ok  $file  $found  (exact)"
+            elif [[ "$found" == "$base" ]]; then
+              [[ "$VERSION" == "$base" ]] || exact=0
+              echo "ok  $file  $found"
+            else
+              echo "::error file=$file::$file version '$found' is neither '$VERSION' nor '$base'"
+              fail=1
             fi
+          }
+          if [[ -f Cargo.toml ]]; then
+            found="$(grep -E '^version\s*=' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')"
+            [[ -n "$found" ]] && check Cargo.toml "$found"
           fi
           if [[ -f pyproject.toml ]] && grep -qE '^version\s*=' pyproject.toml; then
-            pyv="$(grep -E '^version\s*=' pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')"
-            if [[ "$pyv" != "$version" ]]; then
-              echo "::error::pyproject.toml version $pyv != tag $version"
-              exit 1
-            fi
+            check pyproject.toml "$(grep -E '^version\s*=' pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')"
           fi
           if [[ -f VERSION ]]; then
-            file_ver="$(tr -d '[:space:]' < VERSION)"
-            if [[ "$file_ver" != "$version" ]]; then
-              echo "::error::VERSION $file_ver != tag $version"
-              exit 1
-            fi
+            check VERSION "$(tr -d '[:space:]' < VERSION)"
           fi
-          echo "value=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [[ "$fail" -eq 0 && "$exact" -eq 0 ]]; then
+            echo "::notice::Manifests carry $base, not $VERSION. publish.yml will attach the artifacts to a GitHub pre-release and SKIP crates.io and PyPI, so the final release can still claim $base. Give the manifests the pre-release version if the candidate should reach the registries."
+            echo "- registries: **skipped** for this candidate (manifests carry \`$base\`)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$fail"
+
+      - name: Changelog has a section
+        if: ${{ inputs.changelog != '' }}
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+          CHANGELOG: ${{ inputs.changelog }}
+        run: |
+          base="${VERSION%-rc*}"
+          if [[ ! -f "$CHANGELOG" ]]; then
+            echo "::error::$CHANGELOG not found"
+            exit 1
+          fi
+          # publish.yml builds the GitHub Release body from this section. An
+          # absent section is a release with empty notes, discovered after the
+          # tag exists; catching it here makes it a red release PR instead.
+          # The version must be a complete token. A prefix match accepts
+          # '## [1.2.30]' as the section for 1.2.3 and ships the wrong notes.
+          esc="${base//./\\.}"
+          if ! grep -qE "^## (\[${esc}\]|${esc}([[:space:]]|$))" "$CHANGELOG"; then
+            echo "::error file=$CHANGELOG::no '## [$base]' section in $CHANGELOG"
+            exit 1
+          fi
+          echo "ok  $CHANGELOG has a section for $base"
 
   sbom:
     name: Release SBOM
-    needs: prepare
+    needs: verify-version
+    if: ${{ inputs.sbom }}
     uses: ./.github/workflows/sbom.yml
     with:
       mode: full
       project-name: ${{ inputs.project-name }}
-      timeout-minutes: 20
-
-  wheels:
-    name: Build wheels
-    needs: prepare
-    if: ${{ inputs.build-wheels }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            target: x86_64
-          - os: ubuntu-24.04-arm
-            target: aarch64
-          - os: macos-latest
-            target: macos
-          - os: windows-latest
-            target: windows
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          path: .ef-ci
-          persist-credentials: false
-      - uses: ./.ef-ci/.github/actions/setup-python-uv
-      - uses: ./.ef-ci/.github/actions/setup-rust
-        with:
-          cache-key: release-wheel-${{ matrix.target }}
-          tools: ""
-      - name: maturin build
-        run: |
-          uvx maturin build --release --out dist
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
-        with:
-          name: wheels-${{ matrix.target }}
-          path: dist/*
-          if-no-files-found: error
-          retention-days: 30
-
-  crates:
-    name: Publish crates.io
-    needs: [prepare, sbom]
-    if: ${{ inputs.publish-crates }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    environment: crates-io
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          path: .ef-ci
-          persist-credentials: false
-      - uses: ./.ef-ci/.github/actions/setup-rust
-        with:
-          cache-key: release-crates
-      - name: crates.io trusted publishing
-        if: ${{ !inputs.dry-run }}
-        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18  # v1.0.5
-        id: auth
-      - name: cargo publish
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-          DRY_RUN: ${{ inputs.dry-run }}
-          PACKAGES: ${{ inputs.crate-packages }}
-        run: |
-          args=(--locked --no-verify)
-          extra=()
-          if [[ "$DRY_RUN" == true ]]; then
-            extra+=(--dry-run)
-          fi
-          if [[ -n "$PACKAGES" ]]; then
-            for pkg in $PACKAGES; do
-              cargo publish -p "$pkg" "${args[@]}" "${extra[@]}"
-            done
-          else
-            cargo publish "${args[@]}" "${extra[@]}"
-          fi
-
-  c-archive:
-    name: C archive
-    needs: prepare
-    if: ${{ inputs.build-c-archive }}
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          path: .ef-ci
-          persist-credentials: false
-      - uses: ./.ef-ci/.github/actions/setup-rust
-        with:
-          cache-key: release-c-archive
-      - name: Package C API
-        run: |
-          mkdir -p dist
-          if [[ -f Makefile ]] && grep -q c-archive Makefile; then
-            make c-archive
-          else
-            cargo build --release --locked
-            tar -C target/release -czf "dist/${{ inputs.project-name }}-${{ needs.prepare.outputs.version }}-aarch64.tar.gz" .
-          fi
-          ls -la dist
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
-        with:
-          name: c-archive
-          path: dist/*
-          if-no-files-found: error
-          retention-days: 30
-
-  github-release:
-    name: GitHub Release
-    needs: [prepare, sbom, wheels, crates, c-archive]
-    if: always() && needs.prepare.result == 'success' && needs.sbom.result == 'success' && (needs.wheels.result == 'success' || needs.wheels.result == 'skipped') && (needs.crates.result == 'success' || needs.crates.result == 'skipped') && (needs.c-archive.result == 'success' || needs.c-archive.result == 'skipped')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
-        continue-on-error: true
-        with:
-          path: dist
-          merge-multiple: true
-      - name: Require SBOM
-        run: |
-          mkdir -p dist
-          found="$(find dist -name sbom.json | head -1 || true)"
-          if [[ -z "$found" ]]; then
-            echo "::error::sbom.json is required on every GitHub Release"
-            exit 1
-          fi
-          tmp="$(mktemp)"
-          cp "$found" "$tmp"
-          mv "$tmp" dist/sbom.json
-      - name: Extract changelog
-        id: notes
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-          CHANGELOG: ${{ inputs.changelog }}
-        run: |
-          python3 - "$CHANGELOG" "$VERSION" <<'PY'
-          import re, sys, pathlib
-          path, version = sys.argv[1], sys.argv[2]
-          text = pathlib.Path(path).read_text(encoding="utf-8") if pathlib.Path(path).exists() else ""
-          pattern = rf"^## \[?{re.escape(version)}\]?[^\n]*\n(.*?)(?=^## |\Z)"
-          match = re.search(pattern, text, re.M | re.S)
-          body = match.group(1).strip() if match else f"Release v{version}"
-          pathlib.Path("RELEASE_NOTES.md").write_text(body + "\n", encoding="utf-8")
-          PY
-      - name: Latest tag?
-        id: latest
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tags="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/v" --jq '.[].ref' | sed 's@refs/tags/v@@' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true)"
-          newest="$(printf '%s\n%s\n' "$tags" "$VERSION" | sort -V | tail -1)"
-          if [[ "$newest" == "$VERSION" ]]; then
-            echo "make_latest=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "make_latest=false" >> "$GITHUB_OUTPUT"
-          fi
-      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
-        if: ${{ !inputs.dry-run }}
-        with:
-          tag_name: ${{ needs.prepare.outputs.tag }}
-          body_path: RELEASE_NOTES.md
-          files: dist/*
-          make_latest: ${{ steps.latest.outputs.make_latest }}
-          fail_on_unmatched_files: false
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      targets: ${{ inputs.sbom-targets }}
+      extra-manifests: ${{ inputs.sbom-extra-manifests }}
+      upload-name: sbom
+      # publish.yml requires this SBOM after the release PR merges, which is
+      # human-paced. The 7-day CI default would expire a release held a week.
+      retention-days: "30"

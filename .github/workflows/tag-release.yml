@@ -7,9 +7,22 @@ name: tag-release
 #
 # Creates an annotated tag object (not a lightweight ref) so `git describe`
 # sees the release. Unsigned: signing needs a runner-held key.
+#
+# The tag only names the release; it never builds it. release.yml has already
+# built and uploaded every artifact on pushes to the release branch, and
+# publish.yml consumes them when this tag appears.
 
 on:
   workflow_call:
+    inputs:
+      require-build:
+        description: >
+          Workflow file that must have a successful run for the merged PR's
+          head commit before a tag is created. Empty disables the check, which
+          is the default so a repository whose release still builds on the tag
+          is not blocked mid-migration. Turn it on as part of the split.
+        type: string
+        default: ''
     secrets:
       RELEASE_TAG_TOKEN:
         required: true
@@ -25,6 +38,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
+      actions: read
     steps:
       - name: Derive version from branch name
         id: version
@@ -32,11 +46,40 @@ jobs:
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           version="${HEAD_REF#release/}"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Branch '$HEAD_REF' is not a valid release/X.Y.Z branch"
+          # release/X.Y.Z and release/X.Y.Z-rcN. The suffix is restricted to
+          # -rc<digits> rather than the whole SemVer pre-release grammar: the
+          # value is written unquoted to GITHUB_OUTPUT below, so the anchored
+          # pattern is what keeps a branch name from forging a second output.
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$ ]]; then
+            echo "::error::Branch '$HEAD_REF' is not a valid release/X.Y.Z or release/X.Y.Z-rcN branch"
             exit 1
           fi
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      # Branch protection requires ci-gate and nothing else, and the release
+      # build runs on a branch push rather than on the pull request, so a
+      # release PR can merge while its build is pending or red. Refusing to
+      # create the tag is where that is actually enforceable: a merged PR with
+      # a broken build then leaves no tag rather than a tag nothing can honour.
+      - name: Release build must be green for this commit
+        if: ${{ inputs.require-build }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BUILD_WORKFLOW: ${{ inputs.require-build }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          count="$(gh api \
+            "repos/${REPO}/actions/workflows/${BUILD_WORKFLOW}/runs?head_sha=${HEAD_SHA}&status=success&per_page=1" \
+            --jq '.workflow_runs | length')"
+          if [[ "$count" -eq 0 ]]; then
+            echo "::error::No successful ${BUILD_WORKFLOW} run for ${HEAD_SHA}."
+            echo "::error::${TAG} was NOT created. A tag publishes artifacts that must already exist;"
+            echo "::error::push the release branch again, let it build, then re-open and merge."
+            exit 1
+          fi
+          echo "ok  ${BUILD_WORKFLOW} is green for ${HEAD_SHA}"
 
       - name: Create release tag
         env:
@@ -53,7 +96,9 @@ jobs:
 
           # POST git/refs alone creates a lightweight tag. Annotated tags are
           # created first via git/tags, then the ref is pointed at the tag object.
-          MESSAGE=$(printf 'Release %s\n\n%s' "$TAG" "$PR_URL")
+          kind=Release
+          case "$TAG" in *-rc*) kind="Release candidate" ;; esac
+          MESSAGE=$(printf '%s %s\n\n%s' "$kind" "$TAG" "$PR_URL")
           TAG_SHA=$(jq -n \
             --arg tag "$TAG" \
             --arg message "$MESSAGE" \

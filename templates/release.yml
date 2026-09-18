@@ -7,49 +7,94 @@
 # one: it resolves, so a copied skeleton silently runs old CI, or forwards an
 # input the pinned revision does not declare. An unresolvable ref fails
 # immediately and says what to fix.
+#
+# RELEASE BUILD. This is step 1 of 3:
+#
+#   release.yml      push to release/*.*.*  -> build every artifact  (this file)
+#   tag-release.yml  release PR merged      -> annotated vX.Y.Z tag
+#   publish.yml      push of a v*.*.* tag   -> publish what was built
+#
+# It runs on `push` to the release branch rather than on `pull_request` for two
+# reasons. A pull_request run builds a merge-preview commit that exists nowhere
+# in history, so publish.yml could never bind its artifacts to the tag; a push
+# run builds the branch head, which is the commit the release PR merges. And
+# confining the expensive build to release branches keeps it off every ordinary
+# push, which is the whole point of the tiered model.
+#
+# Accepting the release PR is the gate. It cannot merge until this is green,
+# and green here means every artifact the release will ship already exists.
 
-name: Release
+name: Release Build
 
 on:
   push:
-    tags:
-      - "v*.*.*"
+    branches: ['release/*.*.*']   # release/X.Y.Z and release/X.Y.Z-rcN
+  workflow_dispatch:              # rebuild a release branch on demand
 
 concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
-
-permissions:
-  contents: write
-  id-token: write
+  group: release-build-${{ github.ref }}
+  cancel-in-progress: true        # a fixup commit supersedes the build it interrupts
 
 jobs:
-  release:
+  # Version consistency across Cargo.toml / pyproject.toml / VERSION against
+  # the branch name, plus the changelog section publish.yml will need, plus the
+  # full SBOM. Fails the release PR rather than the tag.
+  verify:
     uses: EdgeFirstAI/.github/.github/workflows/release-rust.yml@0000000000000000000000000000000000000000
     with:
-      dry-run: false
-      publish-crates: true
-      build-wheels: true
+      sbom: true
     secrets: inherit
 
-  # PyPI Trusted Publishing cannot use a reusable workflow in another repository
-  # (job_workflow_ref). Keep this job in the product repo. Re-check
-  # pypi/warehouse#11096 / PR 20083; if merged, fold this into release-rust.yml.
-  publish-pypi:
-    needs: release
-    if: ${{ needs.release.result == 'success' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    environment: pypi
+  # ---------------------------------------------------------------------
+  # Your build goes here. It stays in this repository because it is the one
+  # genuinely repository-specific part of a release. Two rules make it work
+  # with publish.yml:
+  #
+  #   1. retention-days must be 30 or more. The release-PR-to-tag gap is
+  #      human-paced, and publish.yml fails on an expired artifact rather
+  #      than rebuilding.
+  #   2. if-no-files-found: error. A silently empty artifact becomes a
+  #      silently incomplete release.
+  # ---------------------------------------------------------------------
+  build:
+    needs: verify
+    strategy:
+      fail-fast: false            # one broken target must not hide the rest
+      # The documented default for a release build is the `larger` class (see
+      # the runner selection policy). These hosted labels are placeholders so a
+      # copied skeleton cannot bill before anyone has reviewed it; pick the
+      # class deliberately when you replace the build below.
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-linux
+          - os: ubuntu-24.04-arm
+            target: aarch64-linux
+          - os: macos-latest
+            target: macos
+          - os: windows-latest
+            target: windows
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     permissions:
-      id-token: write
       contents: read
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      # Deliberately no second checkout of EdgeFirstAI/.github here. The
+      # `uses:` pin above is the only place the shared commit may appear --
+      # a `ref:` on a second checkout is a separate source of truth that
+      # Dependabot does not bump, so the two drift and a run silently mixes
+      # versions. Set the toolchain up with the same actions this repository's
+      # ci.yml already uses.
+      - name: Build distribution artifacts
+        run: |
+          echo "Replace with this repository's real build."
+          mkdir -p dist
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
-          pattern: wheels-*
-          path: dist
-          merge-multiple: true
-      - uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e  # v1.13.0
-        with:
-          packages-dir: dist
+          name: dist-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
