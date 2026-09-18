@@ -1,0 +1,195 @@
+name: maturin build
+description: >
+  Build, verify and attest the wheels for one lane. The unit of work behind
+  release-wheels.yml, and usable directly by a repository whose wheel matrix
+  does not fit that workflow — a reusable workflow owns whole jobs, so a
+  repository needing its own steps interleaved with the build (an SDK fetch, a
+  platform assertion, per-distribution artifacts) cannot use one without a hook
+  for every interleaving. An action composes into the job the caller already
+  has.
+
+  It does not check out, and it does not upload. Those belong to the caller,
+  which is what lets the same action serve a five-distribution matrix and a
+  one-line one.
+
+inputs:
+  builds:
+    description: >-
+      JSON array of {manifest, features, args} objects, built in order in this
+      job. An entry's `features` replaces the action's `features` input for
+      that build; an entry's `args` is appended after the action's `args`
+      input, so the lane-wide arguments come first and the per-build ones
+      refine them. Looping here rather than calling once per binding is
+      deliberate: the reusable-workflow boundary is per job, so one call per
+      binding is one job per binding, and none of them share a `target/`
+      directory or a warm cargo cache.
+    required: false
+    default: ""
+  manifest:
+    description: Path to the binding's Cargo.toml. The simple form; `builds` is the general one.
+    required: false
+    default: ""
+  features:
+    description: Cargo features applied to every build that does not name its own.
+    required: false
+    default: ""
+  args:
+    description: Arguments appended to every `maturin build` in this lane.
+    required: false
+    default: ""
+  maturin-spec:
+    description: >-
+      pip requirement for maturin. Empty derives it from the runner OS, which
+      is what it is a property of: `zig` is what produces the manylinux wheels
+      and `patchelf` is a Linux-only PyPI package with no wheel for macOS or
+      Windows, so one specification cannot serve every lane. Set it to pin a
+      maturin version for reproducibility, not to work around the platform.
+    required: false
+    default: ""
+  wheel-dir:
+    description: >-
+      Where maturin writes, and therefore what is verified and attested. Passed
+      as `--out`, so this is the one place the output location is set — putting
+      `--out` in `args` instead leaves this input describing a directory
+      nothing writes to.
+    required: false
+    default: target/wheels
+  verify-version:
+    description: >-
+      Check each built wheel's version against the release branch. A wheel's
+      version comes from the manifest, but a binding deriving it some other way
+      can still produce a wheel naming a version this release is not — and a
+      PyPI version is immutable, so a wrong one is found when it can no longer
+      be corrected.
+    required: false
+    default: "true"
+  attest:
+    description: >-
+      Generate build provenance for the wheels. Done here, where they were
+      built: provenance generated where an artifact was downloaded describes
+      the download. **The calling job must grant `id-token: write` and
+      `attestations: write`**, or this fails.
+    required: false
+    default: "true"
+  lane:
+    description: Lane name, for messages only.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install maturin
+      shell: bash
+      env:
+        MATURIN_SPEC: ${{ inputs.maturin-spec }}
+        LANE: ${{ inputs.lane }}
+      run: |
+        set -euo pipefail
+        spec="${MATURIN_SPEC:-}"
+        if [[ -z "$spec" ]]; then
+          # A property of the platform, not of the repository. patchelf has no
+          # wheel for macOS or Windows, and zig is only needed where manylinux
+          # wheels are produced.
+          case "$RUNNER_OS" in
+            Linux) spec="maturin[patchelf,zig]" ;;
+            *)     spec="maturin" ;;
+          esac
+          echo "::notice::maturin specification derived for $RUNNER_OS${LANE:+ (lane $LANE)}: $spec"
+        fi
+        echo "installing $spec"
+        pip install "$spec"
+
+    - name: Build wheels
+      shell: bash
+      env:
+        BUILDS: ${{ inputs.builds }}
+        MANIFEST: ${{ inputs.manifest }}
+        FEATURES: ${{ inputs.features }}
+        MATURIN_ARGS: ${{ inputs.args }}
+        WHEEL_DIR: ${{ inputs.wheel-dir }}
+      run: |
+        set -euo pipefail
+
+        builds="${BUILDS:-}"
+        # A caller may pass the list as JSON text rather than as a JSON array --
+        # unavoidable for a workflow input, which is typed string. Unwrap one
+        # level so both spellings behave the same.
+        if [[ -n "$builds" ]] && jq -e 'type == "string"' >/dev/null 2>&1 <<< "$builds"; then
+          builds="$(jq -r '.' <<< "$builds")"
+        fi
+        if [[ -z "$builds" || "$builds" == null ]]; then
+          if [[ -z "$MANIFEST" ]]; then
+            echo "::error::maturin-build needs either 'manifest' or 'builds'."
+            exit 1
+          fi
+          builds="$(jq -nc --arg m "$MANIFEST" --arg f "$FEATURES" '[{manifest: $m, features: $f}]')"
+        fi
+        if ! jq -e 'type == "array" and length > 0' >/dev/null 2>&1 <<< "$builds"; then
+          echo "::error::'builds' is not a non-empty JSON array: $builds"
+          exit 1
+        fi
+
+        # Read from a process substitution rather than a pipeline, so the loop
+        # runs in this shell and a failing build aborts the step.
+        while IFS= read -r entry; do
+          m="$(jq -r '.manifest // empty' <<< "$entry")"
+          if [[ -z "$m" ]]; then
+            echo "::error::build entry has no manifest: $entry"
+            exit 1
+          fi
+          f="$(jq -r '.features // empty' <<< "$entry")"
+          [[ -n "$f" ]] || f="$FEATURES"
+          extra="$(jq -r '.args // empty' <<< "$entry")"
+
+          args=(--release --locked -m "$m" --out "$WHEEL_DIR")
+          [[ -n "$f" ]] && args+=(--features "$f")
+          echo "==> $m ${f:+($f)}"
+          # shellcheck disable=SC2086  # both are argument lists and must split
+          maturin build "${args[@]}" $MATURIN_ARGS $extra
+        done < <(jq -c '.[]' <<< "$builds")
+
+        ls -la "$WHEEL_DIR"/
+
+    - name: Wheel version matches the release branch
+      if: inputs.verify-version == 'true'
+      shell: bash
+      env:
+        REF_NAME: ${{ github.ref_name }}
+        WHEEL_DIR: ${{ inputs.wheel-dir }}
+      run: |
+        set -euo pipefail
+        case "$REF_NAME" in
+          release/*) version="${REF_NAME#release/}" ;;
+          *)
+            echo "::notice::Not a release branch ($REF_NAME); skipping the wheel version check."
+            exit 0
+            ;;
+        esac
+        # PEP 440 spells a candidate 1.2.0rc1 where the branch says 1.2.0-rc1,
+        # and a wheel filename replaces '-' with '_'.
+        pep440="${version//-rc/rc}"
+        base="${version%-rc*}"
+        fail=0
+        shopt -s nullglob
+        for whl in "$WHEEL_DIR"/*.whl "$WHEEL_DIR"/*.tar.gz; do
+          name="$(basename "$whl")"
+          found="$(sed -E 's/^[^-]+-([^-]+)-.*\.whl$/\1/; s/^.*-([0-9][^-]*)\.tar\.gz$/\1/' <<< "$name")"
+          if [[ "$found" == "$pep440" || "$found" == "$base" ]]; then
+            echo "ok  $name  ($found)"
+          else
+            echo "::error::$name carries version '$found', expected '$pep440' or '$base'"
+            fail=1
+          fi
+        done
+        exit "$fail"
+
+    # Here, where the wheels were built, rather than wherever they are later
+    # uploaded from. Provenance generated where an artifact was downloaded
+    # describes the download; generated where it was built it describes the
+    # build that produced what consumers install.
+    - name: Attest build provenance
+      if: inputs.attest == 'true'
+      uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+      with:
+        subject-path: ${{ inputs.wheel-dir }}/*
