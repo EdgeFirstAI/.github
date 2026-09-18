@@ -141,15 +141,32 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+
+        # Windows is not probed. Its toolchain is MSVC, which presents as
+        # `cl.exe` rather than `cc` and is normally not on PATH at all -- the
+        # `cc` crate locates it through vswhere and the registry. Requiring a
+        # command here would reject an image that builds perfectly well.
+        # Verifying MSVC properly means initialising the developer
+        # environment, which belongs in a caller's `pre-command` for the one
+        # repository that needs it rather than in a probe every lane pays for.
+        if [[ "$RUNNER_OS" == Windows ]]; then
+          echo "ok  Windows: MSVC is resolved by the cc crate, not through PATH"
+          exit 0
+        fi
+
         if command -v cc >/dev/null 2>&1; then
           echo "ok  cc is present"
           exit 0
         fi
+
+        # macOS gets its compiler from the Xcode command line tools, which are
+        # part of the image and cannot be installed in-line.
         if [[ "$RUNNER_OS" != Linux ]]; then
           echo "::error::no C compiler on this $RUNNER_OS image, and it cannot be installed in-line."
           echo "::error::Use a runner image that provides the build toolchain."
           exit 1
         fi
+
         echo "::notice::installing build-essential (absent from this runner image)"
         sudo apt-get update
         sudo apt-get install -y build-essential
