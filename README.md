@@ -82,3 +82,5 @@ bash .github/rulesets/apply.sh
 ```
 
 Runner groups, access lists and labels are declared in `.github/rulesets/runners.json` and applied with `.github/rulesets/apply-runners.sh` (`--dry-run` first). Machines are installed with the stock GitHub runner installer and registered as services with `svc.sh`; the procedure lives in Confluence.
+
+Set organisation Copilot custom instructions to `.github/copilot-instructions.md`.
