@@ -98,6 +98,13 @@ jobs:
     # to the calling repository and keyed on MACHINE, so it only serialises
     # same-MACHINE builds from the same caller -- what actually keeps two
     # jobs off this physical box is the one-runner-per-device policy.
+    #
+    # Accepted risk: this group coordinates GitHub Actions jobs only. A
+    # Jenkins bitbake on mltrain-04 is invisible to it and can still overlap
+    # a GitHub-triggered one, with the same RAM and sstate contention this
+    # group exists to prevent. The mitigation is completing the Yocto
+    # migration off Jenkins, not a lock -- there is no cross-scheduler lock
+    # available.
     concurrency:
       group: yocto-${{ inputs.machine }}
       cancel-in-progress: false

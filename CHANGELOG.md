@@ -61,11 +61,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Runners are registered with no custom labels.** Every custom label is added afterwards through the API by `apply-runners.sh`, so the converger owns all of them and restores a re-provisioned board's identity entirely from `runners.json`. `mltrain-02`, `mltrain-03` and `mltrain-04` predate the rule and were registered with `--labels`.
 
+- **`apply-runners.sh` is ported to `.github/scripts/apply_runners.py`, and every phase is now authoritative.** The bash version could only add — POST a missing label, PUT a drifted access list, PUT a missing group member — never remove, so it converged in one direction and took four separate fix rounds to reach even that, each impossible to regression-test in bash. The port adds a `--self-test` that runs against fixtures with no credentials or network access, wired into `ci.yml` beside `resolve_lanes.py`'s.
+
+  Four gaps close with the port. An empty declared repository list now revokes access rather than being skipped, since it is valid declared state, not "leave alone". Group `visibility` is declared in `runners.json` (`selected` for all five managed groups today) and reconciled alongside the repository list, because a group that has drifted to `visibility: all` is reachable by every repository regardless of what the access list says. Group membership is authoritative: a stale or manually-added runner sitting in a managed group is reported as a hard error naming the runner and the group rather than kept silently — the only obvious destination is `Default`, the broadly-reachable group this whole design exists to empty, so nothing moves a runner there automatically. Argument parsing is strict, so a typo like `--dryrun` can no longer fall through to a live apply; any unrecognised argument exits non-zero having touched nothing.
+
 ### Removed
 
 - **The board lane's `concurrency` group.** It keyed on the label rather than the device, so it capped throughput across every machine answering that label while guaranteeing nothing the runner did not already guarantee — a runner executes one job at a time per installed instance. With family labels, `boards: imx8mp` will match every i.MX 8M Plus carrier, and the group would have serialised all of them. Per-device grouping is inexpressible, since concurrency is evaluated before a runner is selected. One runner instance per device is now stated policy and is the guarantee that matters.
 
 - **`.github/runners/provision-*.sh`.** They described an ephemeral, container-based, group-assigned fleet that no machine was ever built from — the real machines are stock installs registered as services with `svc.sh`. Scripts that document a fleet that does not exist are worse than no scripts; the install procedure lives in Confluence.
+
+- **`apply-runners.sh`**, replaced by `.github/scripts/apply_runners.py`.
 
 ### Fixed
 

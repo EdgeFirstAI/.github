@@ -101,6 +101,9 @@ jobs:
       - name: lane resolver
         run: python3 .github/scripts/resolve_lanes.py --self-test
 
+      - name: runner converger
+        run: python3 .github/scripts/apply_runners.py --self-test
+
   ci-gate:
     if: always()
     needs: [changes, lint]

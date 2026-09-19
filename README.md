@@ -23,7 +23,7 @@ The organisation profile README lives in [`profile/`](profile/README.md).
 | `.github/workflows/release-wheels.yml` | release-branch side: maturin wheels for a PyO3 binding, built on the `maturin-build` action |
 | `.github/workflows/publish-rust.yml` | tag side: resolve the build, verify the tree, crates OIDC, GitHub Release |
 | `.github/actions/` | `setup-rust`, `setup-python-uv`, `sbom-tools`, `board-run`, `resolve-release-build`, `maturin-build`, `publish-pypi`, `workflow-lint` |
-| `.github/scripts/` | license policy, the SHA-pin check, the workspace version check, lane resolution (single copy each) |
+| `.github/scripts/` | license policy, the SHA-pin check, the workspace version check, lane resolution, the runner-fleet converger (single copy each) |
 | `.github/rulesets/` | `protect-main` (reviews; org-admin PR bypass), `protect-main-ci` (ci-gate, no bypass), `protect-release-tags` |
 | `.github/rulesets/runners.json` | declarative runner groups, access lists and labels |
 | `templates/` | per-repo `ci.yml`, `nightly.yml`, `release.yml`, `tag-release.yml`, `publish.yml`, plus `CODEOWNERS` and `dependabot.yml` |
@@ -81,6 +81,6 @@ gh auth refresh -h github.com -s admin:org
 bash .github/rulesets/apply.sh
 ```
 
-Runner groups, access lists and labels are declared in `.github/rulesets/runners.json` and applied with `.github/rulesets/apply-runners.sh` (`--dry-run` first). Machines are installed with the stock GitHub runner installer and registered as services with `svc.sh`; the procedure lives in Confluence.
+Runner groups, access lists and labels are declared in `.github/rulesets/runners.json` and applied with `.github/scripts/apply_runners.py` (`--dry-run` first). Machines are installed with the stock GitHub runner installer and registered as services with `svc.sh`; the procedure lives in Confluence.
 
 Set organisation Copilot custom instructions to `.github/copilot-instructions.md`.

@@ -1,18 +1,18 @@
 # Self-hosted runner groups
 
-Access lists, not machines. The group controls which repositories may use a runner; labels describe what the machine has. Desired state lives in [`runners.json`](runners.json) and is applied by [`apply-runners.sh`](apply-runners.sh) — edit the JSON in a pull request rather than clicking through organisation settings, which is how the fleet drifted from this document in the first place.
+Access lists, not machines. The group controls which repositories may use a runner; labels describe what the machine has. Desired state lives in [`runners.json`](runners.json) and is applied by [`apply_runners.py`](../scripts/apply_runners.py) — edit the JSON in a pull request rather than clicking through organisation settings, which is how the fleet drifted from this document in the first place. Each managed group also declares its `visibility` (`selected` for all five today); the converger reconciles it alongside the repository list, since a group that has drifted to `visibility: all` is reachable by every repository regardless of what the access list says.
 
 ## Applying
 
 ```bash
 gh auth refresh -h github.com -s admin:org
-.github/rulesets/apply-runners.sh --dry-run   # review
-.github/rulesets/apply-runners.sh             # apply
+python3 .github/scripts/apply_runners.py --dry-run   # review
+python3 .github/scripts/apply_runners.py             # apply
 ```
 
 ## Registering a runner
 
-**Register with no custom labels.** Do not pass `--labels` to `config.sh` — let the agent assert only its defaults (`self-hosted` plus OS and architecture). Every custom label is added afterwards through the API, by `apply-runners.sh` from `runners.json`. That way the converger owns every custom label a runner has: a board that is re-provisioned or re-registered comes back label-less, and the converger restores its identity entirely from the declarative file rather than from whatever was typed at the console.
+**Register with no custom labels.** Do not pass `--labels` to `config.sh` — let the agent assert only its defaults (`self-hosted` plus OS and architecture). Every custom label is added afterwards through the API, by `apply_runners.py` from `runners.json`. That way the converger owns every custom label a runner has: a board that is re-provisioned or re-registered comes back label-less, and the converger restores its identity entirely from the declarative file rather than from whatever was typed at the console.
 
 `mltrain-02`, `mltrain-03` and `mltrain-04` predate this rule and were registered with `--labels`.
 
@@ -31,6 +31,8 @@ Every machine is a dedicated box running a persistent, service-installed runner 
 | `imx8mpevk-04` | `boards` | `…,ARM64,imx8mp,imx8mp-evk` | Plus legacy `imx8mpevk`. Does not carry `nxp-imx8mp-latest` |
 
 `mltrain-02` and `mltrain-03` must have `git-lfs` preinstalled: the CI user has no passwordless sudo on either box, so the GPU lane requires it rather than installing it.
+
+**Accepted risk on `mltrain-04`:** `yocto-build.yml`'s `concurrency` group coordinates GitHub Actions jobs within the calling repository only. A Jenkins bitbake on the same box is invisible to it and can still overlap a GitHub-triggered build, despite the RAM and sstate contention that group exists to prevent. The mitigation is completing the Yocto migration off Jenkins, not a lock; there is no cross-scheduler lock available.
 
 `imx8mpevk-04` is in `boards` and carries the family and identity labels, but not `nxp-imx8mp-latest` — the deprecated label `hal` still targets. The two EVKs deliberately run different BSPs, so that legacy label stays on `imx8mpevk-08` alone rather than extending it to a second board with a different BSP than the one it names. `hal`'s move to `imx8mp-evk` retires the need for it and is robust to the BSP variance by design.
 

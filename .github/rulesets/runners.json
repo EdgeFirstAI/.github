@@ -3,26 +3,31 @@
   "groups": {
     "boards": {
       "id": 3,
+      "visibility": "selected",
       "repositories": ["hal"],
       "runners": ["imx8mpevk-04", "imx8mpevk-08"]
     },
     "build-x86": {
       "id": 4,
+      "visibility": "selected",
       "repositories": ["hal", "ara2-rs"],
       "runners": ["ubuntubuild"]
     },
     "gpu-cuda": {
       "id": 5,
+      "visibility": "selected",
       "repositories": ["hal", "ara2-rs"],
       "runners": ["mltrain-02", "mltrain-03"]
     },
     "windows": {
       "id": 7,
+      "visibility": "selected",
       "repositories": ["hal", "ara2-rs"],
       "runners": ["JENKINSW10BUILD"]
     },
     "yocto": {
       "id": 9,
+      "visibility": "selected",
       "repositories": ["yocto"],
       "runners": ["mltrain-04"]
     }
