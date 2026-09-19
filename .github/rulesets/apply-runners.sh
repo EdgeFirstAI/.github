@@ -55,6 +55,13 @@ while IFS=$'\t' read -r group gid repos; do
   for repo in ${repos//,/ }; do
     ids+=("$(gh api "repos/$ORG/$repo" --jq .id)")
   done
+  desired="$(printf '%s\n' "${ids[@]}" | jq -R 'tonumber' | jq -sc 'sort')"
+  current="$(gh api "orgs/$ORG/actions/runner-groups/$gid/repositories" \
+             --jq '[.repositories[].id] | sort' | jq -c .)"
+  if [[ "$desired" == "$current" ]]; then
+    echo "    ok: $group access list already correct"
+    continue
+  fi
   payload="$(printf '%s\n' "${ids[@]}" | jq -R 'tonumber' | jq -s '{selected_repository_ids: .}')"
   say "setting $group ($gid) access to: $repos"
   if [[ "$DRY_RUN" == true ]]; then
@@ -72,9 +79,12 @@ while IFS=$'\t' read -r group gid runners; do
   for name in ${runners//,/ }; do
     id="$(gh api "orgs/$ORG/actions/runners" --paginate \
           --jq ".runners[] | select(.name==\"$name\") | .id")"
-    current="$(gh api "orgs/$ORG/actions/runner-groups/$gid/runners" \
-               --jq "[.runners[].name] | index(\"$name\")")"
-    if [[ "$current" != "null" ]]; then
+    # `gh --jq` prints an empty string for a null result rather than the text
+    # "null", so comparing against "null" treats an absent runner as present.
+    # Coercing to a boolean keeps the output unambiguous.
+    in_group="$(gh api "orgs/$ORG/actions/runner-groups/$gid/runners" \
+                --jq "[.runners[].name] | index(\"$name\") != null")"
+    if [[ "$in_group" == "true" ]]; then
       echo "    ok: $name already in $group"
       continue
     fi
