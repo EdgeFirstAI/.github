@@ -52,6 +52,10 @@ The tier decides, not the job. What is being optimised differs per tier:
 2. **larger** — `ubuntu-24.04-xlarge`, `ubuntu-24.04-arm-xlarge`, `macos-latest-xlarge`, `windows-latest-8-cores`, via `runner-class-*: larger`. The default for Full and Release. These tiers run once per PR or per release branch, not per push, so the spend is bounded by review cadence rather than by typing. The publish tier is free by construction: it builds nothing. A Full tier that is slower than the pipeline it replaced is a failed migration, not a saving.
 3. **fleet** — self-hosted groups `boards`, `build-x86`, `gpu-cuda`, `mac`, `windows`. Full and Nightly only. Never fork PRs; the shared Full workflow forces `hosted` when `head.repo` is not this repository. Phase 2 moves the Linux, Windows and CUDA lanes here and retires those larger runners; macOS stays billed because a hosted Apple runner has no free equivalent.
 
+**Capability is a separate axis from cost.** `runner-class-*` answers "who pays"; `lanes` answers "what must the machine have". `lanes` is a comma-separated set of `host`, `hardware` and `gpu`. `all` means `host,hardware` and never implies `gpu` — the CUDA lane is opt-in, needs `gpu-args` to be non-empty, and runs on `self-hosted,linux,x64,CUDA`. There is no `runner-class-gpu`: a CUDA lane is self-hosted by definition. Like the board lane, it is disabled for fork pull requests.
+
+Yocto builds are not Rust builds and do not belong in `rust-full.yml`. They call `yocto-build.yml`, which refuses fork pull requests outright rather than downgrading — there is no hosted Yocto runner to downgrade to.
+
 Putting a Quick lane on a billed runner is the defect the nightly audit exists to catch. A Full or Release lane on a billed runner is the intended state; when such a lane names the label directly rather than going through `runner-class-*`, put `# runner-class: larger` in the file with the reason so the audit can tell the two apart.
 
 ### The one exception: advisory scanning
