@@ -1,0 +1,96 @@
+name: yocto-build
+
+on:
+  workflow_call:
+    inputs:
+      machine:
+        description: Yocto MACHINE, e.g. imx8mp-lpddr4-evk
+        type: string
+        required: true
+      image:
+        description: bitbake target, e.g. edgefirst-image
+        type: string
+        required: true
+      manifest-branch:
+        description: Manifest branch for repo init, e.g. scarthgap
+        type: string
+        required: true
+      timeout-minutes:
+        description: bitbake is hours, not minutes.
+        type: number
+        default: 480
+      artifacts:
+        description: Paths to upload after a successful build.
+        type: string
+        default: tmp/deploy/images/**
+      pre-command:
+        description: Caller setup. Passed through env, never interpolated.
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Yocto ${{ inputs.machine }} ${{ inputs.image }}
+    runs-on: [self-hosted, linux, x64, Yocto]
+    timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
+    # Two concurrent bitbake runs contend on sstate locks and RAM and will
+    # fail each other. Cancellation is not used: a half-finished bitbake
+    # leaves sstate the next build has to recover from.
+    concurrency:
+      group: yocto-${{ inputs.machine }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      # Fails closed rather than skipping. There is no hosted Yocto runner to
+      # downgrade to, and this machine is shared with Jenkins, so a fork PR's
+      # recipes must never reach it. A skip would look like a passing build.
+      - name: Refuse fork pull requests
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          echo "::error::yocto-build does not run for fork pull requests"
+          exit 1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Caller pre-command
+        if: ${{ inputs.pre-command != '' }}
+        env:
+          PRE_COMMAND: ${{ inputs.pre-command }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
+
+      # DL_DIR and SSTATE_DIR live outside the workspace on the machine so the
+      # runner cannot delete them; a cold rebuild is hours.
+      - name: bitbake
+        env:
+          MACHINE: ${{ inputs.machine }}
+          IMAGE: ${{ inputs.image }}
+          MANIFEST_BRANCH: ${{ inputs.manifest-branch }}
+        run: |
+          set -euo pipefail
+          export DL_DIR="${DL_DIR:-/var/cache/yocto/downloads}"
+          export SSTATE_DIR="${SSTATE_DIR:-/var/cache/yocto/sstate}"
+          echo "::notice::building $IMAGE for $MACHINE from $MANIFEST_BRANCH"
+          bash ./ci/yocto-build.sh
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: yocto-${{ inputs.machine }}-${{ inputs.image }}
+          path: ${{ inputs.artifacts }}
+          if-no-files-found: error
+          retention-days: 30
+
+      # A persistent runner accumulates _work forever and Yocto tmp/ is tens
+      # of GB. Runs on failure too, when the directory is largest.
+      - name: Prune tmp
+        if: always()
+        run: rm -rf tmp
