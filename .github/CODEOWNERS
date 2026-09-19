@@ -12,6 +12,5 @@
 .github/actions/ @sebastient
 .github/scripts/ @sebastient
 .github/rulesets/ @sebastient
-.github/runners/ @sebastient
 .github/copilot-instructions.md @sebastient
 templates/ @sebastient
