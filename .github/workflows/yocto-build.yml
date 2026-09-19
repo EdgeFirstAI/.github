@@ -43,7 +43,7 @@ permissions:
 jobs:
   build:
     name: Yocto ${{ inputs.machine }} ${{ inputs.image }}
-    runs-on: [self-hosted, linux, x64, Yocto]
+    runs-on: [self-hosted, linux, x64, yocto]
     timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
     # Two concurrent bitbake runs contend on sstate locks and RAM and will
     # fail each other. Cancellation is not used: a half-finished bitbake
