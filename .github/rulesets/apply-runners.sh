@@ -27,6 +27,7 @@ run() {
 
 # Phase A -- labels. Purely additive; POST never removes a label.
 say "Phase A: custom labels"
+labels_spec="$(jq -r '.labels | to_entries[] | "\(.key)\t\(.value | join(","))"' "$SPEC")"
 while IFS=$'\t' read -r name labels; do
   id="$(gh api "orgs/$ORG/actions/runners" --paginate \
         --jq ".runners[] | select(.name==\"$name\") | .id")"
@@ -44,11 +45,12 @@ while IFS=$'\t' read -r name labels; do
     run gh api --method POST "orgs/$ORG/actions/runners/$id/labels" \
       -f "labels[]=$label"
   done
-done < <(jq -r '.labels | to_entries[] | "\(.key)\t\(.value | join(","))"' "$SPEC")
+done <<< "$labels_spec"
 
 # Phase B -- access lists, before membership. Moving a runner into a
 # visibility=selected group with an empty list makes it reachable by nothing.
 say "Phase B: repository access lists"
+groups_repos="$(jq -r '.groups | to_entries[] | "\(.key)\t\(.value.id)\t\(.value.repositories | join(","))"' "$SPEC")"
 while IFS=$'\t' read -r group gid repos; do
   [[ -z "$repos" ]] && { echo "    skip: $group keeps an empty access list"; continue; }
   ids=()
@@ -70,15 +72,20 @@ while IFS=$'\t' read -r group gid repos; do
     echo "$payload" | gh api --method PUT \
       "orgs/$ORG/actions/runner-groups/$gid/repositories" --input -
   fi
-done < <(jq -r '.groups | to_entries[] | "\(.key)\t\(.value.id)\t\(.value.repositories | join(","))"' "$SPEC")
+done <<< "$groups_repos"
 
 # Phase C -- membership.
 say "Phase C: group membership"
+groups_runners="$(jq -r '.groups | to_entries[] | "\(.key)\t\(.value.id)\t\(.value.runners | join(","))"' "$SPEC")"
 while IFS=$'\t' read -r group gid runners; do
   [[ -z "$runners" ]] && continue
   for name in ${runners//,/ }; do
     id="$(gh api "orgs/$ORG/actions/runners" --paginate \
           --jq ".runners[] | select(.name==\"$name\") | .id")"
+    if [[ -z "$id" ]]; then
+      echo "::error::runner '$name' not found in $ORG" >&2
+      exit 1
+    fi
     # `gh --jq` prints an empty string for a null result rather than the text
     # "null", so comparing against "null" treats an absent runner as present.
     # Coercing to a boolean keeps the output unambiguous.
@@ -91,6 +98,6 @@ while IFS=$'\t' read -r group gid runners; do
     say "moving $name ($id) into $group ($gid)"
     run gh api --method PUT "orgs/$ORG/actions/runner-groups/$gid/runners/$id"
   done
-done < <(jq -r '.groups | to_entries[] | "\(.key)\t\(.value.id)\t\(.value.runners | join(","))"' "$SPEC")
+done <<< "$groups_runners"
 
 say "done"
