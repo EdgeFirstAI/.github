@@ -26,7 +26,7 @@ Every machine is a dedicated box running a persistent, service-installed runner 
 
 `mltrain-02` and `mltrain-03` must have `git-lfs` preinstalled: the CI user has no passwordless sudo on either box, so the GPU lane requires it rather than installing it.
 
-`imx8mpevk-04` is in `boards` and carries the family and identity labels, but not `nxp-imx8mp-latest` — the label `hal` actually targets — pending confirmation that it is provisioned identically to `imx8mpevk-08` (OpenCV, LFS testdata, eMMC headroom). Add it back in `runners.json` once that is confirmed.
+`imx8mpevk-04` is in `boards` and carries the family and identity labels, but not `nxp-imx8mp-latest` — the deprecated label `hal` still targets. The two EVKs deliberately run different BSPs, so that legacy label stays on `imx8mpevk-08` alone rather than extending it to a second board with a different BSP than the one it names. `hal`'s move to `imx8mp-evk` retires the need for it and is robust to the BSP variance by design.
 
 `mac` exists and is empty; no macOS machine is provisioned. The same is true of `linux-arm`: `resolve_lanes.py`'s `FLEET` tuple for it names a machine that does not exist, so `runner-class-linux-arm: fleet` queues until timeout, silently.
 
@@ -50,7 +50,7 @@ imx8mp-verdin    imx95-verdin                  imx8mp-frdm-ara240
 
 The suffix slot carries a board variant (`-pro`) or fitted equipment (`-ara240`, `-hailo8l`).
 
-**The bare board label is the current BSP.** A pinned BSP appends its numeric version: `imx8mp-evk-6.12.34-2.1.0`. Version tails are numeric so they never read as an equipment suffix.
+**The bare board label matches any board of that identity regardless of BSP** — boards of the same identity may deliberately run different BSPs, so a caller using the bare label is robust to that variance by design. A pinned label targets one specific BSP by appending its numeric version: `imx8mp-evk-6.12.34-2.1.0`. Version tails are numeric so they never read as an equipment suffix.
 
 **Capability labels** are bare and orthogonal, carried in addition: `hailo8l`, `ara240`, `CUDA`. So `boards: hailo8l` targets any Hailo-equipped board across families. Jetsons may carry `CUDA` safely — the GPU lane tuple is `x64`-gated and `X64`/`ARM64` are auto-assigned.
 
