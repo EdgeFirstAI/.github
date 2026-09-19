@@ -4,7 +4,10 @@ on:
   workflow_call:
     inputs:
       lanes:
-        description: all, hardware, or host
+        description: >-
+          Comma-separated lane set: host, hardware, gpu. `all` means
+          host,hardware and never implies gpu -- every migrated repository
+          passes `all`, and the GPU lane is opt-in capacity.
         type: string
         default: all
       boards:
@@ -78,6 +81,17 @@ on:
         description: Board-only setup. Falls back to pre-command when empty.
         type: string
         default: ""
+      gpu-args:
+        description: >-
+          Extra arguments appended to the GPU lane's cargo nextest run, in
+          the style of nextest-args (e.g. `--features cuda`). Not a
+          free-form command. Empty skips the lane entirely.
+        type: string
+        default: ""
+      gpu-pre-command:
+        description: GPU-only setup. Falls back to pre-command when empty.
+        type: string
+        default: ""
       hack-args:
         description: >-
           Arguments for the nightly `cargo hack check` feature-combination
@@ -133,11 +147,13 @@ jobs:
       linux_arm: ${{ steps.map.outputs.linux_arm }}
       macos: ${{ steps.map.outputs.macos }}
       windows: ${{ steps.map.outputs.windows }}
+      gpu: ${{ steps.map.outputs.gpu }}
       do_host: ${{ steps.map.outputs.do_host }}
       do_arm: ${{ steps.map.outputs.do_arm }}
       do_macos: ${{ steps.map.outputs.do_macos }}
       do_windows: ${{ steps.map.outputs.do_windows }}
       do_hardware: ${{ steps.map.outputs.do_hardware }}
+      do_gpu: ${{ steps.map.outputs.do_gpu }}
       do_nightly: ${{ steps.map.outputs.do_nightly }}
       board_matrix: ${{ steps.map.outputs.board_matrix }}
       has_sonar: ${{ steps.sonar.outputs.present }}
@@ -158,6 +174,13 @@ jobs:
           [[ -f sonar-project.properties ]] && present=true
           echo "present=$present" >> "$GITHUB_OUTPUT"
 
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .ef-ci
+          persist-credentials: false
+
       - id: map
         env:
           LANES: ${{ inputs.lanes }}
@@ -169,101 +192,11 @@ jobs:
           SKIP_MAC: ${{ inputs.skip-macos }}
           SKIP_WIN: ${{ inputs.skip-windows }}
           NIGHTLY: ${{ inputs.nightly }}
+          GPU_ARGS: ${{ inputs.gpu-args }}
           PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           REPO: ${{ github.repository }}
           EVENT: ${{ github.event_name }}
-        run: |
-          set -euo pipefail
-          map_class() {
-            local class="$1" kind="$2"
-            case "$class" in
-              hosted)
-                case "$kind" in
-                  linux) echo '"ubuntu-24.04"' ;;
-                  linux-arm) echo '"ubuntu-24.04-arm"' ;;
-                  macos) echo '"macos-latest"' ;;
-                  windows) echo '"windows-latest"' ;;
-                esac
-                ;;
-              fleet)
-                case "$kind" in
-                  linux) echo '["self-hosted","linux","x64","build"]' ;;
-                  linux-arm) echo '["self-hosted","linux","arm64","build"]' ;;
-                  macos) echo '["self-hosted","macos","arm64","metal"]' ;;
-                  windows) echo '["self-hosted","windows","x64","d3d11"]' ;;
-                esac
-                ;;
-              larger)
-                # 24.04 to match the hosted class; the org provisions both.
-                case "$kind" in
-                  linux) echo '"ubuntu-24.04-xlarge"' ;;
-                  linux-arm) echo '"ubuntu-24.04-arm-xlarge"' ;;
-                  macos) echo '"macos-latest-xlarge"' ;;
-                  # Requires an org-provisioned Windows larger runner; without
-                  # one this label queues until the job times out.
-                  windows) echo '"windows-latest-8-cores"' ;;
-                esac
-                ;;
-              *)
-                echo "::error::unknown runner-class '$class' (use hosted|fleet|larger)" >&2
-                exit 1
-                ;;
-            esac
-          }
-
-          do_host=false
-          do_hardware=false
-          case "$LANES" in
-            all) do_host=true; do_hardware=true ;;
-            host) do_host=true ;;
-            hardware) do_hardware=true ;;
-            *) echo "::error::lanes must be all|host|hardware" >&2; exit 1 ;;
-          esac
-
-          same_repo=false
-          if [[ "$EVENT" != pull_request || "$PR_HEAD_REPO" == "$REPO" ]]; then
-            same_repo=true
-          fi
-          if [[ "$same_repo" != true ]]; then
-            echo "::notice::fork PR: forcing hosted runners (fleet/larger are same-repo only)"
-            CLASS_LINUX=hosted
-            CLASS_ARM=hosted
-            CLASS_MAC=hosted
-            CLASS_WIN=hosted
-          fi
-
-          board_matrix='[]'
-          if [[ -n "${BOARDS// /}" && "$do_hardware" == true && "$same_repo" == true ]]; then
-            board_matrix="$(python3 -c 'import json,os; boards=[b.strip() for b in os.environ["BOARDS"].split(",") if b.strip()]; print(json.dumps([{"runner": b} for b in boards]))')"
-          else
-            do_hardware=false
-          fi
-
-          do_arm=false
-          if [[ "$do_host" == true || "$do_hardware" == true ]]; then
-            do_arm=true
-          fi
-          do_macos=false
-          do_windows=false
-          if [[ "$do_host" == true && "$SKIP_MAC" != true ]]; then do_macos=true; fi
-          if [[ "$do_host" == true && "$SKIP_WIN" != true ]]; then do_windows=true; fi
-
-          {
-            echo "linux=$(map_class "$CLASS_LINUX" linux)"
-            echo "linux_arm=$(map_class "$CLASS_ARM" linux-arm)"
-            echo "macos=$(map_class "$CLASS_MAC" macos)"
-            echo "windows=$(map_class "$CLASS_WIN" windows)"
-            echo "do_host=$do_host"
-            echo "do_arm=$do_arm"
-            echo "do_macos=$do_macos"
-            echo "do_windows=$do_windows"
-            echo "do_hardware=$do_hardware"
-            echo "do_nightly=$NIGHTLY"
-            echo "same_repo=$same_repo"
-            echo "board_matrix<<EOF"
-            echo "$board_matrix"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+        run: python3 .ef-ci/.github/scripts/resolve_lanes.py
 
   linux:
     name: Full linux
