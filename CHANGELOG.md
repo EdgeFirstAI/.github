@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-19
+
 ### Added
 
 - **`publish-pypi`, a composite action for the one job that cannot be a reusable workflow.** PyPI Trusted Publishing matches `job_workflow_ref` in the publishing repository, so the job has to live in the product repository — but only a reusable *workflow* breaks that claim, and an action inside the job does not. The selection and verification are shareable even though the job is not, and a caller writes four lines instead of a download, a `find`, an emptiness check and an upload.
@@ -29,6 +31,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`templates/CODEOWNERS` and `templates/dependabot.yml`.** A migrated repository should request review automatically on every pull request and keep its own dependencies current; neither was inherited from the templates, so both were left to each repository to remember. The CODEOWNERS template carries a catch-all, and states the two GitHub rules that are easy to get backwards: the last matching pattern wins rather than the most specific one, so the catch-all goes first; and CODEOWNERS is not a default community health file, so ownership does not cross repository boundaries and every repository needs its own copy. This repository's own file claimed otherwise and is corrected.
 
+- **An opt-in CUDA lane, on its own axis.** `lanes` becomes a comma-separated set — `host`, `hardware`, `gpu` — where `all` keeps its exact prior meaning of `host,hardware` and never implies `gpu`. That restraint is the point: every migrated repository passes `all`, and two GPU machines cannot absorb the whole fleet's Full tier. The lane needs a non-empty `gpu-args` and runs on `self-hosted,linux,x64,CUDA` with no `runner-class-gpu` input, because a CUDA lane is self-hosted by definition and a class input could only name a runner that does not exist. It inherits the board lane's fork guard.
+
+  Capability and cost are now separate axes. `runner-class-*` answers who pays; `lanes` and `boards` answer what the machine must have. Folding CUDA into the class enum would have multiplied every future capability against every OS, and would have let a caller write `runner-class-macos: fleet-cuda` that type-checks and queues forever.
+
+- **`yocto-build.yml`**, for bitbake on the dedicated builder. It is a separate workflow rather than a lane because `rust-full.yml` runs cargo and a Yocto build shares nothing with it. It refuses any untrusted trigger outright instead of downgrading — the Rust lanes can fall back to hosted runners, and there is no hosted Yocto equivalent to fall back to — serialises per machine, and prunes `tmp/` on completion while leaving `DL_DIR` and `SSTATE_DIR` outside the workspace where the runner cannot delete them.
+
+- **`.github/rulesets/runners.json` and `apply-runners.sh`**, making organisation runner state declarative. Groups, repository access lists and custom labels were applied by hand from a markdown table, and the organisation had drifted from that table completely: six of seven self-hosted runners sat in `Default`, five purpose-built groups were empty, and a sixth group existed that the table did not mention. State that is reviewed in a pull request does not drift that way.
+
 ### Changed
 
 - **`maturin-spec` is derived from the runner OS when it is not set**, and `release-wheels.yml`'s default is empty so that derivation is reachable. It is a property of the platform rather than of the repository: `zig` is what produces the manylinux wheels, and `patchelf` is a Linux-only PyPI package with no wheel for macOS or Windows, so a value set once for every lane is a value some lane cannot install. The per-lane override added in 1.1.0 stays for the case it is genuinely for — pinning a maturin version for reproducibility — rather than for restating a platform fact in every caller.
@@ -36,6 +46,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The migration order is now stated: land the workflow callers in their own pull request, before any release PR.** Section 4.5.6 requires a `publish.yml` rehearsal before a repository's first tag, and on a first migration it cannot be run at all — GitHub refuses to dispatch a workflow that is not on the default branch, and merging the release PR fires `tag-release.yml` immediately, so the file arrives and the tag is created in the same instant. ara2-rs hit this and released without the rehearsal. Splitting the migration from the release restores the window.
 
   The same note records what the rehearsal cannot cover in any case: a Trusted Publisher still pointing at `release.yml` is invisible to it, because a rehearsal skips the upload. ara2-rs v0.18.0 failed on exactly that, with crates.io answering `Expected workflow filenames: release.yml`. Verify the publisher configuration rather than assuming it.
+
+- **Both fork guards fail closed on any untrusted trigger, not just fork pull requests.** Each tested `github.event_name == 'pull_request'` before deciding whether a run carried a fork's code — an allowlist of *when to check*, which silently trusts every event it does not name. `pull_request_target` and `workflow_run` both run a fork's head, so either would have reached self-hosted capacity: the fleet, board and GPU lanes in the Rust case, and a machine shared with production Jenkins builds serving a public repository in the Yocto case. In both the guard step simply skipped, which looks identical to a legitimate same-repository run.
+
+  The default is now inverted. Only `push`, `workflow_dispatch`, `schedule` and `merge_group` are trusted outright, `pull_request` is trusted when its head repository is this one, and nothing else is. The two workflows differ in what they do about it, deliberately: the Rust lanes downgrade to hosted runners because a hosted fallback exists, while `yocto-build.yml` refuses, because there is no hosted Yocto runner to fall back to.
+
+- **The `fleet` runner class resolves for Linux and Windows.** It never did: the class demanded a fourth capability label (`build`, `d3d11`) that no registered machine carried, so `runner-class-linux: fleet` queued until the job timed out. The machines now carry `build`, and the Windows and macOS fleet tuples ask for `build` rather than `d3d11` and `metal`. Those remain reserved for machines that genuinely have them — claiming a graphics capability a build box lacks converts a queue into a runtime failure, which is worse.
+
+- **Lane resolution moved from inline bash into `.github/scripts/resolve_lanes.py`**, with a `--self-test` run by CI. Generalising `lanes` while guaranteeing `all`, `host` and `hardware` still behave identically is exactly the change that wants a test, and an inline `run:` block cannot have one.
+
+### Removed
+
+- **The board lane's `concurrency` group.** It keyed on the label rather than the device, so it capped throughput across every machine answering that label while guaranteeing nothing the runner did not already guarantee — a runner executes one job at a time per installed instance. With family labels, `boards: imx8mp` will match every i.MX 8M Plus carrier, and the group would have serialised all of them. Per-device grouping is inexpressible, since concurrency is evaluated before a runner is selected. One runner instance per device is now stated policy and is the guarantee that matters.
+
+- **`.github/runners/provision-*.sh`.** They described an ephemeral, container-based, group-assigned fleet that no machine was ever built from — the real machines are stock installs registered as services with `svc.sh`. Scripts that document a fleet that does not exist are worse than no scripts; the install procedure lives in Confluence.
 
 ### Fixed
 
@@ -309,6 +333,7 @@ Everything here is exercised by a real release: `EdgeFirstAI/ara2-rs` v0.18.0 wa
   precedence over `ci:hardware`. PyPI publish requires the reusable release
   job to succeed.
 
-[Unreleased]: https://github.com/EdgeFirstAI/.github/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/EdgeFirstAI/.github/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/EdgeFirstAI/.github/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/EdgeFirstAI/.github/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/EdgeFirstAI/.github/releases/tag/v1.0.0
