@@ -45,14 +45,33 @@ jobs:
     permissions:
       contents: read
     steps:
-      # Fails closed rather than skipping. There is no hosted Yocto runner to
-      # downgrade to, and this machine is shared with Jenkins, so a fork PR's
-      # recipes must never reach it. A skip would look like a passing build.
-      - name: Refuse fork pull requests
-        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+      # Fail closed. This refuses any event it cannot positively vouch for,
+      # rather than enumerating the events under which to check -- an
+      # allowlist of "when to look" reopens on every new event type, and
+      # pull_request_target and workflow_run both run a fork's head. There is
+      # no hosted Yocto runner to downgrade to, so refusal is the only option.
+      # merge_group is trusted on the assumption that branch protection gates
+      # the queue on approval and required checks.
+      - name: Refuse untrusted trigger events
+        env:
+          EVENT: ${{ github.event_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
         run: |
-          echo "::error::yocto-build does not run for fork pull requests"
-          exit 1
+          set -euo pipefail
+          case "$EVENT" in
+            push|workflow_dispatch|schedule|merge_group) ;;
+            pull_request)
+              if [[ "$HEAD_REPO" != "$REPO" ]]; then
+                echo "::error::yocto-build does not run for fork pull requests ($HEAD_REPO)"
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::yocto-build refuses the untrusted event '$EVENT'. Add it to the trusted list only after confirming it cannot carry fork-authored code."
+              exit 1
+              ;;
+          esac
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:

@@ -40,6 +40,14 @@ LARGER = {
 # CUDA equivalent to choose between, so no runner-class input governs it.
 GPU_RUNNER = ["self-hosted", "linux", "x64", "CUDA"]
 
+# Events that cannot carry a fork's code. Anything not named here is
+# untrusted: an allowlist of events under which to *check* reopens on
+# every new event type, and workflow_run and pull_request_target both
+# run a fork's head. Unlike yocto-build, an untrusted event here
+# degrades to hosted runners rather than failing -- there is a hosted
+# fallback, so refusing outright would be gratuitous.
+TRUSTED_EVENTS = frozenset({"push", "workflow_dispatch", "schedule", "merge_group"})
+
 CLASSES = {"hosted": HOSTED, "fleet": FLEET, "larger": LARGER}
 LANE_NAMES = {"host", "hardware", "gpu"}
 
@@ -84,10 +92,13 @@ def resolve(env):
         "windows": env.get("CLASS_WIN") or "hosted",
     }
 
-    same_repo = (
-        env.get("EVENT") not in ("pull_request", "pull_request_target")
-        or env.get("PR_HEAD_REPO") == env.get("REPO")
-    )
+    event = env.get("EVENT") or ""
+    if event in TRUSTED_EVENTS:
+        same_repo = True
+    elif event == "pull_request":
+        same_repo = env.get("PR_HEAD_REPO") == env.get("REPO")
+    else:
+        same_repo = False
 
     do_host = "host" in lanes
     do_hardware = "hardware" in lanes
@@ -252,6 +263,32 @@ def _self_test() -> int:
     check("pull_request_target fork hardware off", r["do_hardware"], False)
     check("pull_request_target fork gpu off", r["do_gpu"], False)
     check("pull_request_target fork linux downgraded", r["linux"], "ubuntu-24.04")
+
+    # workflow_run runs a fork's head under the base repo's trust. Untrusted
+    # like any unnamed event: hardware and gpu off, every class hosted.
+    workflow_run = {**base, "LANES": "all,gpu", "GPU_ARGS": "--features cuda",
+                     "EVENT": "workflow_run"}
+    r = resolve(workflow_run)
+    check("workflow_run same_repo", r["same_repo"], False)
+    check("workflow_run hardware off", r["do_hardware"], False)
+    check("workflow_run gpu off", r["do_gpu"], False)
+    check("workflow_run linux hosted", r["linux"], "ubuntu-24.04")
+    check("workflow_run linux_arm hosted", r["linux_arm"], "ubuntu-24.04-arm")
+    check("workflow_run macos hosted", r["macos"], "macos-latest")
+    check("workflow_run windows hosted", r["windows"], "windows-latest")
+
+    # Trusted events never carry a fork's code and are always same-repo.
+    for trusted_event in ("merge_group", "push", "schedule", "workflow_dispatch"):
+        check(f"{trusted_event} same_repo",
+              resolve({**base, "EVENT": trusted_event})["same_repo"], True)
+
+    # A same-repo pull_request is trusted; a fork pull_request is not.
+    check("same-repo pull_request same_repo",
+          resolve({**base, "EVENT": "pull_request",
+                   "PR_HEAD_REPO": base["REPO"]})["same_repo"], True)
+    check("fork pull_request same_repo",
+          resolve({**base, "EVENT": "pull_request",
+                   "PR_HEAD_REPO": "someone/hal"})["same_repo"], False)
 
     for f in failures:
         print(f"FAIL {f}", file=sys.stderr)
