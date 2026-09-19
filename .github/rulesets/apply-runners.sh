@@ -68,6 +68,30 @@ while IFS=$'\t' read -r name labels; do
                  --jq '[.labels[] | select(.type=="custom") | .name]')"
   desired="$(printf '%s\n' ${labels//,/ } | jq -R . | jq -s .)"
 
+  # Removals run before additions. GitHub label identity is case-insensitive,
+  # so a POST for a label that differs only in case from one the runner
+  # already has is a silent no-op -- the runner keeps the original casing,
+  # and the API still reports success. A case change is therefore a rename,
+  # and add-then-delete would delete the only copy that exists: the add
+  # never created a second one to survive the delete. Delete-then-add
+  # instead lands the add on a runner that genuinely lacks the label. This
+  # does leave the runner without the label for the moment between the two
+  # calls -- milliseconds on an idle runner, judged acceptable here, but
+  # real, so do not reorder this back without re-deciding that.
+  for label in $(jq -r '.[]' <<< "$have_custom"); do
+    if jq -e --arg l "$label" 'index($l) != null' <<< "$desired" >/dev/null; then
+      continue
+    fi
+    say "REMOVING label '$label' from $name ($id) -- not declared in runners.json"
+    run_remove gh api --method DELETE \
+      "orgs/$ORG/actions/runners/$id/labels/$label"
+  done
+
+  # Exact-string, case-sensitive on purpose: it is what makes a case-only
+  # difference count as "missing" and drives the rename above. A
+  # case-insensitive match would call CUDA a match for a declared cuda,
+  # report "already has" and propose nothing, leaving the casing mismatched
+  # forever -- the opposite of what declaring cuda was for.
   for label in ${labels//,/ }; do
     if jq -e --arg l "$label" 'index($l) != null' <<< "$have_custom" >/dev/null; then
       echo "    ok: $name already has $label"
@@ -76,15 +100,6 @@ while IFS=$'\t' read -r name labels; do
     say "adding label '$label' to $name ($id)"
     run gh api --method POST "orgs/$ORG/actions/runners/$id/labels" \
       -f "labels[]=$label"
-  done
-
-  for label in $(jq -r '.[]' <<< "$have_custom"); do
-    if jq -e --arg l "$label" 'index($l) != null' <<< "$desired" >/dev/null; then
-      continue
-    fi
-    say "REMOVING label '$label' from $name ($id) -- not declared in runners.json"
-    run_remove gh api --method DELETE \
-      "orgs/$ORG/actions/runners/$id/labels/$label"
   done
 done <<< "$labels_spec"
 
