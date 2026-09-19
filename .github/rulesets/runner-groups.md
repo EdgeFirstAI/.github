@@ -12,13 +12,9 @@ gh auth refresh -h github.com -s admin:org
 
 ## Registering a runner
 
-**Register with no custom labels.** Do not pass `--labels` to `config.sh` — let the agent assert only its defaults (`self-hosted` plus OS and architecture). Every custom label is added afterwards through the API, by `apply-runners.sh` from `runners.json`.
+**Register with no custom labels.** Do not pass `--labels` to `config.sh` — let the agent assert only its defaults (`self-hosted` plus OS and architecture). Every custom label is added afterwards through the API, by `apply-runners.sh` from `runners.json`. That way the converger owns every custom label a runner has: a board that is re-provisioned or re-registered comes back label-less, and the converger restores its identity entirely from the declarative file rather than from whatever was typed at the console.
 
-This keeps two label classes from ever overlapping. A label passed to `config.sh --labels` is agent-owned: the agent re-asserts it within seconds, so an API `DELETE` against it succeeds and then silently reverts. A label added later, only through the API, is API-owned and has no agent-side assertion to compete with, so it persists exactly as written. Registering with no labels means every custom label a runner ever carries is API-owned, and `runners.json` stays authoritative permanently instead of racing the agent for it.
-
-`mltrain-02`, `mltrain-03` and `mltrain-04` predate this rule and still carry agent-owned `CUDA`/`Yocto`. They will be re-registered with no labels; the converger then applies `cuda`/`yocto` through the API as usual.
-
-**Never run `apply-runners.sh` against an agent-owned label.** The `DELETE` succeeds, the agent puts the label straight back, and every run of the script leaves a window in which the lane that label names matches nothing.
+`mltrain-02`, `mltrain-03` and `mltrain-04` predate this rule and were registered with `--labels`.
 
 ## The fleet
 
@@ -28,9 +24,9 @@ Every machine is a dedicated box running a persistent, service-installed runner 
 | --- | --- | --- | --- |
 | `ubuntubuild` | `build-x86` | `self-hosted,Linux,X64,build` | General Linux build capacity; answers `runner-class-linux: fleet` |
 | `JENKINSW10BUILD` | `windows` | `self-hosted,X64,Windows,build` | Answers `runner-class-windows: fleet`. Not `d3d11`: it has no GPU |
-| `mltrain-02` | `gpu-cuda` | `self-hosted,Linux,X64,cuda` | GPU-only; answers `lanes: gpu` |
-| `mltrain-03` | `gpu-cuda` | `self-hosted,Linux,X64,cuda` | GPU-only |
-| `mltrain-04` | `yocto` | `self-hosted,Linux,X64,yocto` | Shared with Jenkins during the Yocto migration |
+| `mltrain-02` | `gpu-cuda` | `self-hosted,Linux,X64,CUDA` | GPU-only; answers `lanes: gpu`. Casing predates the lowercase convention |
+| `mltrain-03` | `gpu-cuda` | `self-hosted,Linux,X64,CUDA` | GPU-only. Casing predates the lowercase convention |
+| `mltrain-04` | `yocto` | `self-hosted,Linux,X64,Yocto` | Shared with Jenkins during the Yocto migration. Casing predates the lowercase convention |
 | `imx8mpevk-08` | `boards` | `…,ARM64,imx8mp,imx8mp-evk,imx8mp-evk-6.12.34-2.1.0` | Plus legacy `nxp-imx8mp-latest` and `nxp-imx8mp-6.12.34-2.1.0` |
 | `imx8mpevk-04` | `boards` | `…,ARM64,imx8mp,imx8mp-evk` | Plus legacy `imx8mpevk`. Does not carry `nxp-imx8mp-latest` |
 
@@ -76,6 +72,8 @@ imx8mp-verdin    imx95-verdin                  imx8mp-frdm-ara240
 ```
 
 **All custom labels are lowercase and hyphen-separated.** This governs custom labels only — GitHub's auto-assigned labels (`self-hosted`, `Linux`, `X64`, `ARM64`, `Windows`, `macOS`) are fixed and mixed-case, and nothing here implies they can be made consistent with the rest.
+
+`CUDA` and `Yocto` are the exception: they predate this convention and keep their registered casing, because GitHub's organisation-wide label registry fixes a label's casing at first creation and the API cannot change it thereafter. Matching is case-insensitive, so this costs nothing at runtime.
 
 **The bare identity label matches any board of that identity regardless of BSP** — boards of the same identity may deliberately run different BSPs, so a caller using the bare label is robust to that variance by design. A pinned label targets one specific BSP by appending its numeric version: `imx8mp-evk-6.12.34-2.1.0`. Version tails are numeric so they never read as an equipment suffix.
 

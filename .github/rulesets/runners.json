@@ -34,9 +34,9 @@
   "labels": {
     "ubuntubuild": ["build"],
     "JENKINSW10BUILD": ["build"],
-    "mltrain-02": ["cuda"],
-    "mltrain-03": ["cuda"],
-    "mltrain-04": ["yocto"],
+    "mltrain-02": ["CUDA"],
+    "mltrain-03": ["CUDA"],
+    "mltrain-04": ["Yocto"],
     "imx8mpevk-08": ["imx8mp", "imx8mp-evk", "imx8mp-evk-6.12.34-2.1.0", "nxp-imx8mp-latest", "nxp-imx8mp-6.12.34-2.1.0"],
     "imx8mpevk-04": ["imx8mp", "imx8mp-evk", "imx8mpevk"]
   }
