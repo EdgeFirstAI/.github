@@ -71,9 +71,7 @@ imx8mp-ezurio    imx95-phytec                  imx8mp-raivin
 imx8mp-verdin    imx95-verdin                  imx8mp-frdm-ara240
 ```
 
-**All custom labels are lowercase and hyphen-separated.** This governs custom labels only — GitHub's auto-assigned labels (`self-hosted`, `Linux`, `X64`, `ARM64`, `Windows`, `macOS`) are fixed and mixed-case, and nothing here implies they can be made consistent with the rest.
-
-`CUDA` and `Yocto` are the exception: they predate this convention and keep their registered casing, because GitHub's organisation-wide label registry fixes a label's casing at first creation and the API cannot change it thereafter. Matching is case-insensitive, so this costs nothing at runtime.
+**Every label reference is written exactly as GitHub reports it**, so a reader can compare a file against `gh api .../runners` without translating. New custom labels we create are lowercase and hyphen-separated. `CUDA` and `Yocto` are the exception and keep their registered casing, because GitHub's organisation-wide label registry fixes a label's casing at first creation and the API cannot change it thereafter. GitHub's auto-assigned labels are written as GitHub capitalises them: `self-hosted`, `Linux`, `X64`, `ARM64`, `Windows`, `macOS`. Matching is case-insensitive throughout, so none of this costs anything at runtime.
 
 **The bare identity label matches any board of that identity regardless of BSP** — boards of the same identity may deliberately run different BSPs, so a caller using the bare label is robust to that variance by design. A pinned label targets one specific BSP by appending its numeric version: `imx8mp-evk-6.12.34-2.1.0`. Version tails are numeric so they never read as an equipment suffix.
 

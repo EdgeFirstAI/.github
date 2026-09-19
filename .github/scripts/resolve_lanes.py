@@ -21,10 +21,10 @@ HOSTED = {
 # `d3d11` and `metal` are reserved for machines that genuinely have them, so
 # that a mislabelled lane queues rather than failing at runtime.
 FLEET = {
-    "linux": ["self-hosted", "linux", "x64", "build"],
-    "linux-arm": ["self-hosted", "linux", "arm64", "build"],
-    "macos": ["self-hosted", "macos", "arm64", "build"],
-    "windows": ["self-hosted", "windows", "x64", "build"],
+    "linux": ["self-hosted", "Linux", "X64", "build"],
+    "linux-arm": ["self-hosted", "Linux", "ARM64", "build"],
+    "macos": ["self-hosted", "macOS", "ARM64", "build"],
+    "windows": ["self-hosted", "Windows", "X64", "build"],
 }
 
 LARGER = {
@@ -38,7 +38,7 @@ LARGER = {
 
 # The GPU lane is self-hosted by definition: there is no hosted or billed
 # CUDA equivalent to choose between, so no runner-class input governs it.
-GPU_RUNNER = ["self-hosted", "linux", "x64", "CUDA"]
+GPU_RUNNER = ["self-hosted", "Linux", "X64", "CUDA"]
 
 # Events that cannot carry a fork's code. Anything not named here is
 # untrusted: an allowlist of events under which to *check* reopens on
@@ -193,9 +193,9 @@ def _self_test() -> int:
 
     # The windows and macos fleet tuples claim build capability, not graphics.
     check("fleet windows", map_class("fleet", "windows"),
-          ["self-hosted", "windows", "x64", "build"])
+          ["self-hosted", "Windows", "X64", "build"])
     check("fleet macos", map_class("fleet", "macos"),
-          ["self-hosted", "macos", "arm64", "build"])
+          ["self-hosted", "macOS", "ARM64", "build"])
     check("hosted linux", map_class("hosted", "linux"), "ubuntu-24.04")
     check("larger linux", map_class("larger", "linux"), "ubuntu-24.04-xlarge")
     check_raises("unknown class", lambda: map_class("bogus", "linux"))
@@ -220,7 +220,7 @@ def _self_test() -> int:
 
     r = resolve({**base, "LANES": "all,gpu", "GPU_ARGS": "--features cuda"})
     check("gpu enabled", r["do_gpu"], True)
-    check("gpu runner", r["gpu"], ["self-hosted", "linux", "x64", "CUDA"])
+    check("gpu runner", r["gpu"], ["self-hosted", "Linux", "X64", "CUDA"])
 
     # A fork PR loses every self-hosted lane and every non-hosted class.
     fork = {**base, "LANES": "all,gpu", "GPU_ARGS": "--features cuda",
