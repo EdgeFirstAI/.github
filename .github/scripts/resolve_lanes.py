@@ -40,13 +40,12 @@ LARGER = {
 # CUDA equivalent to choose between, so no runner-class input governs it.
 GPU_RUNNER = ["self-hosted", "linux", "x64", "CUDA"]
 
-# Events known not to carry fork-controlled access. Anything not named here
-# is untrusted: an allowlist of events under which to *check* reopens on
-# every new event type, and workflow_run and pull_request_target are both
-# associated with fork contributions and run with the base repo's token and
-# secrets. No checkout here takes a ref:, so today that reaches self-hosted
-# capacity, not fork code -- the guard is defence in depth for the day one
-# does. Unlike yocto-build, an untrusted event here degrades to hosted
+# Events that cannot carry a fork's code. Anything not named here is
+# untrusted: an allowlist of events under which to *check* reopens on
+# every new event type, and workflow_run and pull_request_target are
+# both associated with fork contributions and run with the base repo's
+# token and secrets, though not a fork's head -- no checkout here takes
+# a ref:. Unlike yocto-build, an untrusted event here degrades to hosted
 # runners rather than failing -- there is a hosted fallback, so refusing
 # outright would be gratuitous.
 TRUSTED_EVENTS = frozenset({"push", "workflow_dispatch", "schedule", "merge_group"})
@@ -267,9 +266,9 @@ def _self_test() -> int:
     check("pull_request_target fork gpu off", r["do_gpu"], False)
     check("pull_request_target fork linux downgraded", r["linux"], "ubuntu-24.04")
 
-    # workflow_run runs with the base repo's token on a fork's behalf, not
-    # the fork's head (no checkout here takes a ref:). Untrusted like any
-    # unnamed event: hardware and gpu off, every class hosted.
+    # workflow_run runs under the base repo's trust, not a fork's head (no
+    # checkout here takes a ref:). Untrusted like any unnamed event:
+    # hardware and gpu off, every class hosted.
     workflow_run = {**base, "LANES": "all,gpu", "GPU_ARGS": "--features cuda",
                      "EVENT": "workflow_run"}
     r = resolve(workflow_run)
