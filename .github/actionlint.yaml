@@ -14,3 +14,19 @@ paths:
   .github/workflows/*.yml:
     ignore:
       - 'property "workflow_(sha|repository|ref|file_path)" is not defined in object type'
+
+# This list must track .github/rulesets/runners.json exactly, casing
+# included -- it is now a third place the fleet's custom labels are
+# written down, and therefore a third place that can drift. There is no
+# tooling generating one from the other; keep them in sync by hand.
+self-hosted-runner:
+  labels:
+    - build
+    - CUDA
+    - Yocto
+    - imx8mp
+    - imx8mp-evk
+    - imx8mp-evk-6.12.34-2.1.0
+    - imx8mpevk
+    - nxp-imx8mp-latest
+    - nxp-imx8mp-6.12.34-2.1.0

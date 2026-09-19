@@ -1,0 +1,154 @@
+name: yocto-build
+
+on:
+  workflow_call:
+    inputs:
+      machine:
+        description: Yocto MACHINE, e.g. imx8mp-lpddr4-evk
+        type: string
+        required: true
+      image:
+        description: bitbake target, e.g. edgefirst-image
+        type: string
+        required: true
+      manifest-branch:
+        description: Manifest branch for repo init, e.g. scarthgap
+        type: string
+        required: true
+      timeout-minutes:
+        description: bitbake is hours, not minutes.
+        type: number
+        default: 480
+      artifacts:
+        description: Paths to upload after a successful build.
+        type: string
+        default: tmp/deploy/images/**
+      pre-command:
+        description: Caller setup. Passed through env, never interpolated.
+        type: string
+        default: ""
+      build-script:
+        description: >-
+          Path to the caller's build script, relative to the repository root.
+          Receives MACHINE, IMAGE, MANIFEST_BRANCH, DL_DIR and SSTATE_DIR
+          through the environment and must build into tmp/ under
+          $GITHUB_WORKSPACE for the `artifacts` default and the prune step to
+          find anything. Passed through env, never interpolated.
+        type: string
+        default: ci/yocto-build.sh
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: Trust check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      # Fail closed. This refuses any event it cannot positively vouch for,
+      # rather than enumerating the events under which to check -- an
+      # allowlist of "when to look" reopens on every new event type, and
+      # pull_request_target and workflow_run are both associated with fork
+      # contributions and run with the base repo's token and secrets. No
+      # checkout here takes a ref:, so today that reaches self-hosted
+      # capacity rather than fork code, but the guard is defence in depth
+      # for the day one does. There is no hosted Yocto runner to downgrade
+      # to regardless, so refusal is the only option. merge_group is
+      # trusted on the assumption that branch protection gates the queue on
+      # approval and required checks.
+      #
+      # This is its own job, on a hosted runner, checked before `build`
+      # rather than as `build`'s first step. GitHub schedules a job onto its
+      # runner the moment the job starts, not when a step inside it gets
+      # around to evaluating -- a guard step on the fleet job would already
+      # have occupied mltrain-04, a machine shared with production Jenkins,
+      # for the event it goes on to refuse.
+      - name: Refuse untrusted trigger events
+        env:
+          EVENT: ${{ github.event_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          case "$EVENT" in
+            push|workflow_dispatch|schedule|merge_group) ;;
+            pull_request)
+              if [[ "$HEAD_REPO" != "$REPO" ]]; then
+                echo "::error::yocto-build does not run for fork pull requests ($HEAD_REPO)"
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::yocto-build refuses the untrusted event '$EVENT'. Add it to the trusted list only after confirming it cannot carry fork-authored code."
+              exit 1
+              ;;
+          esac
+
+  build:
+    name: Yocto ${{ inputs.machine }} ${{ inputs.image }}
+    needs: gate
+    runs-on: [self-hosted, Linux, X64, Yocto]
+    timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
+    # Two concurrent bitbake runs contend on sstate locks and RAM and will
+    # fail each other. Cancellation is not used: a half-finished bitbake
+    # leaves sstate the next build has to recover from. This group is scoped
+    # to the calling repository and keyed on MACHINE, so it only serialises
+    # same-MACHINE builds from the same caller -- what actually keeps two
+    # jobs off this physical box is the one-runner-per-device policy.
+    #
+    # Accepted risk: this group coordinates GitHub Actions jobs only. A
+    # Jenkins bitbake on mltrain-04 is invisible to it and can still overlap
+    # a GitHub-triggered one, with the same RAM and sstate contention this
+    # group exists to prevent. The mitigation is completing the Yocto
+    # migration off Jenkins, not a lock -- there is no cross-scheduler lock
+    # available.
+    concurrency:
+      group: yocto-${{ inputs.machine }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Caller pre-command
+        if: ${{ inputs.pre-command != '' }}
+        env:
+          PRE_COMMAND: ${{ inputs.pre-command }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
+
+      # DL_DIR and SSTATE_DIR live outside the workspace on the machine so the
+      # runner cannot delete them; a cold rebuild is hours.
+      - name: bitbake
+        env:
+          MACHINE: ${{ inputs.machine }}
+          IMAGE: ${{ inputs.image }}
+          MANIFEST_BRANCH: ${{ inputs.manifest-branch }}
+          BUILD_SCRIPT: ${{ inputs.build-script }}
+        run: |
+          set -euo pipefail
+          export DL_DIR="${DL_DIR:-/var/cache/yocto/downloads}"
+          export SSTATE_DIR="${SSTATE_DIR:-/var/cache/yocto/sstate}"
+          echo "::notice::building $IMAGE for $MACHINE from $MANIFEST_BRANCH"
+          bash "$BUILD_SCRIPT"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: yocto-${{ inputs.machine }}-${{ inputs.image }}
+          path: ${{ inputs.artifacts }}
+          if-no-files-found: error
+          retention-days: 30
+
+      # A persistent runner accumulates _work forever and Yocto tmp/ is tens
+      # of GB. Runs on failure too, when the directory is largest.
+      - name: Prune tmp
+        if: always()
+        run: rm -rf tmp

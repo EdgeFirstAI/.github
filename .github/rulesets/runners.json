@@ -1,0 +1,48 @@
+{
+  "org": "EdgeFirstAI",
+  "groups": {
+    "boards": {
+      "id": 3,
+      "visibility": "selected",
+      "repositories": ["hal"],
+      "runners": ["imx8mpevk-04", "imx8mpevk-08"]
+    },
+    "build-x86": {
+      "id": 4,
+      "visibility": "selected",
+      "repositories": ["hal", "ara2-rs"],
+      "runners": ["ubuntubuild"]
+    },
+    "gpu-cuda": {
+      "id": 5,
+      "visibility": "selected",
+      "repositories": ["hal", "ara2-rs"],
+      "runners": ["mltrain-02", "mltrain-03"]
+    },
+    "windows": {
+      "id": 7,
+      "visibility": "selected",
+      "repositories": ["hal", "ara2-rs"],
+      "runners": ["JENKINSW10BUILD"]
+    },
+    "yocto": {
+      "id": 9,
+      "visibility": "selected",
+      "repositories": ["yocto"],
+      "runners": ["mltrain-04"]
+    }
+  },
+  "unmanaged": {
+    "mac": { "id": 6, "reason": "no macOS machine is provisioned" },
+    "larger-runners": { "id": 8, "reason": "holds the billed runners whose restriction is the CI epic's closing ticket" }
+  },
+  "labels": {
+    "ubuntubuild": ["build"],
+    "JENKINSW10BUILD": ["build"],
+    "mltrain-02": ["CUDA"],
+    "mltrain-03": ["CUDA"],
+    "mltrain-04": ["Yocto"],
+    "imx8mpevk-08": ["imx8mp", "imx8mp-evk", "imx8mp-evk-6.12.34-2.1.0", "nxp-imx8mp-latest", "nxp-imx8mp-6.12.34-2.1.0"],
+    "imx8mpevk-04": ["imx8mp", "imx8mp-evk", "imx8mpevk"]
+  }
+}

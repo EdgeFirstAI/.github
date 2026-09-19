@@ -5,3 +5,4 @@ __pycache__/
 sbom/
 dist/
 .DS_Store
+.superpowers/

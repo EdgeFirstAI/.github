@@ -16,15 +16,16 @@ The organisation profile README lives in [`profile/`](profile/README.md).
 | `.github/workflows/cmake-quick.yml` | ccache + ctest |
 | `.github/workflows/nightly-gate.yml` | skip nightly when `main` is unchanged |
 | `.github/workflows/advisories.yml` | `cargo audit`, run ungated so a new advisory is still reported |
+| `.github/workflows/yocto-build.yml` | Yocto bitbake on the dedicated builder; fork-refusing and serialised |
 | `.github/workflows/sbom.yml` | `dependency` or `full` scancode |
 | `.github/workflows/tag-release.yml` | `release/X.Y.Z[-rcN]` merge → annotated `vX.Y.Z[-rcN]` |
 | `.github/workflows/release-rust.yml` | release-branch side: version consistency, changelog section, `cargo package`, SBOM |
 | `.github/workflows/release-wheels.yml` | release-branch side: maturin wheels for a PyO3 binding, built on the `maturin-build` action |
 | `.github/workflows/publish-rust.yml` | tag side: resolve the build, verify the tree, crates OIDC, GitHub Release |
 | `.github/actions/` | `setup-rust`, `setup-python-uv`, `sbom-tools`, `board-run`, `resolve-release-build`, `maturin-build`, `publish-pypi`, `workflow-lint` |
-| `.github/scripts/` | license policy, the SHA-pin check, the workspace version check (single copy each) |
+| `.github/scripts/` | license policy, the SHA-pin check, the workspace version check, lane resolution, the runner-fleet converger (single copy each) |
 | `.github/rulesets/` | `protect-main` (reviews; org-admin PR bypass), `protect-main-ci` (ci-gate, no bypass), `protect-release-tags` |
-| `.github/runners/` | ephemeral fleet provision scripts |
+| `.github/rulesets/runners.json` | declarative runner groups, access lists and labels |
 | `templates/` | per-repo `ci.yml`, `nightly.yml`, `release.yml`, `tag-release.yml`, `publish.yml`, plus `CODEOWNERS` and `dependabot.yml` |
 
 ## Pinning
@@ -45,9 +46,11 @@ Internally each shared workflow checks itself out to reach its composite actions
 
 `ci-gate` is the only required check. See [`.github/copilot-instructions.md`](.github/copilot-instructions.md).
 
-## Runner classes
+## Runner classes and capability lanes
 
-Per-lane input `runner-class-linux` (and arm/mac/windows): `hosted` (default), `fleet`, or `larger`. Billed GitHub larger runners are an exception recorded in the caller and restricted by the `larger-runners` group.
+`runner-class-linux` (and `-linux-arm`, `-macos`, `-windows`) selects a **cost** tier: `hosted` (default, free), `fleet` (our metal), or `larger` (billed). Capability is a separate axis: `lanes` is a comma-separated set of `host`, `hardware` and `gpu`, where `all` means `host,hardware` and never implies `gpu`. Board hardware is named through `boards:`.
+
+The billed larger runners currently sit in the `Default` group, so they are **not** restricted to particular repositories. Restricting them is the closing ticket of the CI epic. See [`.github/rulesets/runner-groups.md`](.github/rulesets/runner-groups.md).
 
 ## Release chain
 
@@ -78,6 +81,6 @@ gh auth refresh -h github.com -s admin:org
 bash .github/rulesets/apply.sh
 ```
 
-Create runner groups from `.github/rulesets/runner-groups.md`. Register machines with `.github/runners/provision-*.sh` (EDGEAI-1577).
+Runner groups, access lists and labels are declared in `.github/rulesets/runners.json` and applied with `.github/scripts/apply_runners.py` (`--dry-run` first). Machines are installed with the stock GitHub runner installer and registered as services with `svc.sh`; the procedure lives in Confluence.
 
 Set organisation Copilot custom instructions to `.github/copilot-instructions.md`.

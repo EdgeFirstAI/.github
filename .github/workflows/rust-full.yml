@@ -4,7 +4,10 @@ on:
   workflow_call:
     inputs:
       lanes:
-        description: all, hardware, or host
+        description: >-
+          Comma-separated lane set: host, hardware, gpu. `all` means
+          host,hardware and never implies gpu -- every migrated repository
+          passes `all`, and the GPU lane is opt-in capacity.
         type: string
         default: all
       boards:
@@ -78,6 +81,17 @@ on:
         description: Board-only setup. Falls back to pre-command when empty.
         type: string
         default: ""
+      gpu-args:
+        description: >-
+          Extra arguments appended to the GPU lane's cargo nextest run, in
+          the style of nextest-args (e.g. `--features cuda`). Not a
+          free-form command. Empty skips the lane entirely.
+        type: string
+        default: ""
+      gpu-pre-command:
+        description: GPU-only setup. Falls back to pre-command when empty.
+        type: string
+        default: ""
       hack-args:
         description: >-
           Arguments for the nightly `cargo hack check` feature-combination
@@ -133,11 +147,13 @@ jobs:
       linux_arm: ${{ steps.map.outputs.linux_arm }}
       macos: ${{ steps.map.outputs.macos }}
       windows: ${{ steps.map.outputs.windows }}
+      gpu: ${{ steps.map.outputs.gpu }}
       do_host: ${{ steps.map.outputs.do_host }}
       do_arm: ${{ steps.map.outputs.do_arm }}
       do_macos: ${{ steps.map.outputs.do_macos }}
       do_windows: ${{ steps.map.outputs.do_windows }}
       do_hardware: ${{ steps.map.outputs.do_hardware }}
+      do_gpu: ${{ steps.map.outputs.do_gpu }}
       do_nightly: ${{ steps.map.outputs.do_nightly }}
       board_matrix: ${{ steps.map.outputs.board_matrix }}
       has_sonar: ${{ steps.sonar.outputs.present }}
@@ -158,6 +174,13 @@ jobs:
           [[ -f sonar-project.properties ]] && present=true
           echo "present=$present" >> "$GITHUB_OUTPUT"
 
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .ef-ci
+          persist-credentials: false
+
       - id: map
         env:
           LANES: ${{ inputs.lanes }}
@@ -169,101 +192,11 @@ jobs:
           SKIP_MAC: ${{ inputs.skip-macos }}
           SKIP_WIN: ${{ inputs.skip-windows }}
           NIGHTLY: ${{ inputs.nightly }}
+          GPU_ARGS: ${{ inputs.gpu-args }}
           PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           REPO: ${{ github.repository }}
           EVENT: ${{ github.event_name }}
-        run: |
-          set -euo pipefail
-          map_class() {
-            local class="$1" kind="$2"
-            case "$class" in
-              hosted)
-                case "$kind" in
-                  linux) echo '"ubuntu-24.04"' ;;
-                  linux-arm) echo '"ubuntu-24.04-arm"' ;;
-                  macos) echo '"macos-latest"' ;;
-                  windows) echo '"windows-latest"' ;;
-                esac
-                ;;
-              fleet)
-                case "$kind" in
-                  linux) echo '["self-hosted","linux","x64","build"]' ;;
-                  linux-arm) echo '["self-hosted","linux","arm64","build"]' ;;
-                  macos) echo '["self-hosted","macos","arm64","metal"]' ;;
-                  windows) echo '["self-hosted","windows","x64","d3d11"]' ;;
-                esac
-                ;;
-              larger)
-                # 24.04 to match the hosted class; the org provisions both.
-                case "$kind" in
-                  linux) echo '"ubuntu-24.04-xlarge"' ;;
-                  linux-arm) echo '"ubuntu-24.04-arm-xlarge"' ;;
-                  macos) echo '"macos-latest-xlarge"' ;;
-                  # Requires an org-provisioned Windows larger runner; without
-                  # one this label queues until the job times out.
-                  windows) echo '"windows-latest-8-cores"' ;;
-                esac
-                ;;
-              *)
-                echo "::error::unknown runner-class '$class' (use hosted|fleet|larger)" >&2
-                exit 1
-                ;;
-            esac
-          }
-
-          do_host=false
-          do_hardware=false
-          case "$LANES" in
-            all) do_host=true; do_hardware=true ;;
-            host) do_host=true ;;
-            hardware) do_hardware=true ;;
-            *) echo "::error::lanes must be all|host|hardware" >&2; exit 1 ;;
-          esac
-
-          same_repo=false
-          if [[ "$EVENT" != pull_request || "$PR_HEAD_REPO" == "$REPO" ]]; then
-            same_repo=true
-          fi
-          if [[ "$same_repo" != true ]]; then
-            echo "::notice::fork PR: forcing hosted runners (fleet/larger are same-repo only)"
-            CLASS_LINUX=hosted
-            CLASS_ARM=hosted
-            CLASS_MAC=hosted
-            CLASS_WIN=hosted
-          fi
-
-          board_matrix='[]'
-          if [[ -n "${BOARDS// /}" && "$do_hardware" == true && "$same_repo" == true ]]; then
-            board_matrix="$(python3 -c 'import json,os; boards=[b.strip() for b in os.environ["BOARDS"].split(",") if b.strip()]; print(json.dumps([{"runner": b} for b in boards]))')"
-          else
-            do_hardware=false
-          fi
-
-          do_arm=false
-          if [[ "$do_host" == true || "$do_hardware" == true ]]; then
-            do_arm=true
-          fi
-          do_macos=false
-          do_windows=false
-          if [[ "$do_host" == true && "$SKIP_MAC" != true ]]; then do_macos=true; fi
-          if [[ "$do_host" == true && "$SKIP_WIN" != true ]]; then do_windows=true; fi
-
-          {
-            echo "linux=$(map_class "$CLASS_LINUX" linux)"
-            echo "linux_arm=$(map_class "$CLASS_ARM" linux-arm)"
-            echo "macos=$(map_class "$CLASS_MAC" macos)"
-            echo "windows=$(map_class "$CLASS_WIN" windows)"
-            echo "do_host=$do_host"
-            echo "do_arm=$do_arm"
-            echo "do_macos=$do_macos"
-            echo "do_windows=$do_windows"
-            echo "do_hardware=$do_hardware"
-            echo "do_nightly=$NIGHTLY"
-            echo "same_repo=$same_repo"
-            echo "board_matrix<<EOF"
-            echo "$board_matrix"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+        run: python3 .ef-ci/.github/scripts/resolve_lanes.py
 
   linux:
     name: Full linux
@@ -353,6 +286,90 @@ jobs:
         with:
           name: coverage-linux
           path: coverage-linux.lcov
+          if-no-files-found: error
+          retention-days: 7
+
+  gpu:
+    name: Full gpu
+    needs: setup
+    if: needs.setup.outputs.do_gpu == 'true' && needs.setup.outputs.same_repo == 'true'
+    runs-on: ${{ fromJSON(needs.setup.outputs.gpu) }}
+    timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
+    permissions:
+      contents: read
+    steps:
+      # git-lfs is a provisioning responsibility on the CUDA hosts, not
+      # something CI installs: the runner user has no passwordless sudo
+      # there. Fail with the remedy rather than with a sudo prompt or a
+      # checkout error three steps later.
+      - name: Require git-lfs
+        if: ${{ inputs.lfs }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v git-lfs >/dev/null 2>&1; then
+            echo "::error::git-lfs is not installed on this runner. The GPU lane requires it preinstalled on the CUDA hosts; it is not installed by CI."
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          lfs: ${{ inputs.lfs }}
+          fetch-depth: 0
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .ef-ci
+          persist-credentials: false
+
+      - name: Caller environment
+        if: ${{ inputs.env != '' }}
+        env:
+          CALLER_ENV: ${{ inputs.env }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r line; do
+            [[ -z "${line// }" ]] && continue
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            if [[ ! "$line" =~ ^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*= ]]; then
+              echo "::error::env line is not KEY=VALUE: $line"
+              exit 1
+            fi
+            echo "${line#"${line%%[![:space:]]*}"}" >> "$GITHUB_ENV"
+          done <<< "$CALLER_ENV"
+
+      - name: Caller pre-command
+        if: ${{ inputs.gpu-pre-command != '' || inputs.pre-command != '' }}
+        env:
+          PRE_COMMAND: ${{ inputs.gpu-pre-command != '' && inputs.gpu-pre-command || inputs.pre-command }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
+
+      - uses: ./.ef-ci/.github/actions/setup-rust
+        with:
+          components: llvm-tools-preview
+          tools: nextest,cargo-llvm-cov
+          cache-key: gpu-x86_64
+
+      - name: Tests with coverage
+        env:
+          PROFILE_ARG: ${{ hashFiles('.config/nextest.toml') != '' && '--profile ci' || '' }}
+          NEXTEST_ARGS: ${{ inputs.nextest-args }}
+          GPU_ARGS: ${{ inputs.gpu-args }}
+        run: |
+          # shellcheck disable=SC2086  # all three are cargo argument lists and must split
+          cargo llvm-cov nextest --lcov --output-path coverage-gpu.lcov \
+            $NEXTEST_ARGS $GPU_ARGS $PROFILE_ARG
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: coverage-gpu
+          path: coverage-gpu.lcov
           if-no-files-found: error
           retention-days: 7
 
@@ -710,9 +727,12 @@ jobs:
     if: needs.setup.outputs.do_hardware == 'true' && needs.setup.outputs.same_repo == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ fromJSON(inputs.board-timeout-minutes) }}
-    concurrency:
-      group: board-${{ matrix.runner }}
-      cancel-in-progress: false
+    # No concurrency group: the runner application already serialises one job
+    # per installed instance, and one instance per device is policy. A group
+    # keyed on the label would instead cap throughput across every device
+    # answering that label -- `boards: imx8mp` matches every i.MX 8M Plus
+    # carrier. Per-device grouping is inexpressible: concurrency is evaluated
+    # before a runner is selected, so runner.name is not in scope.
     strategy:
       fail-fast: false
       matrix:
@@ -857,7 +877,7 @@ jobs:
   scancode:
     name: Full SBOM
     needs: setup
-    if: ${{ inputs.scancode && inputs.lanes != 'hardware' }}
+    if: ${{ inputs.scancode && (needs.setup.outputs.do_host == 'true' || needs.setup.outputs.do_gpu == 'true') }}
     uses: ./.github/workflows/sbom.yml
     with:
       mode: full
@@ -983,7 +1003,7 @@ jobs:
 
   sonar:
     name: SonarCloud
-    needs: [setup, linux, linux-arm, macos, windows, process-hardware-coverage]
+    needs: [setup, linux, linux-arm, macos, windows, process-hardware-coverage, gpu]
     # Without sonar-project.properties the scan step was skipped but the job
     # still booted a runner, checked out, downloaded every coverage artifact
     # and merged lcov. Callers with no SonarCloud project paid that on every
