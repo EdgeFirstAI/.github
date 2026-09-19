@@ -29,6 +29,9 @@ run() {
 say "Phase A: custom labels"
 labels_spec="$(jq -r '.labels | to_entries[] | "\(.key)\t\(.value | join(","))"' "$SPEC")"
 while IFS=$'\t' read -r name labels; do
+  # A here-string built from an empty capture still yields one blank line,
+  # so an empty .labels map would otherwise reach the id lookup with no name.
+  [[ -z "$name" ]] && continue
   id="$(gh api "orgs/$ORG/actions/runners" --paginate \
         --jq ".runners[] | select(.name==\"$name\") | .id")"
   if [[ -z "$id" ]]; then
