@@ -298,20 +298,19 @@ jobs:
     permissions:
       contents: read
     steps:
-      # This lane runs on a self-hosted, persistent, Jenkins-era ML box, not
-      # an org-provisioned larger runner image -- git-lfs may be absent, and
-      # fixing that needs passwordless sudo for the CI user on that machine.
-      - name: Ensure git-lfs
-        if: ${{ inputs.lfs && runner.os == 'Linux' }}
+      # git-lfs is a provisioning responsibility on the CUDA hosts, not
+      # something CI installs: the runner user has no passwordless sudo
+      # there. Fail with the remedy rather than with a sudo prompt or a
+      # checkout error three steps later.
+      - name: Require git-lfs
+        if: ${{ inputs.lfs }}
         shell: bash
         run: |
           set -euo pipefail
-          if command -v git-lfs >/dev/null 2>&1; then
-            exit 0
+          if ! command -v git-lfs >/dev/null 2>&1; then
+            echo "::error::git-lfs is not installed on this runner. The GPU lane requires it preinstalled on the CUDA hosts; it is not installed by CI."
+            exit 1
           fi
-          echo "::notice::git-lfs missing on this runner image; installing"
-          sudo apt-get update
-          sudo apt-get install -y git-lfs
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:

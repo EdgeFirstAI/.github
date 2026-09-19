@@ -22,7 +22,11 @@ Every machine is a dedicated box running a persistent, service-installed runner 
 | `mltrain-03` | `gpu-cuda` | `self-hosted,Linux,X64,CUDA` | GPU-only |
 | `mltrain-04` | `yocto` | `self-hosted,Linux,X64,Yocto` | Shared with Jenkins during the Yocto migration |
 | `imx8mpevk-08` | `boards` | `…,ARM64,imx8mp,imx8mp-evk,imx8mp-evk-6.12.34-2.1.0` | Plus legacy `nxp-imx8mp-latest` and `nxp-imx8mp-6.12.34-2.1.0` |
-| `imx8mpevk-04` | `boards` | `…,ARM64,imx8mp,imx8mp-evk,nxp-imx8mp-latest` | Plus legacy `imx8mpevk` |
+| `imx8mpevk-04` | `boards` | `…,ARM64,imx8mp,imx8mp-evk` | Plus legacy `imx8mpevk`. Does not carry `nxp-imx8mp-latest` |
+
+`mltrain-02` and `mltrain-03` must have `git-lfs` preinstalled: the CI user has no passwordless sudo on either box, so the GPU lane requires it rather than installing it.
+
+`imx8mpevk-04` is in `boards` and carries the family and identity labels, but not `nxp-imx8mp-latest` — the label `hal` actually targets — pending confirmation that it is provisioned identically to `imx8mpevk-08` (OpenCV, LFS testdata, eMMC headroom). Add it back in `runners.json` once that is confirmed.
 
 `mac` exists and is empty; no macOS machine is provisioned. The same is true of `linux-arm`: `resolve_lanes.py`'s `FLEET` tuple for it names a machine that does not exist, so `runner-class-linux-arm: fleet` queues until timeout, silently.
 
