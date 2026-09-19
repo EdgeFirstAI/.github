@@ -59,6 +59,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Custom labels are lowercase and hyphen-separated.** `CUDA` and `Yocto` become `cuda` and `yocto` across `runners.json`, `resolve_lanes.py`, `yocto-build.yml` and the docs. Actions label matching is case-insensitive, so this changes nothing at runtime; it exists so the fleet reads consistently as more labels are added.
 
+- **Runners are registered with no custom labels.** `config.sh --labels` makes a label agent-owned: the agent re-asserts it within seconds, so an API removal succeeds and then silently reverts. A label added later, only through the API, is API-owned and persists exactly as written. Registering with no labels puts every custom label a runner ever carries under the API, so `runners.json` stays authoritative permanently rather than racing the agent for it. `mltrain-02`, `mltrain-03` and `mltrain-04` predate the rule and still carry agent-owned `CUDA`/`Yocto`; they will be re-registered without labels and the converger will apply `cuda`/`yocto` afterwards.
+
 ### Removed
 
 - **The board lane's `concurrency` group.** It keyed on the label rather than the device, so it capped throughput across every machine answering that label while guaranteeing nothing the runner did not already guarantee — a runner executes one job at a time per installed instance. With family labels, `boards: imx8mp` will match every i.MX 8M Plus carrier, and the group would have serialised all of them. Per-device grouping is inexpressible, since concurrency is evaluated before a runner is selected. One runner instance per device is now stated policy and is the guarantee that matters.

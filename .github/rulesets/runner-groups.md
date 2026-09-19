@@ -10,6 +10,16 @@ gh auth refresh -h github.com -s admin:org
 .github/rulesets/apply-runners.sh             # apply
 ```
 
+## Registering a runner
+
+**Register with no custom labels.** Do not pass `--labels` to `config.sh` — let the agent assert only its defaults (`self-hosted` plus OS and architecture). Every custom label is added afterwards through the API, by `apply-runners.sh` from `runners.json`.
+
+This keeps two label classes from ever overlapping. A label passed to `config.sh --labels` is agent-owned: the agent re-asserts it within seconds, so an API `DELETE` against it succeeds and then silently reverts. A label added later, only through the API, is API-owned and has no agent-side assertion to compete with, so it persists exactly as written. Registering with no labels means every custom label a runner ever carries is API-owned, and `runners.json` stays authoritative permanently instead of racing the agent for it.
+
+`mltrain-02`, `mltrain-03` and `mltrain-04` predate this rule and still carry agent-owned `CUDA`/`Yocto`. They will be re-registered with no labels; the converger then applies `cuda`/`yocto` through the API as usual.
+
+**Never run `apply-runners.sh` against an agent-owned label.** The `DELETE` succeeds, the agent puts the label straight back, and every run of the script leaves a window in which the lane that label names matches nothing.
+
 ## The fleet
 
 Every machine is a dedicated box running a persistent, service-installed runner (`svc.sh`). **One runner instance per device is policy**, and with no workflow-level concurrency group on the board lane it is the only guarantee that a physical board runs one job at a time. Ephemeral runners are a future consideration, most likely a k8s cluster.
