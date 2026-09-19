@@ -728,9 +728,12 @@ jobs:
     if: needs.setup.outputs.do_hardware == 'true' && needs.setup.outputs.same_repo == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ fromJSON(inputs.board-timeout-minutes) }}
-    concurrency:
-      group: board-${{ matrix.runner }}
-      cancel-in-progress: false
+    # No concurrency group: the runner application already serialises one job
+    # per installed instance, and one instance per device is policy. A group
+    # keyed on the label would instead cap throughput across every device
+    # answering that label -- `boards: imx8mp` matches every i.MX 8M Plus
+    # carrier. Per-device grouping is inexpressible: concurrency is evaluated
+    # before a runner is selected, so runner.name is not in scope.
     strategy:
       fail-fast: false
       matrix:
