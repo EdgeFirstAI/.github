@@ -59,7 +59,7 @@ Worked examples:
 
 - An `imx8mp-frdm` fitted with an ara240 generates `imx8mp`, `imx8mp-frdm`, `ara240` and `imx8mp-frdm-ara240`, plus a pinned-BSP label once the BSP is known.
 - An `rpi5` fitted with a Hailo generates `rpi5`, `hailo8l` and `rpi5-hailo8l` — family and identity coincide, since the family name is the whole board, so there is no separate identity label to duplicate.
-- A non-board service runner (a build box, a CUDA host, the Yocto builder) carries capability labels only: `build`, `cuda`, `yocto`.
+- A non-board service runner (a build box, a CUDA host, the Yocto builder) carries capability labels only: `build`, `CUDA`, `Yocto`.
 
 Board identities in use, SoC-prefixed only where the board name alone is ambiguous across SoCs:
 
@@ -77,7 +77,7 @@ imx8mp-verdin    imx95-verdin                  imx8mp-frdm-ara240
 
 **The bare identity label matches any board of that identity regardless of BSP** — boards of the same identity may deliberately run different BSPs, so a caller using the bare label is robust to that variance by design. A pinned label targets one specific BSP by appending its numeric version: `imx8mp-evk-6.12.34-2.1.0`. Version tails are numeric so they never read as an equipment suffix.
 
-**The compound equipment label exists only when the equipment is optional for that identity.** `rpi5-hailo8l` earns its place because some Pi 5s carry the Hailo HAT and some do not, so a caller can ask for either the family or specifically the Hailo-equipped ones. A Jetson's CUDA is intrinsic to the board, not optional equipment, so `orin-nano` plus the bare `cuda` label is enough and `orin-nano-cuda` would be a compound that never narrows anything.
+**The compound equipment label exists only when the equipment is optional for that identity.** `rpi5-hailo8l` earns its place because some Pi 5s carry the Hailo HAT and some do not, so a caller can ask for either the family or specifically the Hailo-equipped ones. A Jetson's CUDA is intrinsic to the board, not optional equipment, so `orin-nano` plus the bare `CUDA` label is enough and `orin-nano-cuda` would be a compound that never narrows anything.
 
 Legacy labels (`nxp-imx8mp-latest`, `imx8mpevk`) are retained until the epic wraps up, because `hal` pins the shared workflow at a SHA and names `nxp-imx8mp-latest` directly. They predate this convention and are not remade to fit it.
 

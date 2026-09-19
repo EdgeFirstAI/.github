@@ -38,7 +38,7 @@ LARGER = {
 
 # The GPU lane is self-hosted by definition: there is no hosted or billed
 # CUDA equivalent to choose between, so no runner-class input governs it.
-GPU_RUNNER = ["self-hosted", "linux", "x64", "cuda"]
+GPU_RUNNER = ["self-hosted", "linux", "x64", "CUDA"]
 
 # Events that cannot carry a fork's code. Anything not named here is
 # untrusted: an allowlist of events under which to *check* reopens on
@@ -220,7 +220,7 @@ def _self_test() -> int:
 
     r = resolve({**base, "LANES": "all,gpu", "GPU_ARGS": "--features cuda"})
     check("gpu enabled", r["do_gpu"], True)
-    check("gpu runner", r["gpu"], ["self-hosted", "linux", "x64", "cuda"])
+    check("gpu runner", r["gpu"], ["self-hosted", "linux", "x64", "CUDA"])
 
     # A fork PR loses every self-hosted lane and every non-hosted class.
     fork = {**base, "LANES": "all,gpu", "GPU_ARGS": "--features cuda",
