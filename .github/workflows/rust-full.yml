@@ -289,6 +289,74 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  gpu:
+    name: Full gpu
+    needs: setup
+    if: needs.setup.outputs.do_gpu == 'true'
+    runs-on: ${{ fromJSON(needs.setup.outputs.gpu) }}
+    timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          lfs: ${{ inputs.lfs }}
+          fetch-depth: 0
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .ef-ci
+          persist-credentials: false
+
+      - name: Caller environment
+        if: ${{ inputs.env != '' }}
+        env:
+          CALLER_ENV: ${{ inputs.env }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r line; do
+            [[ -z "${line// }" ]] && continue
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            if [[ ! "$line" =~ ^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*= ]]; then
+              echo "::error::env line is not KEY=VALUE: $line"
+              exit 1
+            fi
+            echo "${line#"${line%%[![:space:]]*}"}" >> "$GITHUB_ENV"
+          done <<< "$CALLER_ENV"
+
+      - name: Caller pre-command
+        if: ${{ inputs.gpu-pre-command != '' || inputs.pre-command != '' }}
+        env:
+          PRE_COMMAND: ${{ inputs.gpu-pre-command != '' && inputs.gpu-pre-command || inputs.pre-command }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
+
+      - uses: ./.ef-ci/.github/actions/setup-rust
+        with:
+          components: llvm-tools-preview
+          tools: nextest,cargo-llvm-cov
+          cache-key: gpu-x86_64
+
+      - name: Tests with coverage
+        env:
+          PROFILE_ARG: ${{ hashFiles('.config/nextest.toml') != '' && '--profile ci' || '' }}
+        run: |
+          # shellcheck disable=SC2086  # PROFILE_ARG carries "--profile ci" and must split
+          cargo llvm-cov nextest --lcov --output-path coverage-gpu.lcov \
+            ${{ inputs.nextest-args }} ${{ inputs.gpu-args }} $PROFILE_ARG
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: coverage-gpu
+          path: coverage-gpu.lcov
+          if-no-files-found: error
+          retention-days: 7
+
   linux-arm:
     name: Full linux-arm
     needs: setup
