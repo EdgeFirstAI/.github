@@ -60,10 +60,14 @@ jobs:
       # Fail closed. This refuses any event it cannot positively vouch for,
       # rather than enumerating the events under which to check -- an
       # allowlist of "when to look" reopens on every new event type, and
-      # pull_request_target and workflow_run both run a fork's head. There is
-      # no hosted Yocto runner to downgrade to, so refusal is the only option.
-      # merge_group is trusted on the assumption that branch protection gates
-      # the queue on approval and required checks.
+      # pull_request_target and workflow_run are both associated with fork
+      # contributions and run with the base repo's token and secrets. No
+      # checkout here takes a ref:, so today that reaches self-hosted
+      # capacity rather than fork code, but the guard is defence in depth
+      # for the day one does. There is no hosted Yocto runner to downgrade
+      # to regardless, so refusal is the only option. merge_group is
+      # trusted on the assumption that branch protection gates the queue on
+      # approval and required checks.
       - name: Refuse untrusted trigger events
         env:
           EVENT: ${{ github.event_name }}
