@@ -359,10 +359,12 @@ jobs:
       - name: Tests with coverage
         env:
           PROFILE_ARG: ${{ hashFiles('.config/nextest.toml') != '' && '--profile ci' || '' }}
+          NEXTEST_ARGS: ${{ inputs.nextest-args }}
+          GPU_ARGS: ${{ inputs.gpu-args }}
         run: |
-          # shellcheck disable=SC2086  # PROFILE_ARG carries "--profile ci" and must split
+          # shellcheck disable=SC2086  # all three are cargo argument lists and must split
           cargo llvm-cov nextest --lcov --output-path coverage-gpu.lcov \
-            ${{ inputs.nextest-args }} ${{ inputs.gpu-args }} $PROFILE_ARG
+            $NEXTEST_ARGS $GPU_ARGS $PROFILE_ARG
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
@@ -875,7 +877,7 @@ jobs:
   scancode:
     name: Full SBOM
     needs: setup
-    if: ${{ inputs.scancode && needs.setup.outputs.do_host == 'true' }}
+    if: ${{ inputs.scancode && (needs.setup.outputs.do_host == 'true' || needs.setup.outputs.do_gpu == 'true') }}
     uses: ./.github/workflows/sbom.yml
     with:
       mode: full

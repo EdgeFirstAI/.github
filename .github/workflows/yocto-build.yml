@@ -41,19 +41,10 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    name: Yocto ${{ inputs.machine }} ${{ inputs.image }}
-    runs-on: [self-hosted, Linux, X64, Yocto]
-    timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
-    # Two concurrent bitbake runs contend on sstate locks and RAM and will
-    # fail each other. Cancellation is not used: a half-finished bitbake
-    # leaves sstate the next build has to recover from. This group is scoped
-    # to the calling repository and keyed on MACHINE, so it only serialises
-    # same-MACHINE builds from the same caller -- what actually keeps two
-    # jobs off this physical box is the one-runner-per-device policy.
-    concurrency:
-      group: yocto-${{ inputs.machine }}
-      cancel-in-progress: false
+  gate:
+    name: Trust check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
@@ -68,6 +59,13 @@ jobs:
       # to regardless, so refusal is the only option. merge_group is
       # trusted on the assumption that branch protection gates the queue on
       # approval and required checks.
+      #
+      # This is its own job, on a hosted runner, checked before `build`
+      # rather than as `build`'s first step. GitHub schedules a job onto its
+      # runner the moment the job starts, not when a step inside it gets
+      # around to evaluating -- a guard step on the fleet job would already
+      # have occupied mltrain-04, a machine shared with production Jenkins,
+      # for the event it goes on to refuse.
       - name: Refuse untrusted trigger events
         env:
           EVENT: ${{ github.event_name }}
@@ -89,6 +87,23 @@ jobs:
               ;;
           esac
 
+  build:
+    name: Yocto ${{ inputs.machine }} ${{ inputs.image }}
+    needs: gate
+    runs-on: [self-hosted, Linux, X64, Yocto]
+    timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
+    # Two concurrent bitbake runs contend on sstate locks and RAM and will
+    # fail each other. Cancellation is not used: a half-finished bitbake
+    # leaves sstate the next build has to recover from. This group is scoped
+    # to the calling repository and keyed on MACHINE, so it only serialises
+    # same-MACHINE builds from the same caller -- what actually keeps two
+    # jobs off this physical box is the one-runner-per-device policy.
+    concurrency:
+      group: yocto-${{ inputs.machine }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 1
