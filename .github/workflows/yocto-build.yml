@@ -27,6 +27,15 @@ on:
         description: Caller setup. Passed through env, never interpolated.
         type: string
         default: ""
+      build-script:
+        description: >-
+          Path to the caller's build script, relative to the repository root.
+          Receives MACHINE, IMAGE, MANIFEST_BRANCH, DL_DIR and SSTATE_DIR
+          through the environment and must build into tmp/ under
+          $GITHUB_WORKSPACE for the `artifacts` default and the prune step to
+          find anything. Passed through env, never interpolated.
+        type: string
+        default: ci/yocto-build.sh
 
 permissions:
   contents: read
@@ -94,12 +103,13 @@ jobs:
           MACHINE: ${{ inputs.machine }}
           IMAGE: ${{ inputs.image }}
           MANIFEST_BRANCH: ${{ inputs.manifest-branch }}
+          BUILD_SCRIPT: ${{ inputs.build-script }}
         run: |
           set -euo pipefail
           export DL_DIR="${DL_DIR:-/var/cache/yocto/downloads}"
           export SSTATE_DIR="${SSTATE_DIR:-/var/cache/yocto/sstate}"
           echo "::notice::building $IMAGE for $MACHINE from $MANIFEST_BRANCH"
-          bash ./ci/yocto-build.sh
+          bash "$BUILD_SCRIPT"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:

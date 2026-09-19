@@ -13,7 +13,7 @@
     },
     "gpu-cuda": {
       "id": 5,
-      "repositories": [],
+      "repositories": ["hal", "ara2-rs"],
       "runners": ["mltrain-02", "mltrain-03"]
     },
     "windows": {
@@ -26,6 +26,10 @@
       "repositories": ["yocto"],
       "runners": ["mltrain-04"]
     }
+  },
+  "unmanaged": {
+    "mac": { "id": 6, "reason": "no macOS machine is provisioned" },
+    "larger-runners": { "id": 8, "reason": "holds the billed runners whose restriction is the CI epic's closing ticket" }
   },
   "labels": {
     "ubuntubuild": ["build"],

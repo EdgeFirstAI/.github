@@ -292,17 +292,15 @@ jobs:
   gpu:
     name: Full gpu
     needs: setup
-    if: needs.setup.outputs.do_gpu == 'true'
+    if: needs.setup.outputs.do_gpu == 'true' && needs.setup.outputs.same_repo == 'true'
     runs-on: ${{ fromJSON(needs.setup.outputs.gpu) }}
     timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
     permissions:
       contents: read
     steps:
-      # Org-provisioned larger runner images are more minimal than GitHub's
-      # standard ones: ubuntu-24.04-arm-xlarge ships without git-lfs, so an
-      # lfs checkout fails before any repo code exists to fix it. Install it
-      # before the checkout rather than pinning the lane back to a standard
-      # runner. Linux only; the hosted macOS and Windows images include it.
+      # This lane runs on a self-hosted, persistent, Jenkins-era ML box, not
+      # an org-provisioned larger runner image -- git-lfs may be absent, and
+      # fixing that needs passwordless sudo for the CI user on that machine.
       - name: Ensure git-lfs
         if: ${{ inputs.lfs && runner.os == 'Linux' }}
         shell: bash
@@ -878,7 +876,7 @@ jobs:
   scancode:
     name: Full SBOM
     needs: setup
-    if: ${{ inputs.scancode && inputs.lanes != 'hardware' }}
+    if: ${{ inputs.scancode && needs.setup.outputs.do_host == 'true' }}
     uses: ./.github/workflows/sbom.yml
     with:
       mode: full
@@ -1004,7 +1002,7 @@ jobs:
 
   sonar:
     name: SonarCloud
-    needs: [setup, linux, linux-arm, macos, windows, process-hardware-coverage]
+    needs: [setup, linux, linux-arm, macos, windows, process-hardware-coverage, gpu]
     # Without sonar-project.properties the scan step was skipped but the job
     # still booted a runner, checked out, downloaded every coverage artifact
     # and merged lcov. Callers with no SonarCloud project paid that on every

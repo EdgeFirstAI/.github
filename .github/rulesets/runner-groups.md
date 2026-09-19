@@ -24,7 +24,7 @@ Every machine is a dedicated box running a persistent, service-installed runner 
 | `imx8mpevk-08` | `boards` | `…,ARM64,imx8mp,imx8mp-evk,imx8mp-evk-6.12.34-2.1.0` | Plus legacy `nxp-imx8mp-latest` and `nxp-imx8mp-6.12.34-2.1.0` |
 | `imx8mpevk-04` | `boards` | `…,ARM64,imx8mp,imx8mp-evk,nxp-imx8mp-latest` | Plus legacy `imx8mpevk` |
 
-`mac` exists and is empty; no macOS machine is provisioned.
+`mac` exists and is empty; no macOS machine is provisioned. The same is true of `linux-arm`: `resolve_lanes.py`'s `FLEET` tuple for it names a machine that does not exist, so `runner-class-linux-arm: fleet` queues until timeout, silently.
 
 `larger-runners` lists `hal` and `packaging` but **contains no runners** — the billed GitHub larger runners are all still in `Default`, so the restriction this table once implied is not in force. Applying it is the closing ticket of the CI epic, once the main repositories have migrated onto internal runners; `ara2-rs` must be added to the list first, and `packaging` has not migrated at all.
 

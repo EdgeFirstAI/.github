@@ -5,6 +5,9 @@
 # Idempotent: every operation is additive or a full replacement, so a second
 # run is a no-op. --dry-run prints what would change and touches nothing.
 #
+# A group absent from .groups is not managed by this script -- see the
+# top-level "unmanaged" key in runners.json for what those are and why.
+#
 # Requires: gh with admin:org (gh auth refresh -h github.com -s admin:org)
 
 set -euo pipefail
