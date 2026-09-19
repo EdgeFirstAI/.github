@@ -85,7 +85,7 @@ def resolve(env):
     }
 
     same_repo = (
-        env.get("EVENT") != "pull_request"
+        env.get("EVENT") not in ("pull_request", "pull_request_target")
         or env.get("PR_HEAD_REPO") == env.get("REPO")
     )
 
@@ -226,6 +226,32 @@ def _self_test() -> int:
     check("arm follows host", resolve({**base, "LANES": "host"})["do_arm"], True)
     check("arm off for gpu only",
           resolve({**base, "LANES": "gpu", "GPU_ARGS": "-x"})["do_arm"], False)
+
+    # do_macos and do_windows are gated by host lane and skip flags.
+    r = resolve({**base, "LANES": "host"})
+    check("do_macos enabled", r["do_macos"], True)
+    check("do_windows enabled", r["do_windows"], True)
+    check("do_macos skipped", resolve({**base, "LANES": "host", "SKIP_MAC": "true"})["do_macos"], False)
+    check("do_windows skipped", resolve({**base, "LANES": "host", "SKIP_WIN": "true"})["do_windows"], False)
+    check("do_macos off when no host", resolve({**base, "LANES": "hardware"})["do_macos"], False)
+    check("do_windows off when no host", resolve({**base, "LANES": "hardware"})["do_windows"], False)
+
+    # Fork PR downgrade applies to all four runner classes, not just linux.
+    fork = {**base, "LANES": "all,gpu", "GPU_ARGS": "--features cuda",
+            "EVENT": "pull_request", "PR_HEAD_REPO": "someone/hal"}
+    r = resolve(fork)
+    check("fork linux downgraded", r["linux"], "ubuntu-24.04")
+    check("fork linux_arm downgraded", r["linux_arm"], "ubuntu-24.04-arm")
+    check("fork macos downgraded", r["macos"], "macos-latest")
+    check("fork windows downgraded", r["windows"], "windows-latest")
+
+    # pull_request_target from a fork repo is treated same as fork pull_request.
+    fork_target = {**base, "LANES": "all,gpu", "GPU_ARGS": "--features cuda",
+                   "EVENT": "pull_request_target", "PR_HEAD_REPO": "someone/hal"}
+    r = resolve(fork_target)
+    check("pull_request_target fork hardware off", r["do_hardware"], False)
+    check("pull_request_target fork gpu off", r["do_gpu"], False)
+    check("pull_request_target fork linux downgraded", r["linux"], "ubuntu-24.04")
 
     for f in failures:
         print(f"FAIL {f}", file=sys.stderr)
