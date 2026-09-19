@@ -21,7 +21,7 @@ Every machine is a dedicated box running a persistent, service-installed runner 
 | `mltrain-02` | `gpu-cuda` | `self-hosted,Linux,X64,CUDA` | GPU-only; answers `lanes: gpu` |
 | `mltrain-03` | `gpu-cuda` | `self-hosted,Linux,X64,CUDA` | GPU-only |
 | `mltrain-04` | `yocto` | `self-hosted,Linux,X64,Yocto` | Shared with Jenkins during the Yocto migration |
-| `imx8mpevk-08` | `boards` | `…,ARM64,imx8mp,imx8mp-evk,imx8mp-evk-6.12.34-2.1.0` | Plus legacy `nxp-imx8mp-*` |
+| `imx8mpevk-08` | `boards` | `…,ARM64,imx8mp,imx8mp-evk,imx8mp-evk-6.12.34-2.1.0` | Plus legacy `nxp-imx8mp-latest` and `nxp-imx8mp-6.12.34-2.1.0` |
 | `imx8mpevk-04` | `boards` | `…,ARM64,imx8mp,imx8mp-evk,nxp-imx8mp-latest` | Plus legacy `imx8mpevk` |
 
 `mac` exists and is empty; no macOS machine is provisioned.
