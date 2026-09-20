@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Repository access lists on the runner groups, and the ability to declare one.** Every organisation runner group is `visibility: all` — `boards`, `build-x86`, `gpu-cuda`, `mac`, `windows`, `larger-runners` and `yocto` — with no scoped repositories on any of them. `runners.json` has no `repositories` key and no way to express one, and `apply_runners.py` drops the `SetRepositories` operation, the repository-id lookups and the `repos_ok` reporting.
 
-  A repository access list bounds which repositories can reach a runner, never which events can: it cannot distinguish a fork's pull request from the base repository's own push, because both run under the base repository's name. With 85 repositories in the organisation, the lists were maintenance against a threat they could not address.
+  A repository access list bounds which repositories can reach a runner, never which events can: it cannot distinguish a fork's pull request from the base repository's own push, because both run under the base repository's name. Kept current against every repository in the organisation, the lists were standing maintenance against a threat they could not address.
 
   `runner-groups.md` now states what does bound a fork pull request, because this changelog previously implied `resolve_lanes.py` did. It hardens the shared workflows and cannot constrain a workflow that declines to use them; the governing control is the organisation's fork pull-request approval policy, which no workflow change can bypass.
 
