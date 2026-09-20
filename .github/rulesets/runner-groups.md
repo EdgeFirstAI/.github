@@ -2,9 +2,26 @@
 
 Organisation, not access control. Labels describe what a machine has and are what a workflow selects on; the group just gathers runners under a name. **No group is scoped to a repository list.** Every group is `visibility: all`, reachable by every repository in the organisation, and `runners.json` has no way to express anything else. Desired state lives in [`runners.json`](runners.json) and is applied by [`apply_runners.py`](../scripts/apply_runners.py) — edit the JSON in a pull request rather than clicking through organisation settings, which is how the fleet drifted from this document in the first place.
 
-A repository access list cannot distinguish a fork's pull request from the base repository's own push, because both run under the base repository's name. What keeps untrusted code off these machines is the trusted-event guard in [`resolve_lanes.py`](../scripts/resolve_lanes.py), which fails closed: anything that is not a push, dispatch, schedule or merge group from the base repository degrades to a GitHub-hosted runner. That guard is independent of group visibility.
+A repository access list bounded which repositories could reach a runner, never which events could. It cannot distinguish a fork's pull request from the base repository's own push, because both run under the base repository's name.
 
-`visibility` is still declared and reconciled, so a group narrowed to `selected` through the web UI is drift this file catches. `allows_public_repositories` stays `true` throughout: the consuming repositories are themselves public, and that flag gates whether a public repository may use a group at all.
+Within the shared workflows, [`resolve_lanes.py`](../scripts/resolve_lanes.py) fails closed: `push`, `workflow_dispatch`, `schedule` and `merge_group` are trusted, a `pull_request` is trusted only when its head repository equals the base repository, and every other event degrades to a GitHub-hosted runner. **That guard binds only the jobs that call it.**
+
+## The exposure group scoping never covered
+
+On `pull_request` against a public repository, GitHub runs the workflow as the fork's head defines it. A fork can therefore add a job with a literal `runs-on: [self-hosted, …]` that never calls the shared workflows, and `resolve_lanes.py` is not consulted. Push access is not required.
+
+The control that governs this is the organisation's fork pull-request approval policy, not runner group scoping — scoping never gated it either, since `hal`, `ara2-rs` and `yocto` are themselves public. What removing the scopes did change is reach: from forks of those three repositories to forks of any of the 51 public repositories in the organisation.
+
+The policy is currently `first_time_contributors`, so a returning external contributor's workflow changes run without a maintainer approving them. `all_external_contributors` is the setting that closes it:
+
+```bash
+gh api --method PUT orgs/EdgeFirstAI/actions/permissions/fork-pr-contributor-approval \
+  -f approval_policy=all_external_contributors
+```
+
+## Reconciled settings
+
+`visibility` and `allows_public_repositories` are both declared per group and reconciled, and they travel in a single PATCH. A group narrowed to `selected` through the web UI is drift the converger catches. `allows_public_repositories` must stay `true` — the consuming repositories are themselves public, and that flag gates whether a public repository may use a group at all, so a group flipped to `false` strands every one of them while nothing else looks wrong.
 
 ## Applying
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Converge the organisation's runner groups, group visibility and custom labels
+"""Converge the organisation's runner groups, group settings and custom labels
 onto .github/rulesets/runners.json.
 
 Ported from apply-runners.sh. The bash version could only add: it POSTed
@@ -29,20 +29,19 @@ Phases, in order, and why the order matters:
                            empty list is refused outright, since applying it
                            would strip every custom label the runner has.
 
-  B. Group visibility   -- every managed group is `all`, reachable by every
-                           repository in the organisation. Groups are an
-                           organisational seam, not an access boundary, so
-                           no per-repository list is declared or reconciled.
-                           What keeps untrusted code off these machines is
-                           the trusted-event guard in resolve_lanes.py,
-                           which runs per workflow run; a group's repository
-                           list cannot distinguish a fork's pull request
-                           from the base repository's own push and so never
-                           provided that guarantee. Visibility is still
-                           reconciled, because a group narrowed to
-                           `selected` in the web UI would silently strand
-                           every repository absent from the list it
-                           inherited.
+  B. Group settings     -- visibility and allows_public_repositories, both
+                           declared in runners.json and sent together in a
+                           single PATCH, since a partial body would rely on
+                           undocumented leave-unchanged behaviour for the
+                           field it omits. Every group is `all`: no
+                           per-repository list is declared or reconciled,
+                           because such a list cannot distinguish a fork's
+                           pull request from the base repository's own push
+                           and so never bounded untrusted code.
+                           allows_public_repositories is load-bearing on its
+                           own -- every repository consuming these runners
+                           is public, so a group flipped to false strands
+                           all of them while every other check still passes.
 
   C. Group membership   -- adds a declared runner that is missing from its
                            group. A runner that is a member of a managed
@@ -97,6 +96,7 @@ class GroupSpec:
     name: str
     id: int
     visibility: str
+    allows_public: bool
     runners: list[str]
 
 
@@ -115,6 +115,7 @@ class Spec:
                 name=name,
                 id=g["id"],
                 visibility=g["visibility"],
+                allows_public=g["allows_public_repositories"],
                 runners=list(g.get("runners", [])),
             )
         return cls(org=data["org"], groups=groups, labels=dict(data.get("labels", {})))
@@ -157,10 +158,11 @@ class RemoveLabel:
 
 
 @dataclass(frozen=True)
-class SetVisibility:
+class SetGroupSettings:
     group: str
     group_id: int
     visibility: str
+    allows_public: bool
 
 
 @dataclass(frozen=True)
@@ -171,7 +173,7 @@ class AddMember:
     runner_id: int
 
 
-Op = AddLabel | RemoveLabel | SetVisibility | AddMember
+Op = AddLabel | RemoveLabel | SetGroupSettings | AddMember
 
 
 # --------------------------------------------------------------------------
@@ -193,6 +195,7 @@ class AccessReport:
     group: str
     group_id: int
     visibility_ok: bool
+    public_ok: bool
     ops: list[Op]
 
 
@@ -231,7 +234,7 @@ class PlanResult:
 class GitHubReader(Protocol):
     def runner_id(self, name: str) -> Optional[int]: ...
     def runner_labels(self, runner_id: int) -> list[LabelInfo]: ...
-    def group_visibility(self, group_id: int) -> str: ...
+    def group_settings(self, group_id: int) -> tuple[str, bool]: ...
     def group_members(self, group_id: int) -> list[dict]: ...
 
 
@@ -293,16 +296,31 @@ class GitHub:
             ]
         )
 
-    def group_visibility(self, group_id: int) -> str:
-        return self._run(
-            [f"orgs/{self.org}/actions/runner-groups/{group_id}", "--jq", ".visibility"]
-        ).strip()
+    def group_settings(self, group_id: int) -> tuple[str, bool]:
+        out = self._run(
+            [
+                f"orgs/{self.org}/actions/runner-groups/{group_id}",
+                "--jq",
+                "[.visibility, .allows_public_repositories]",
+            ]
+        )
+        visibility, allows_public = json.loads(out)
+        return visibility, allows_public
 
-    def set_group_visibility(self, group_id: int, name: str, visibility: str) -> None:
-        # `name` is documented as required on this PATCH even though only
-        # visibility is changing; omitting it risks relying on undocumented
-        # leave-unchanged behaviour on a call that mutates the organisation.
-        payload = json.dumps({"name": name, "visibility": visibility})
+    def set_group_settings(
+        self, group_id: int, name: str, visibility: str, allows_public: bool
+    ) -> None:
+        # Every managed field is sent on each PATCH. `name` is documented as
+        # required, and a partial body would rely on undocumented
+        # leave-unchanged behaviour for whatever it omits -- on a call that
+        # mutates the organisation.
+        payload = json.dumps(
+            {
+                "name": name,
+                "visibility": visibility,
+                "allows_public_repositories": allows_public,
+            }
+        )
         self._run(
             [
                 "--method",
@@ -359,17 +377,28 @@ def plan_labels(
     return LabelReport(runner=runner, runner_id=runner_id, kept=kept, ops=ops)
 
 
-def plan_access(group: GroupSpec, live_visibility: str) -> AccessReport:
+def plan_access(
+    group: GroupSpec, live_visibility: str, live_allows_public: bool
+) -> AccessReport:
     visibility_ok = group.visibility == live_visibility
+    public_ok = group.allows_public == live_allows_public
+
+    # Both fields share one PATCH, so either one drifting re-sends both.
     ops: list[Op] = []
-    if not visibility_ok:
+    if not (visibility_ok and public_ok):
         ops.append(
-            SetVisibility(group=group.name, group_id=group.id, visibility=group.visibility)
+            SetGroupSettings(
+                group=group.name,
+                group_id=group.id,
+                visibility=group.visibility,
+                allows_public=group.allows_public,
+            )
         )
     return AccessReport(
         group=group.name,
         group_id=group.id,
         visibility_ok=visibility_ok,
+        public_ok=public_ok,
         ops=ops,
     )
 
@@ -436,7 +465,8 @@ def build_plan(spec: Spec, client: GitHubReader) -> PlanResult:
 
     access_reports: list[AccessReport] = []
     for group in spec.groups.values():
-        access_reports.append(plan_access(group, client.group_visibility(group.id)))
+        live_visibility, live_allows_public = client.group_settings(group.id)
+        access_reports.append(plan_access(group, live_visibility, live_allows_public))
 
     membership_reports: list[MembershipReport] = []
     for group in spec.groups.values():
@@ -480,8 +510,12 @@ def _format_op(op: Op, dry_run: bool) -> str:
         return f"{prefix}: DELETE label '{op.label}' from {op.runner} ({op.runner_id})"
     if isinstance(op, AddLabel):
         return f"    {verb}: POST label '{op.label}' to {op.runner} ({op.runner_id})"
-    if isinstance(op, SetVisibility):
-        return f"    {verb}: PATCH {op.group} ({op.group_id}) visibility <- {op.visibility}"
+    if isinstance(op, SetGroupSettings):
+        return (
+            f"    {verb}: PATCH {op.group} ({op.group_id}) "
+            f"visibility <- {op.visibility}, "
+            f"allows_public_repositories <- {str(op.allows_public).lower()}"
+        )
     if isinstance(op, AddMember):
         return f"    {verb}: PUT {op.runner} ({op.runner_id}) into {op.group} ({op.group_id})"
     raise TypeError(f"unhandled op type: {type(op)!r}")
@@ -502,13 +536,16 @@ def print_plan(result: PlanResult, dry_run: bool) -> None:
                 _say(f"adding label '{op.label}' to {op.runner} ({op.runner_id})")
             print(_format_op(op, dry_run))
 
-    _say("Phase B: group visibility")
+    _say("Phase B: group visibility and public-repository access")
     for r in result.access_reports:
         if not r.ops:
-            print(f"    ok: {r.group} visibility already correct")
+            print(f"    ok: {r.group} visibility and public access already correct")
             continue
+        if not r.visibility_ok:
+            _say(f"{r.group} ({r.group_id}) visibility has drifted")
+        if not r.public_ok:
+            _say(f"{r.group} ({r.group_id}) public-repository access has drifted")
         for op in r.ops:
-            _say(f"setting {op.group} ({op.group_id}) visibility to: {op.visibility}")
             print(_format_op(op, dry_run))
 
     _say("Phase C: group membership")
@@ -534,8 +571,10 @@ def apply_plan(result: PlanResult, client: GitHub) -> None:
                 client.add_label(op.runner_id, op.label)
     for r in result.access_reports:
         for op in r.ops:
-            assert isinstance(op, SetVisibility)
-            client.set_group_visibility(op.group_id, op.group, op.visibility)
+            assert isinstance(op, SetGroupSettings)
+            client.set_group_settings(
+                op.group_id, op.group, op.visibility, op.allows_public
+            )
     for r in result.membership_reports:
         for op in r.ops:
             assert isinstance(op, AddMember)
@@ -600,11 +639,13 @@ class FakeGitHub:
         runner_ids: Optional[dict[str, int]] = None,
         labels: Optional[dict[int, list[LabelInfo]]] = None,
         group_visibility: Optional[dict[int, str]] = None,
+        group_allows_public: Optional[dict[int, bool]] = None,
         group_members: Optional[dict[int, list[dict]]] = None,
     ):
         self._runner_ids = runner_ids or {}
         self._labels = labels or {}
         self._group_visibility = group_visibility or {}
+        self._group_allows_public = group_allows_public or {}
         self._group_members = group_members or {}
 
     def runner_id(self, name: str) -> Optional[int]:
@@ -613,8 +654,11 @@ class FakeGitHub:
     def runner_labels(self, runner_id: int) -> list[LabelInfo]:
         return self._labels.get(runner_id, [])
 
-    def group_visibility(self, group_id: int) -> str:
-        return self._group_visibility.get(group_id, "all")
+    def group_settings(self, group_id: int) -> tuple[str, bool]:
+        return (
+            self._group_visibility.get(group_id, "all"),
+            self._group_allows_public.get(group_id, True),
+        )
 
     def group_members(self, group_id: int) -> list[dict]:
         return self._group_members.get(group_id, [])
@@ -667,19 +711,34 @@ def _self_test() -> int:
 
     # A group narrowed to `selected` in the web UI is drift: whatever
     # repository list it inherited now excludes everything absent from it.
-    gpu = GroupSpec(name="gpu-cuda", id=5, visibility="all", runners=[])
-    access = plan_access(gpu, live_visibility="selected")
+    gpu = GroupSpec(
+        name="gpu-cuda", id=5, visibility="all", allows_public=True, runners=[]
+    )
+    access = plan_access(gpu, live_visibility="selected", live_allows_public=True)
     check("visibility drift detected", len(access.ops), 1)
-    check("visibility drift op type", type(access.ops[0]).__name__, "SetVisibility")
+    check("visibility drift op type", type(access.ops[0]).__name__, "SetGroupSettings")
     check("visibility drift target", access.ops[0].visibility, "all")
 
-    access = plan_access(gpu, live_visibility="all")
+    # allows_public_repositories flipped off strands every public consumer,
+    # so it is drift on its own even while visibility is still correct.
+    access = plan_access(gpu, live_visibility="all", live_allows_public=False)
+    check("public access drift detected", len(access.ops), 1)
+    check("public access drift reported", access.public_ok, False)
+    check("public access drift leaves visibility ok", access.visibility_ok, True)
+    check("public access drift target", access.ops[0].allows_public, True)
+    # One drifted field re-sends both, since they share a single PATCH.
+    check("drifted PATCH carries visibility too", access.ops[0].visibility, "all")
+
+    access = plan_access(gpu, live_visibility="all", live_allows_public=True)
     check("converged access: no ops", access.ops, [])
     check("converged access: visibility_ok", access.visibility_ok, True)
+    check("converged access: public_ok", access.public_ok, True)
 
     # --- Phase C -------------------------------------------------------
 
-    group = GroupSpec(name="gpu-cuda", id=5, visibility="all", runners=["mltrain-02"])
+    group = GroupSpec(
+        name="gpu-cuda", id=5, visibility="all", allows_public=True, runners=["mltrain-02"]
+    )
     report, errs = plan_membership(
         group,
         {"mltrain-02": 1},
@@ -691,7 +750,9 @@ def _self_test() -> int:
     check("declared member still reported ok", report.kept, ["mltrain-02"])
     check("no add op for the undeclared runner", report.ops, [])
 
-    group = GroupSpec(name="gpu-cuda", id=5, visibility="all", runners=["mltrain-02"])
+    group = GroupSpec(
+        name="gpu-cuda", id=5, visibility="all", allows_public=True, runners=["mltrain-02"]
+    )
     report, errs = plan_membership(group, {"mltrain-02": 1}, [])
     check("missing member is added", len(report.ops), 1)
     check("missing member op type", type(report.ops[0]).__name__, "AddMember")
@@ -701,13 +762,14 @@ def _self_test() -> int:
 
     spec = Spec(
         org="EdgeFirstAI",
-        groups={"gpu-cuda": GroupSpec("gpu-cuda", 5, "all", ["mltrain-02"])},
+        groups={"gpu-cuda": GroupSpec("gpu-cuda", 5, "all", True, ["mltrain-02"])},
         labels={"mltrain-02": ["CUDA"]},
     )
     client = FakeGitHub(
         runner_ids={"mltrain-02": 1},
         labels={1: [LabelInfo("CUDA", "custom")]},
         group_visibility={5: "all"},
+        group_allows_public={5: True},
         group_members={5: [{"id": 1, "name": "mltrain-02"}]},
     )
     result = build_plan(spec, client)

@@ -4,36 +4,43 @@
     "boards": {
       "id": 3,
       "visibility": "all",
+      "allows_public_repositories": true,
       "runners": ["imx8mpevk-04", "imx8mpevk-08"]
     },
     "build-x86": {
       "id": 4,
       "visibility": "all",
+      "allows_public_repositories": true,
       "runners": ["ubuntubuild"]
     },
     "gpu-cuda": {
       "id": 5,
       "visibility": "all",
+      "allows_public_repositories": true,
       "runners": ["mltrain-02", "mltrain-03"]
     },
     "mac": {
       "id": 6,
       "visibility": "all",
+      "allows_public_repositories": true,
       "runners": []
     },
     "windows": {
       "id": 7,
       "visibility": "all",
+      "allows_public_repositories": true,
       "runners": ["JENKINSW10BUILD"]
     },
     "larger-runners": {
       "id": 8,
       "visibility": "all",
+      "allows_public_repositories": true,
       "runners": []
     },
     "yocto": {
       "id": 9,
       "visibility": "all",
+      "allows_public_repositories": true,
       "runners": ["mltrain-04"]
     }
   },
