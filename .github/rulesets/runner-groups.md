@@ -6,18 +6,17 @@ A repository access list bounded which repositories could reach a runner, never 
 
 Within the shared workflows, [`resolve_lanes.py`](../scripts/resolve_lanes.py) fails closed: `push`, `workflow_dispatch`, `schedule` and `merge_group` are trusted, a `pull_request` is trusted only when its head repository equals the base repository, and every other event degrades to a GitHub-hosted runner. **That guard binds only the jobs that call it.**
 
-## The exposure group scoping never covered
+## What bounds a fork pull request
 
-On `pull_request` against a public repository, GitHub runs the workflow as the fork's head defines it. A fork can therefore add a job with a literal `runs-on: [self-hosted, …]` that never calls the shared workflows, and `resolve_lanes.py` is not consulted. Push access is not required.
+Not group scoping, and not `resolve_lanes.py`. On `pull_request` against a public repository GitHub runs the workflow as the fork's head defines it, so a job that names a self-hosted runner directly never passes through the shared workflows at all. Scoping did not gate this either — the repositories that consume these runners are themselves public — though it did bound how many repositories it applied to.
 
-The control that governs this is the organisation's fork pull-request approval policy, not runner group scoping — scoping never gated it either, since `hal`, `ara2-rs` and `yocto` are themselves public. What removing the scopes did change is reach: from forks of those three repositories to forks of any of the 51 public repositories in the organisation.
-
-The policy is currently `first_time_contributors`, so a returning external contributor's workflow changes run without a maintainer approving them. `all_external_contributors` is the setting that closes it:
+The governing control is the organisation's **fork pull-request approval policy**, which no workflow change can bypass. It must be set so that workflows from external contributors require maintainer approval before they run; `all_external_contributors` is that setting, and the weaker values leave returning contributors ungated. Confirm it with:
 
 ```bash
-gh api --method PUT orgs/EdgeFirstAI/actions/permissions/fork-pr-contributor-approval \
-  -f approval_policy=all_external_contributors
+gh api orgs/EdgeFirstAI/actions/permissions/fork-pr-contributor-approval
 ```
+
+Treat this as the boundary for self-hosted capacity. `resolve_lanes.py` hardens the shared workflows; it cannot constrain a workflow that declines to use them.
 
 ## Reconciled settings
 
