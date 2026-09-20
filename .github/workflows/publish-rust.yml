@@ -97,21 +97,13 @@ jobs:
       publishing: ${{ steps.resolve.outputs.publishing }}
       publish-registries: ${{ steps.manifests.outputs.registries }}
     steps:
-      # Shared repository first, caller second. The resolve below must run
-      # before anything checks out the caller, because on a pre-tag rehearsal
-      # there is no tag to check out yet -- so the caller checkout comes after
-      # and uses `clean: false`, which is what stops it wiping `.ef-ci` out
-      # from under the action that produced the ref it is checking out.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          path: .ef-ci
-          persist-credentials: false
-
+      # Resolve first, check out second. On a pre-tag rehearsal there is no tag
+      # to check out yet, so nothing may check out the caller until the resolve
+      # has produced the ref to check out. The action itself needs no checkout,
+      # which is what makes that order possible.
       - name: Resolve the build
         id: resolve
-        uses: ./.ef-ci/.github/actions/resolve-release-build
+        uses: $/.github/actions/resolve-release-build
         with:
           build-workflow: ${{ inputs.build-workflow }}
           tag: ${{ inputs.tag }}
@@ -119,8 +111,10 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
+          # The commit the artifacts were verified against, not the tag. On a
+          # rehearsal the tag does not exist yet; on a squash merge the tag and
+          # the build differ by commit while sharing a tree.
           ref: ${{ steps.resolve.outputs.sha }}
-          clean: false
 
       - name: Manifests, and whether the registries may be used
         id: manifests
@@ -225,13 +219,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ needs.resolve.outputs.sha }}
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          path: .ef-ci
-          persist-credentials: false
-      - uses: ./.ef-ci/.github/actions/setup-rust
+      - uses: $/.github/actions/setup-rust
         with:
           cache-key: publish-crates
 

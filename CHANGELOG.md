@@ -5,27 +5,39 @@ All notable changes to the EdgeFirstAI shared CI workflows are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.0] - 2026-09-20
 
-### Removed
-
-- **Repository access lists on the runner groups, and the ability to declare one.** Every organisation runner group is `visibility: all` — `boards`, `build-x86`, `gpu-cuda`, `mac`, `windows`, `larger-runners` and `yocto` — with no scoped repositories on any of them. `runners.json` has no `repositories` key and no way to express one, and `apply_runners.py` drops the `SetRepositories` operation, the repository-id lookups and the `repos_ok` reporting.
-
-  A repository access list bounds which repositories can reach a runner, never which events can: it cannot distinguish a fork's pull request from the base repository's own push, because both run under the base repository's name. Kept current against every repository in the organisation, the lists were standing maintenance against a threat they could not address.
-
-  `runner-groups.md` now states what does bound a fork pull request, because this changelog previously implied `resolve_lanes.py` did. It hardens the shared workflows and cannot constrain a workflow that declines to use them; the governing control is the organisation's fork pull-request approval policy, which no workflow change can bypass.
-
-  `visibility` remains declared and reconciled, so a group narrowed to `selected` through the web UI is drift the converger catches.
-
-- **The `unmanaged` key in `runners.json`.** `mac` and `larger-runners` were exempted from the converger and documented in place; both are now declared like any other group, so every group except the built-in `Default` is reconciled. An undeclared group is where drift hides, which is the failure this file exists to prevent. Restricting billed larger runners remains the CI epic's closing ticket and now starts from an unrestricted state rather than from a stale `hal`/`packaging` list that enforced nothing.
+**Upgrading.** Two permissions are now declared by shared jobs and must be granted at the call site, because a reusable workflow can only narrow what its caller holds — a job that omits one fails to start rather than degrading. A `release-wheels.yml` caller adds `actions: read`; a `publish-container.yml` caller adds `id-token: write`, including one publishing only to GHCR. `templates/release.yml` and `templates/publish-container.yml` carry both. The `$/` syntax below also requires an Actions runner of 2.336.0 or newer.
 
 ### Added
+
+- **`clippy-report` on `rust-quick.yml`**, for a repository whose SonarCloud project imports a clippy report rather than letting Sonar compile the workspace itself. The self-compile is slower and less accurate: Sonar's runner carries none of a repository's build dependencies, so a crate with a build script fails to analyse while the scan still reports clean — measured on profiler at 171s of a 213s scan, with one crate silently unlinted.
+
+  It could not be done through `clippy-args`. Adding `--message-format=json` there suppresses the rendered diagnostic, uploads nothing, and puts cargo's exit status behind a pipe, so a clippy failure reports success. The three clippy passes now share one implementation that renders diagnostics back, appends to a single report and sets `pipefail`.
+
+- **`payloads` on `release-wheels.yml`**, for a wheel whose native content is built by another job in the same run — a CLI binary, a vendor shim. Named artifacts are downloaded into `payload/<name>/` before `pre-command`, and a missing or empty one fails the lane rather than shipping a wheel that installs and then fails at first use on a version PyPI will not let you replace.
+
+  The job gains `actions: read`. Without it the existing `pre-command` and `post-command` hooks could not reach a sibling artifact at all, and a caller cannot add a permission to a reusable workflow's job — so this class of repository had no route into the shared wheel build whatever it wrote. The corollary is the upgrade note above: the permission is declared unconditionally, and a caller that does not also grant it at the call site fails to start.
+
+- **`wheel-data` on `release-wheels.yml`, and the `wheel-data` action behind it**, placing files into a built wheel's `.data/` directory declaratively — `[{"from": "payload/*/*.so", "scheme": "data", "path": "lib"}]` in place of a 35-line unpack/copy/repack. It is the counterpart to `payloads`: that input gets a sibling job's artifact onto the disk, this one gets it into the wheel.
+
+  It exists because the obvious mechanism only covers half the fleet. maturin folds a `<module>.data/` directory staged before the build into the wheel, but only for a binding that produces a Python module — `client` uses exactly that. A `bindings = "bin"` wheel has no such directory, so `profiler` unpacks and repacks the finished wheel instead. Unpacking serves both, and a caller no longer has to know which case it is in.
+
+  `mode` is not cosmetic. The Actions artifact store does not preserve the executable bit, so a console script staged from a sibling job arrives 0644 and the wheel fails at first use, on a version PyPI will not let you replace. A `from` glob matching nothing fails the lane for the same reason `payloads` fails on an empty artifact.
+
+  It runs after the build and **before** `post-command`, and the position is forced from both sides: `wheel pack` recomputes `RECORD`, so attesting first would publish provenance for a wheel nobody can install, and injecting after the caller's assertions would change a wheel those assertions have already described. `stage_wheel_data.py` carries a `--self-test`, which `ci.yml` runs.
+
+- **`registry-login`, deriving container registry authentication from the registry's hostname.** A project decides where it publishes; the organisation decides how we authenticate there. `ghcr.io` takes the job's own token, a `*.dkr.ecr.*.amazonaws.com` registry takes OIDC through the organisation variable `AWS_ECR_ROLE_ARN`, and `docker.io` takes the organisation's `DOCKERHUB_*` secrets. An unrecognised registry fails with the supported list rather than falling back to a credential that cannot work.
+
+  There is no override input. The hostname is unambiguous, and a fourth class should be a reviewed change here rather than a per-repository guess. Credentials appear in the action's signature only because neither `vars` nor `secrets` is readable inside a composite action, so the calling workflow resolves both; a caller does not choose them.
+
+  `publish-container.yml` uses it at **both** ends. Only the source was authenticated before, and only as GHCR — so mirroring to a private ECR, the case the feature was built for, could not work, and neither could a repository whose release build pushes candidates to ECR in the first place, which is what the converters' `app_create.py` does today.
+
+- **`publish-container.yml` and the `record-image-digests` action**, completing the release chain for a repository that ships a container image rather than a wheel or a crate. The build records an immutable digest per image; the tag promotes exactly those digests with `imagetools create` and asserts afterwards that the digest did not change, because a promotion that changes a digest means something rebuilt.
+
+  There is deliberately no `release-container.yml` reusable workflow. The builds have nothing in common — one repository runs `docker build .`, another builds six variants across two architectures staging three vendor runtimes onto binaries from a sibling job — so a workflow spanning both would need a hook per caller. `templates/release-container.yml` is the caller skeleton instead, and the shared contract is the digest manifest. Promotion stops at the registry: registering Batch job definitions and Studio app versions is deployment, not release, so the workflow hands the caller an immutable reference and goes no further.
 
 - **`allows_public_repositories` is declared per group and reconciled.** The documentation asserted this flag was `true` throughout while nothing verified it, so a group toggled to `false` would strand every public consuming repository — which is all of them — with `--dry-run` still reporting zero operations. It is now read and written alongside `visibility`, and the two share a single PATCH: sending a partial body would rely on undocumented leave-unchanged behaviour for whichever field was omitted.
-
-## [1.2.0] - 2026-09-19
-
-### Added
 
 - **`publish-pypi`, a composite action for the one job that cannot be a reusable workflow.** PyPI Trusted Publishing matches `job_workflow_ref` in the publishing repository, so the job has to live in the product repository — but only a reusable *workflow* breaks that claim, and an action inside the job does not. The selection and verification are shareable even though the job is not, and a caller writes four lines instead of a download, a `find`, an emptiness check and an upload.
 
@@ -45,6 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   `CONTRIBUTING.md` keeps what is genuinely common — branch and commit conventions, DCO, the pull request flow, the three CI tiers and the release chain — and says that build commands, toolchains and test layout belong in each repository's own copy, which supersedes this one. hal's 499-line guide stays hal's.
 
+- **`templates/publish-container.yml`**, the caller skeleton for the tag side of the container chain, alongside the `release-container.yml` added with it. Its `register` job is the worked example of consuming the `digests` output rather than composing a tag reference, which is the correctness point the whole chain turns on.
+
 - **`templates/CODEOWNERS` and `templates/dependabot.yml`.** A migrated repository should request review automatically on every pull request and keep its own dependencies current; neither was inherited from the templates, so both were left to each repository to remember. The CODEOWNERS template carries a catch-all, and states the two GitHub rules that are easy to get backwards: the last matching pattern wins rather than the most specific one, so the catch-all goes first; and CODEOWNERS is not a default community health file, so ownership does not cross repository boundaries and every repository needs its own copy. This repository's own file claimed otherwise and is corrected.
 
 - **An opt-in CUDA lane, on its own axis.** `lanes` becomes a comma-separated set — `host`, `hardware`, `gpu` — where `all` keeps its exact prior meaning of `host,hardware` and never implies `gpu`. That restraint is the point: every migrated repository passes `all`, and two GPU machines cannot absorb the whole fleet's Full tier. The lane needs a non-empty `gpu-args` and runs on `self-hosted,Linux,X64,CUDA` with no `runner-class-gpu` input, because a CUDA lane is self-hosted by definition and a class input could only name a runner that does not exist. It inherits the board lane's fork guard. `lfs: true` on this lane requires `git-lfs` preinstalled on the CUDA hosts; the lane fails with that remedy rather than installing it, since the CI user has no passwordless sudo there.
@@ -56,6 +70,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`.github/rulesets/runners.json` and `apply-runners.sh`**, making organisation runner state declarative. Groups, repository access lists and custom labels were applied by hand from a markdown table, and the organisation had drifted from that table completely: six of seven self-hosted runners sat in `Default`, five purpose-built groups were empty, and a sixth group existed that the table did not mention. State that is reviewed in a pull request does not drift that way.
 
 ### Changed
+
+- **Every same-repository action reference uses GitHub's `$/` self-repository syntax, and the self-checkout it replaces is gone.** A `uses:` beginning with `$/` resolves to the running workflow's own repository at the exact commit already running. Eighteen "Checkout shared CI" steps and twenty-five hand-written relative paths are now twenty-five `$/.github/actions/…` references, and no reusable workflow checks itself out any more.
+
+  The old approach was a workaround for a documented limitation: an action referenced as `./…` from inside a reusable workflow resolves against the *caller's* workspace, so a shared workflow could not reach its own actions without either checking itself out or naming a hardcoded commit. GitHub made the syntax generally available on 2026-07-30 and calls it the recommended way to compose actions and workflows within a repository, noting that the alternatives "quietly defeated commit SHA pinning" — which had already happened here, with one consumer pinning the workflows at one commit and a composite action at another that was never on `main`.
+
+  Two scripts that were invoked by path rather than by reference now have composite actions of their own, `resolve-lanes` and `verify-workspace-versions`, which is what let the last two checkouts go. Neither adds logic; both keep the script's own `--self-test`.
+
+  **This requires an Actions runner of 2.336.0 or newer.** Hosted runners update themselves. Every machine in the self-hosted fleet reported 2.337.0 when this landed, and a runner below the floor fails the step outright rather than silently. The syntax is github.com only.
+
+  Nothing changes for a calling repository. `$/` means *this* repository, so a caller reaching into `EdgeFirstAI/.github` still writes the full `EdgeFirstAI/.github/.github/…@<sha>` form and still pins it.
 
 - **`maturin-spec` is derived from the runner OS when it is not set**, and `release-wheels.yml`'s default is empty so that derivation is reachable. It is a property of the platform rather than of the repository: `zig` is what produces the manylinux wheels, and `patchelf` is a Linux-only PyPI package with no wheel for macOS or Windows, so a value set once for every lane is a value some lane cannot install. The per-lane override added in 1.1.0 stays for the case it is genuinely for — pinning a maturin version for reproducibility — rather than for restating a platform fact in every caller.
 
@@ -82,6 +106,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Four gaps close with the port. An empty declared repository list now revokes access rather than being skipped, since it is valid declared state, not "leave alone". Group `visibility` is declared in `runners.json` (`selected` for all five managed groups today) and reconciled alongside the repository list, because a group that has drifted to `visibility: all` is reachable by every repository regardless of what the access list says. Group membership is authoritative: a stale or manually-added runner sitting in a managed group is reported as a hard error naming the runner and the group rather than kept silently — the only obvious destination is `Default`, the broadly-reachable group this whole design exists to empty, so nothing moves a runner there automatically. Argument parsing is strict, so a typo like `--dryrun` can no longer fall through to a live apply; any unrecognised argument exits non-zero having touched nothing.
 
 ### Removed
+
+- **Repository access lists on the runner groups, and the ability to declare one.** Every organisation runner group is `visibility: all` — `boards`, `build-x86`, `gpu-cuda`, `mac`, `windows`, `larger-runners` and `yocto` — with no scoped repositories on any of them. `runners.json` has no `repositories` key and no way to express one, and `apply_runners.py` drops the `SetRepositories` operation, the repository-id lookups and the `repos_ok` reporting.
+
+  A repository access list bounds which repositories can reach a runner, never which events can: it cannot distinguish a fork's pull request from the base repository's own push, because both run under the base repository's name. Kept current against every repository in the organisation, the lists were standing maintenance against a threat they could not address.
+
+  `runner-groups.md` now states what does bound a fork pull request, because this changelog previously implied `resolve_lanes.py` did. It hardens the shared workflows and cannot constrain a workflow that declines to use them; the governing control is the organisation's fork pull-request approval policy, which no workflow change can bypass.
+
+  `visibility` remains declared and reconciled, so a group narrowed to `selected` through the web UI is drift the converger catches.
+
+- **The `unmanaged` key in `runners.json`.** `mac` and `larger-runners` were exempted from the converger and documented in place; both are now declared like any other group, so every group except the built-in `Default` is reconciled. An undeclared group is where drift hides, which is the failure this file exists to prevent. Restricting billed larger runners remains the CI epic's closing ticket and now starts from an unrestricted state rather than from a stale `hal`/`packaging` list that enforced nothing.
 
 - **The board lane's `concurrency` group.** It keyed on the label rather than the device, so it capped throughput across every machine answering that label while guaranteeing nothing the runner did not already guarantee — a runner executes one job at a time per installed instance. With family labels, `boards: imx8mp` will match every i.MX 8M Plus carrier, and the group would have serialised all of them. Per-device grouping is inexpressible, since concurrency is evaluated before a runner is selected. One runner instance per device is now stated policy and is the guarantee that matters.
 
@@ -113,8 +147,6 @@ Everything here is exercised by a real release: `EdgeFirstAI/ara2-rs` v0.18.0 wa
 
   `builds` is a JSON array of `{manifest, features, args}` looped inside one job. The reusable-workflow boundary is per job, so one call per binding means one job per binding: hal ships five distributions and builds each for `abi3-py311` and `abi3-py38`, which is forty jobs across four platforms against the four it runs today — each paying its own checkout, toolchain, cache restore and link, and none of them sharing a `target/` or a warm cache. Looping inside the job keeps both. A `runners` entry may carry its own `builds`, which is how a caller produces the sdist on one platform only. `manifest` remains the simple form for a repository shipping one binding.
 - **`package-env` and `package-pre-command` on `release-rust.yml`.** The packaging job runs `cargo package --locked` without `--no-verify`, so it performs Cargo's verification compile — which means a crate whose build scripts need an OpenCV root, a sysroot or an ANGLE path cannot use the required packaging path at all, since a reusable workflow inherits nothing from the caller's job. Every other compiling lane already had `env` and `pre-command`; this one did not. The packaging job also declares `bash`, because `package-runner` is caller-overridable and may name a Windows image.
-
-
 
   `post-command` runs the caller's own assertions over the built wheels, after the build and **before** the upload. There was no counterpart to `pre-command`, and the ordering is the point: `publish.yml` ships what the build produced without re-examining it, and a PyPI version is immutable, so a wheel that fails an assertion must never reach the artifact store. hal is the motivating case — rustc strips Apple binaries with its own in-process Mach-O writer, which leaves the LINKEDIT string pool 4-byte aligned whenever a binary's `nindirectsyms` is odd, and dyld on macOS 26+ then refuses to load the wheel. The parity is a coin flip per binary, so an import smoke test on one build proves nothing about the next; the check parses every wheel instead.
 
@@ -328,7 +360,6 @@ Everything here is exercised by a real release: `EdgeFirstAI/ara2-rs` v0.18.0 wa
   merge ignores `venv/` so ScanCode's bundled `*.cdx.json` fixtures are
   not treated as crate components.
 
-
 ## [1.0.0] - 2026-09-11
 
 ### Added
@@ -361,7 +392,6 @@ Everything here is exercised by a real release: `EdgeFirstAI/ara2-rs` v0.18.0 wa
   precedence over `ci:hardware`. PyPI publish requires the reusable release
   job to succeed.
 
-[Unreleased]: https://github.com/EdgeFirstAI/.github/compare/v1.2.0...HEAD
 [1.2.0]: https://github.com/EdgeFirstAI/.github/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/EdgeFirstAI/.github/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/EdgeFirstAI/.github/releases/tag/v1.0.0

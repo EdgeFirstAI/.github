@@ -65,6 +65,12 @@ jobs:
       # env: PYO3_CROSS_PYTHON_VERSION=3.11
     permissions:
       contents: read
+      # `payloads` reads artifacts produced by sibling jobs in this run, and
+      # the shared job declares this unconditionally. A reusable workflow can
+      # only narrow what the call site holds, so a caller omitting it fails to
+      # start -- "requesting 'actions: read', but is only allowed
+      # 'actions: none'" -- whether or not it uses payloads.
+      actions: read
       # Build provenance for the wheels, generated in the job that built them.
       # Without these two the attestation step fails; `attest: false` opts out,
       # and ships wheels no consumer can verify.

@@ -112,13 +112,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          path: .ef-ci
-          persist-credentials: false
-
       - name: Version from release branch
         id: version
         env:
@@ -194,9 +187,9 @@ jobs:
       # form, and a line-oriented scan sees only the second, so the manifest is
       # parsed rather than grepped.
       - name: Workspace internal versions
-        env:
-          VERSION: ${{ steps.version.outputs.value }}
-        run: python3 .ef-ci/.github/scripts/check_workspace_versions.py "$VERSION"
+        uses: $/.github/actions/verify-workspace-versions
+        with:
+          version: ${{ steps.version.outputs.value }}
 
       - name: Changelog has a section
         if: ${{ inputs.changelog != '' }}
@@ -245,13 +238,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          path: .ef-ci
-          persist-credentials: false
-
       - name: Caller environment
         if: ${{ inputs.package-env != '' }}
         env:
@@ -278,7 +264,7 @@ jobs:
           set -euo pipefail
           bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
 
-      - uses: ./.ef-ci/.github/actions/setup-rust
+      - uses: $/.github/actions/setup-rust
         with:
           components: ""
           cache-key: release-package

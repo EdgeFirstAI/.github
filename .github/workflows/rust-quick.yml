@@ -74,6 +74,22 @@ on:
           day away. Empty runs one pass.
         type: string
         default: ""
+      clippy-report:
+        description: >-
+          Emit a machine-readable clippy report and upload it as
+          `clippy-report-<os>`, for a repository whose SonarCloud project
+          imports it rather than letting Sonar compile the workspace itself.
+
+          The self-compile is both slower and less accurate: Sonar's runner
+          carries none of a repository's build dependencies, so a crate with a
+          build script fails to analyse while the scan still reports clean.
+          Measured on profiler: 171s of a 213s scan, with one crate silently
+          unlinted.
+
+          Rendered diagnostics are still printed. The JSON is a by-product of
+          the same pass, not a replacement for readable output.
+        type: boolean
+        default: false
       workflow-lint:
         description: >-
           Run actionlint over .github/workflows and fail on an unpinned action
@@ -101,6 +117,12 @@ jobs:
     name: Quick
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
+    defaults:
+      run:
+        # `runner` is caller-overridable and may name a Windows image, where
+        # the default shell is PowerShell and the clippy and ruff blocks below
+        # are bash. release-wheels.yml declares this for the same reason.
+        shell: bash
     permissions:
       contents: read
     steps:
@@ -124,15 +146,6 @@ jobs:
           lfs: ${{ inputs.lfs }}
           fetch-depth: 1
 
-      - name: Checkout shared CI
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          path: .ef-ci
-          persist-credentials: false
-
-      # Before pre-command, so a setup script can read what the caller set.
       - name: Caller environment
         if: ${{ inputs.env != '' }}
         env:
@@ -166,7 +179,7 @@ jobs:
           bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
 
       - name: Setup Rust
-        uses: ./.ef-ci/.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           components: rustfmt, clippy
           targets: ${{ !inputs.skip-cross-clippy && inputs.cross-targets || '' }}
@@ -182,7 +195,7 @@ jobs:
 
       - name: Setup Python / ruff
         if: inputs.python || inputs.python-tests
-        uses: ./.ef-ci/.github/actions/setup-python-uv
+        uses: $/.github/actions/setup-python-uv
         with:
           # Lint needs no project environment: uvx fetches ruff on its own.
           # Syncing would build the caller's package (maturin for binding
@@ -206,30 +219,83 @@ jobs:
             uvx "${ruff_spec}" check "${paths[@]}"
           fi
 
-      - name: Host clippy
-        run: cargo clippy ${{ inputs.clippy-args }}
-
-      - name: Host clippy (extra)
-        if: ${{ inputs.clippy-extra-args != '' }}
-        run: cargo clippy ${{ inputs.clippy-extra-args }}
-
-      - name: Cross-target clippy
-        if: ${{ !inputs.skip-cross-clippy }}
+      # `clippy_run` wraps every clippy pass below so the three of them append
+      # to one report. Two details are load-bearing when reporting is on:
+      #
+      #   `set -o pipefail` -- without it `tee | jq` returns jq's status and a
+      #   clippy failure reports success. A lane that goes green while finding
+      #   nothing is the defect the hal migration turned up four times.
+      #
+      #   the jq render -- --message-format=json suppresses the human-readable
+      #   diagnostic, and a failure that prints only raw JSON is unreadable.
+      #
+      # `tee -a`, so a later pass adds to the report rather than replacing it.
+      - name: Clippy passes
         env:
-          PKG_CONFIG_ALLOW_CROSS: "1"
+          REPORT: ${{ inputs.clippy-report }}
+          CLIPPY_ARGS: ${{ inputs.clippy-args }}
+          EXTRA_ARGS: ${{ inputs.clippy-extra-args }}
           CROSS_TARGETS: ${{ inputs.cross-targets }}
           CROSS_ARGS: ${{ inputs.cross-clippy-args }}
+          SKIP_CROSS: ${{ inputs.skip-cross-clippy }}
+          PKG_CONFIG_ALLOW_CROSS: "1"
         run: |
           set -euo pipefail
+
+          clippy_run() {
+            if [[ "$REPORT" != "true" ]]; then
+              # shellcheck disable=SC2068  # argument lists must split
+              cargo clippy $@
+              return
+            fi
+            set -o pipefail
+            # shellcheck disable=SC2068  # argument lists must split
+            cargo clippy --message-format=json $@ \
+              | tee -a clippy-report.json \
+              | jq -r 'select(.reason == "compiler-message") | .message.rendered // empty'
+          }
+
+          echo "::group::host clippy"
+          # shellcheck disable=SC2086  # CLIPPY_ARGS is an argument list
+          clippy_run $CLIPPY_ARGS
+          echo "::endgroup::"
+
+          if [[ -n "$EXTRA_ARGS" ]]; then
+            echo "::group::host clippy (extra)"
+            # shellcheck disable=SC2086  # EXTRA_ARGS is an argument list
+            clippy_run $EXTRA_ARGS
+            echo "::endgroup::"
+          fi
+
+          if [[ "$SKIP_CROSS" == "true" ]]; then
+            exit 0
+          fi
           IFS=',' read -ra targets <<< "$CROSS_TARGETS"
           for target in "${targets[@]}"; do
             target="$(echo "$target" | xargs)"
             [[ -z "$target" ]] && continue
             rustup target add "$target"
-            echo "clippy --target $target (check-only; native sysroots deferred to Full)"
-            # shellcheck disable=SC2086  # CROSS_ARGS is an argument list and must split
-            cargo clippy --target "$target" $CROSS_ARGS
+            echo "::group::clippy --target $target (check-only; native sysroots deferred to Full)"
+            # shellcheck disable=SC2086  # CROSS_ARGS is an argument list
+            clippy_run --target "$target" $CROSS_ARGS
+            echo "::endgroup::"
           done
+
+      # `always()`: the report is most useful on the run where clippy failed,
+      # and a job that stopped at the first red step would upload nothing.
+      # Named by OS so a repository aggregating several platforms' reports in
+      # one Sonar scan can glob `clippy-report-*` without collisions.
+      - name: Upload clippy report
+        # `hashFiles` guards the case where the job died before clippy ran at
+        # all: `if-no-files-found: error` would then add a second, misleading
+        # red step on top of the real failure.
+        if: ${{ always() && inputs.clippy-report && hashFiles('clippy-report.json') != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: clippy-report-${{ runner.os }}
+          path: clippy-report.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: nextest
         run: cargo nextest run ${{ inputs.nextest-args }}
@@ -249,10 +315,10 @@ jobs:
       # workflows, which otherwise only fail once the workflow runs.
       - name: Workflow lint
         if: ${{ inputs.workflow-lint }}
-        uses: ./.ef-ci/.github/actions/workflow-lint
+        uses: $/.github/actions/workflow-lint
 
       - name: Dependency license policy
-        uses: ./.ef-ci/.github/actions/sbom-tools
+        uses: $/.github/actions/sbom-tools
         with:
           mode: dependency
           project-name: ${{ inputs.project-name }}

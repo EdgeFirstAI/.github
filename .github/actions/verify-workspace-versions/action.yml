@@ -1,0 +1,29 @@
+name: Verify workspace internal versions
+description: >
+  Check that a workspace's internal `[workspace.dependencies]` entries carry
+  the release version, so a member is not published depending on the previous
+  release of its sibling.
+
+  Cargo accepts `[workspace.dependencies.foo]` as well as the inline form, and
+  a line-oriented scan sees only the second, so the manifest is parsed rather
+  than grepped.
+
+  It wraps `scripts/check_workspace_versions.py` so the workflow can reach it
+  through the self-repository `$/` reference rather than checking this
+  repository out to run a file from it. No logic of its own.
+
+inputs:
+  version:
+    description: Release version the manifests must agree on.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      # `$GITHUB_ACTION_PATH` is this action's own directory on the runner,
+      # which is how a composite action reaches a file beside it without the
+      # caller's workspace being involved at all.
+      run: python3 "$GITHUB_ACTION_PATH/../../scripts/check_workspace_versions.py" "$VERSION"

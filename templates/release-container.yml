@@ -1,0 +1,158 @@
+# Caller skeleton — copy into the product repository as .github/workflows/release.yml
+# Replace the all-zero placeholder in every EdgeFirstAI/.github `uses:` with
+# the commit you intend to pin, then let Dependabot bump it. Third-party
+# actions below are pinned for real and can be copied as-is.
+#
+# The placeholder is deliberate. A real SHA here goes stale the moment the
+# shared repository moves, and a stale one is worse than an obviously invalid
+# one: it resolves, so a copied skeleton silently runs old CI, or forwards an
+# input the pinned revision does not declare. An unresolvable ref fails
+# immediately and says what to fix.
+#
+# RELEASE BUILD, for a repository that ships a container image. Step 1 of 3:
+#
+#   release.yml      push to release/*.*.*  -> build and push every image, record digests
+#   tag-release.yml  release PR merged      -> annotated vX.Y.Z tag
+#   publish.yml      push of a v*.*.* tag   -> promote the recorded digests
+#
+# WHY THERE IS NO SHARED release-container.yml.
+#
+# The other release chains hand the build to a reusable workflow. This one
+# cannot, because the builds have nothing in common: a converter runs
+# `docker build .` once, while profiler builds six variants across two
+# architectures, staging three separate vendor runtimes onto binaries from a
+# sibling job. A workflow spanning both would need a hook per caller, which is
+# the same trap release-wheels.yml documented when it moved its build body into
+# the maturin-build action.
+#
+# What IS shared is the contract: every image pushed here is recorded as an
+# immutable digest by `record-image-digests`, and publish.yml promotes exactly
+# those digests. Build however the repository needs to; end with that step.
+#
+# THE DIGEST IS THE BINDING, exactly as the tree SHA is for source artifacts.
+# A tag reference is mutable, so anything downstream that names one -- an AWS
+# Batch job definition especially -- resolves it at container-start time and
+# silently changes meaning the next time that tag moves. Register by digest.
+
+name: Release Build
+
+on:
+  push:
+    branches: ['release/*.*.*']   # release/X.Y.Z and release/X.Y.Z-rcN
+  workflow_dispatch:              # rebuild a release branch on demand
+
+concurrency:
+  group: release-build-${{ github.ref }}
+  cancel-in-progress: true        # a fixup commit supersedes the build it interrupts
+
+env:
+  # The registry the release candidate is pushed to. publish.yml reads this
+  # back out of the digest manifest rather than being told again, so the two
+  # cannot disagree about where the images are.
+  REGISTRY: ghcr.io/${{ github.repository }}
+
+jobs:
+  # Version consistency against the branch name, the changelog section
+  # publish.yml will need, and the full SBOM. Fails the release PR, not the tag.
+  verify:
+    uses: EdgeFirstAI/.github/.github/workflows/release-rust.yml@0000000000000000000000000000000000000000
+    with:
+      sbom: true
+      # A repository that publishes no crate -- which is every container
+      # repository -- skips packaging entirely. publish.yml sets
+      # publish-crates: false to match.
+      package-crates: false
+    secrets: inherit
+
+  images:
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write   # pushing to GHCR
+      id-token: write   # registry-login's OIDC exchange, when REGISTRY is ECR
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      # The version comes from the BRANCH, not from a tag. A build that reads
+      # GITHUB_REF_NAME expecting `v1.2.3` cannot run on a release branch at
+      # all -- which is the change every repository migrating an
+      # `app_create.py`-style script has to make first.
+      - name: Derive the version
+        id: version
+        env:
+          REF: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${REF#release/}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$ ]]; then
+            echo "::error::Branch '$REF' is not release/X.Y.Z or release/X.Y.Z-rcN"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4.1.0
+
+      # Authentication is derived from REGISTRY's hostname, so pointing this
+      # repository at a private ECR instead of GHCR is a one-line change here
+      # and needs no credentials in this file. The organisation owns those.
+      - uses: EdgeFirstAI/.github/.github/actions/registry-login@0000000000000000000000000000000000000000
+        with:
+          registry: ${{ env.REGISTRY }}
+          role-arn: ${{ vars.AWS_ECR_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # ------------------------------------------------------------------
+      # Replace with this repository's real build. Push under a CANDIDATE tag
+      # that cannot collide with a release tag: the release tag is applied by
+      # publish.yml, to this same manifest, and a build that already claimed
+      # it leaves nothing to promote.
+      #
+      # A smoke test belongs here too, before the digest is recorded. An image
+      # that does not start is not a release artifact, and the release PR is
+      # the last place that can be said cheaply.
+      # ------------------------------------------------------------------
+      - name: Build and push
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # --provenance=false keeps the pushed object a plain image manifest.
+          # With buildx's default the push becomes an index carrying an
+          # attestation manifest and an `unknown/unknown` platform entry, and
+          # the digest recorded below would be the index's rather than the
+          # image's -- which several consumers, AWS Batch among them, resolve
+          # differently. The chain's binding is the digest, so it has to be
+          # the digest consumers actually pull.
+          #
+          # Container images therefore ship without build provenance today,
+          # unlike the wheels. Adding it means reconciling attestation with
+          # digest promotion; it is not an oversight to copy forward silently.
+          docker buildx build --push \
+            --tag "${REGISTRY}:candidate-${VERSION}" \
+            --provenance=false \
+            .
+
+      - name: Smoke test
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          docker run --rm "${REGISTRY}:candidate-${VERSION}" --version
+
+      # Every image this release ships, one `<key>=<reference>` per line. The
+      # key is what publish.yml promotes under: it becomes
+      # <registry>:<version>-<key>, and it is what `aliases` and
+      # `mirror-images` name. A multi-variant repository lists one line per
+      # variant and architecture.
+      - uses: EdgeFirstAI/.github/.github/actions/record-image-digests@0000000000000000000000000000000000000000
+        with:
+          registry: ${{ env.REGISTRY }}
+          version: ${{ steps.version.outputs.version }}
+          images: |
+            app=${{ env.REGISTRY }}:candidate-${{ steps.version.outputs.version }}

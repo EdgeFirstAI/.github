@@ -1,0 +1,64 @@
+name: Resolve lanes
+description: >
+  Resolve rust-full.yml's lane selection and runner classes, and emit them as
+  step outputs.
+
+  It wraps `scripts/resolve_lanes.py` so the workflow can reach it through the
+  self-repository `$/` reference rather than checking this repository out to
+  run a file from it. The script keeps its own `--self-test`, which ci.yml
+  runs; this file adds no logic of its own.
+
+inputs:
+  lanes:
+    required: false
+    default: all
+  boards:
+    required: false
+    default: ""
+  runner-class-linux:
+    required: false
+    default: hosted
+  runner-class-linux-arm:
+    required: false
+    default: hosted
+  runner-class-macos:
+    required: false
+    default: hosted
+  runner-class-windows:
+    required: false
+    default: hosted
+  skip-macos:
+    required: false
+    default: "false"
+  skip-windows:
+    required: false
+    default: "false"
+  nightly:
+    required: false
+    default: "false"
+  gpu-args:
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        LANES: ${{ inputs.lanes }}
+        BOARDS: ${{ inputs.boards }}
+        CLASS_LINUX: ${{ inputs.runner-class-linux }}
+        CLASS_ARM: ${{ inputs.runner-class-linux-arm }}
+        CLASS_MAC: ${{ inputs.runner-class-macos }}
+        CLASS_WIN: ${{ inputs.runner-class-windows }}
+        SKIP_MAC: ${{ inputs.skip-macos }}
+        SKIP_WIN: ${{ inputs.skip-windows }}
+        NIGHTLY: ${{ inputs.nightly }}
+        GPU_ARGS: ${{ inputs.gpu-args }}
+        PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        REPO: ${{ github.repository }}
+        EVENT: ${{ github.event_name }}
+      # `$GITHUB_ACTION_PATH` is this action's own directory on the runner,
+      # which is how a composite action reaches a file beside it without the
+      # caller's workspace being involved at all.
+      run: python3 "$GITHUB_ACTION_PATH/../../scripts/resolve_lanes.py"

@@ -22,11 +22,12 @@ The organisation profile README lives in [`profile/`](profile/README.md).
 | `.github/workflows/release-rust.yml` | release-branch side: version consistency, changelog section, `cargo package`, SBOM |
 | `.github/workflows/release-wheels.yml` | release-branch side: maturin wheels for a PyO3 binding, built on the `maturin-build` action |
 | `.github/workflows/publish-rust.yml` | tag side: resolve the build, verify the tree, crates OIDC, GitHub Release |
-| `.github/actions/` | `setup-rust`, `setup-python-uv`, `sbom-tools`, `board-run`, `resolve-release-build`, `maturin-build`, `publish-pypi`, `workflow-lint` |
-| `.github/scripts/` | license policy, the SHA-pin check, the workspace version check, lane resolution, the runner-fleet converger (single copy each) |
+| `.github/workflows/publish-container.yml` | tag side: promote the release build's recorded image digests, unchanged |
+| `.github/actions/` | `setup-rust`, `setup-python-uv`, `sbom-tools`, `board-run`, `resolve-release-build`, `resolve-lanes`, `verify-workspace-versions`, `maturin-build`, `wheel-data`, `publish-pypi`, `record-image-digests`, `registry-login`, `workflow-lint` |
+| `.github/scripts/` | license policy, the SHA-pin check, the workspace version check, lane resolution, wheel data staging, the runner-fleet converger (single copy each) |
 | `.github/rulesets/` | `protect-main` (reviews; org-admin PR bypass), `protect-main-ci` (ci-gate, no bypass), `protect-release-tags` |
 | `.github/rulesets/runners.json` | declarative runner groups, visibility and labels |
-| `templates/` | per-repo `ci.yml`, `nightly.yml`, `release.yml`, `tag-release.yml`, `publish.yml`, plus `CODEOWNERS` and `dependabot.yml` |
+| `templates/` | per-repo `ci.yml`, `nightly.yml`, `release.yml`, `tag-release.yml`, `publish.yml`, the container pair `release-container.yml` / `publish-container.yml`, plus `CODEOWNERS` and `dependabot.yml` |
 
 ## Pinning
 
@@ -36,7 +37,9 @@ uses: EdgeFirstAI/.github/.github/workflows/rust-quick.yml@eec0cb31b6576a4773509
 
 The `uses:` pin is the only place the shared commit appears, and Dependabot bumps it. CI rejects tag refs such as `@v1.0.0`.
 
-Internally each shared workflow checks itself out to reach its composite actions, using `job.workflow_repository` and `job.workflow_sha` — the repository and commit of the workflow file that defines the running job. Note that `github.workflow_sha` is the *caller's* commit and is not a git object in this repository; `job.workflow_sha` is the one that resolves here.
+Internally each shared workflow reaches its composite actions with GitHub's self-repository syntax, `uses: $/.github/actions/…`, which resolves to the running workflow's own repository at the exact commit already running. There is no second reference to keep in sync with the `uses:` pin above, and no self-checkout. It needs an Actions runner of 2.336.0 or newer and is github.com only.
+
+`$/` means *this* repository, so it is for the shared workflows' own use. A product repository still writes the full `EdgeFirstAI/.github/.github/…@<sha>` form.
 
 ## Tiers and labels
 

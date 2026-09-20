@@ -42,14 +42,6 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Checkout shared CI
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          path: .ef-ci
-          persist-credentials: false
-
       - name: Install ninja and ccache
         run: sudo apt-get update && sudo apt-get install -y ninja-build ccache cmake
 
@@ -73,7 +65,7 @@ jobs:
       # NOTICE is required on Quick. C/C++ dependency graphs have no fast
       # CycloneDX generator; those are enforced by Full scancode.
       - name: NOTICE and dependency license policy
-        uses: ./.ef-ci/.github/actions/sbom-tools
+        uses: $/.github/actions/sbom-tools
         with:
           mode: dependency
           project-name: ${{ inputs.project-name }}

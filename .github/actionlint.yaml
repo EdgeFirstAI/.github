@@ -1,19 +1,22 @@
 # actionlint configuration.
-#
-# The `job` context gained workflow_sha / workflow_repository / workflow_ref /
-# workflow_file_path, which is how a reusable workflow checks out its own
-# repository at its own commit without the caller passing a shared-sha input.
-# actionlint 1.7.12 still ships the older `job` context schema and reports them
-# as undefined properties.
-#
-# These are documented in the Actions contexts reference and verified against a
-# live runner: EdgeFirstAI/ci-foundation-scratch run 34887992847 resolved
-# job.workflow_sha to the pinned EdgeFirstAI/.github commit and checked it out
-# successfully. Drop this ignore once actionlint updates its schema.
 paths:
   .github/workflows/*.yml:
     ignore:
-      - 'property "workflow_(sha|repository|ref|file_path)" is not defined in object type'
+      # GitHub's self-repository syntax, generally available 2026-07-30: a
+      # `uses:` starting with `$/` resolves to the running workflow's own
+      # repository at the exact commit already running, so there is no ref to
+      # specify and nothing for a SHA pin to drift from. actionlint 1.7.12
+      # predates it and reads the missing ref as a malformed action reference.
+      #
+      # https://github.blog/changelog/2026-07-30-reference-same-repository-actions-with-self-repository-syntax/
+      #
+      # Requires runner >= 2.336.0. Hosted runners update themselves; every
+      # machine in the self-hosted fleet reported 2.337.0 when this landed. A
+      # re-provisioned runner below that floor fails these steps outright
+      # rather than silently, which is the safe direction.
+      #
+      # Drop this ignore once actionlint recognises the syntax.
+      - 'specifying action "\$/.+" in invalid format because ref is missing'
 
 # This list must track .github/rulesets/runners.json exactly, casing
 # included -- it is now a third place the fleet's custom labels are

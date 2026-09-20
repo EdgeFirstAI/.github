@@ -1,0 +1,124 @@
+name: Record image digests
+description: >
+  Write the digest manifest publish-container.yml consumes. Run it once, after
+  every image for this release has been pushed.
+
+  The digest is the binding between what a release branch built and what a tag
+  promotes, exactly as the tree SHA is for source artifacts. It is recorded
+  here rather than recomputed at publish time because a tag reference is
+  mutable: resolving `repo:1.2.3` again on the tag would answer whatever is
+  under that tag then, which is the question the binding exists to avoid
+  asking.
+
+  This is a composite action rather than half of a reusable release workflow
+  because the build it follows cannot be shared. One repository runs
+  `docker build .`; another builds six variants across two architectures,
+  staging three separate vendor runtimes onto binaries from a sibling job.
+  There is no matrix that describes both, and a workflow that tried would
+  grow a hook per caller. The contract they share is this file's output.
+
+inputs:
+  images:
+    description: >
+      Newline-separated `<key>=<reference>` pairs. `<key>` names the variant
+      and architecture as the repository spells them, and is what
+      publish-container.yml promotes under. `<reference>` is any pushed tag or
+      digest reference that `docker buildx imagetools inspect` can resolve.
+
+      A reference that does not resolve fails the step. An image that was
+      never pushed is not a release artifact, and discovering that at
+      promotion time means discovering it after the tag exists.
+    required: true
+  registry:
+    description: >
+      Registry the digests belong to, recorded in the manifest so publish does
+      not have to be told again and cannot be told differently.
+    required: true
+  version:
+    description: Release version, without a leading `v`.
+    required: true
+  artifact-name:
+    description: Artifact to upload the manifest as.
+    required: false
+    default: image-digests
+
+outputs:
+  manifest:
+    description: Path to the written manifest.
+    value: ${{ steps.record.outputs.manifest }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve and record
+      id: record
+      shell: bash
+      env:
+        # Never interpolated into the script text; a caller builds these from
+        # its own matrix and they may contain shell metacharacters.
+        IMAGES: ${{ inputs.images }}
+        REGISTRY: ${{ inputs.registry }}
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+
+        if [[ -z "${IMAGES//[[:space:]]/}" ]]; then
+          echo "::error::no images given — a release that pushed nothing is not a release"
+          exit 1
+        fi
+
+        entries='{}'
+        while IFS= read -r line; do
+          [[ -z "${line//[[:space:]]/}" ]] && continue
+          [[ "$line" =~ ^[[:space:]]*# ]] && continue
+          if [[ ! "$line" =~ ^[[:space:]]*[^=[:space:]]+= ]]; then
+            echo "::error::image line is not <key>=<reference>: $line"
+            exit 1
+          fi
+          key="${line%%=*}"
+          key="$(echo "$key" | xargs)"
+          ref="${line#*=}"
+          ref="$(echo "$ref" | xargs)"
+
+          echo "::group::resolve $key"
+          if ! digest="$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest.Digest}}' 2>&1)"; then
+            echo "::error::$key: cannot resolve '$ref' — was it pushed?"
+            echo "$digest"
+            exit 1
+          fi
+          digest="$(tr -d '"' <<<"$digest")"
+          echo "$key -> $digest"
+          echo "::endgroup::"
+
+          entries="$(jq --arg k "$key" --arg d "$digest" '.[$k] = $d' <<<"$entries")"
+        done <<< "$IMAGES"
+
+        jq -n \
+          --arg version "$VERSION" \
+          --arg registry "$REGISTRY" \
+          --argjson images "$entries" \
+          '{version: $version, registry: $registry, images: $images}' \
+          > image-digests.json
+
+        cat image-digests.json
+        echo "manifest=image-digests.json" >> "$GITHUB_OUTPUT"
+
+        {
+          echo "### Recorded image digests"
+          echo
+          echo "| image | digest |"
+          echo "| --- | --- |"
+          jq -r '.images | to_entries[] | "| \(.key) | `\(.value)` |"' image-digests.json
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    # 30 days is the release-candidate floor every other artifact in the chain
+    # uses. The gap between a release build and its tag is human-paced, and an
+    # expired manifest must fail the publish rather than send it looking for
+    # something to rebuild.
+    - name: Upload digest manifest
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: image-digests.json
+        if-no-files-found: error
+        retention-days: 30
