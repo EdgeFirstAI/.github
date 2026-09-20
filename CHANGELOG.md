@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Repository access lists on the runner groups, and the ability to declare one.** Every organisation runner group is `visibility: all` — `boards`, `build-x86`, `gpu-cuda`, `mac`, `windows`, `larger-runners` and `yocto` — with no scoped repositories on any of them. `runners.json` has no `repositories` key and no way to express one, and `apply_runners.py` drops the `SetRepositories` operation, the repository-id lookups and the `repos_ok` reporting.
+
+  A repository access list bounds which repositories can reach a runner, never which events can: it cannot distinguish a fork's pull request from the base repository's own push, because both run under the base repository's name. With 85 repositories in the organisation, the lists were maintenance against a threat they could not address.
+
+  The residual exposure is recorded in `runner-groups.md` rather than implied away. On `pull_request` against a public repository GitHub runs the workflow as the fork's head defines it, so a fork can add a literal `runs-on: [self-hosted, …]` job that never calls the shared workflows and never reaches `resolve_lanes.py`. Scoping did not gate that either — `hal`, `ara2-rs` and `yocto` are themselves public — but it did bound which repositories it was reachable from, and removing it widens that from three to all 51 public repositories. The control is the organisation's fork pull-request approval policy, currently `first_time_contributors`; `all_external_contributors` closes it.
+
+  `visibility` remains declared and reconciled, so a group narrowed to `selected` through the web UI is drift the converger catches.
+
+- **The `unmanaged` key in `runners.json`.** `mac` and `larger-runners` were exempted from the converger and documented in place; both are now declared like any other group, so every group except the built-in `Default` is reconciled. An undeclared group is where drift hides, which is the failure this file exists to prevent. Restricting billed larger runners remains the CI epic's closing ticket and now starts from an unrestricted state rather than from a stale `hal`/`packaging` list that enforced nothing.
+
+### Added
+
+- **`allows_public_repositories` is declared per group and reconciled.** The documentation asserted this flag was `true` throughout while nothing verified it, so a group toggled to `false` would strand every public consuming repository — which is all of them — with `--dry-run` still reporting zero operations. It is now read and written alongside `visibility`, and the two share a single PATCH: sending a partial body would rely on undocumented leave-unchanged behaviour for whichever field was omitted.
+
 ## [1.2.0] - 2026-09-19
 
 ### Added
