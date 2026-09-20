@@ -1,6 +1,10 @@
 # Self-hosted runner groups
 
-Access lists, not machines. The group controls which repositories may use a runner; labels describe what the machine has. Desired state lives in [`runners.json`](runners.json) and is applied by [`apply_runners.py`](../scripts/apply_runners.py) — edit the JSON in a pull request rather than clicking through organisation settings, which is how the fleet drifted from this document in the first place. Each managed group also declares its `visibility` (`selected` for all five today); the converger reconciles it alongside the repository list, since a group that has drifted to `visibility: all` is reachable by every repository regardless of what the access list says.
+Organisation, not access control. Labels describe what a machine has and are what a workflow selects on; the group just gathers runners under a name. **No group is scoped to a repository list.** Every group is `visibility: all`, reachable by every repository in the organisation, and `runners.json` has no way to express anything else. Desired state lives in [`runners.json`](runners.json) and is applied by [`apply_runners.py`](../scripts/apply_runners.py) — edit the JSON in a pull request rather than clicking through organisation settings, which is how the fleet drifted from this document in the first place.
+
+A repository access list cannot distinguish a fork's pull request from the base repository's own push, because both run under the base repository's name. What keeps untrusted code off these machines is the trusted-event guard in [`resolve_lanes.py`](../scripts/resolve_lanes.py), which fails closed: anything that is not a push, dispatch, schedule or merge group from the base repository degrades to a GitHub-hosted runner. That guard is independent of group visibility.
+
+`visibility` is still declared and reconciled, so a group narrowed to `selected` through the web UI is drift this file catches. `allows_public_repositories` stays `true` throughout: the consuming repositories are themselves public, and that flag gates whether a public repository may use a group at all.
 
 ## Applying
 
@@ -38,7 +42,7 @@ Every machine is a dedicated box running a persistent, service-installed runner 
 
 `mac` exists and is empty; no macOS machine is provisioned. The same is true of `linux-arm`: `resolve_lanes.py`'s `FLEET` tuple for it names a machine that does not exist, so `runner-class-linux-arm: fleet` queues until timeout, silently.
 
-`larger-runners` lists `hal` and `packaging` but **contains no runners** — the billed GitHub larger runners are all still in `Default`, so the restriction this table once implied is not in force. Applying it is the closing ticket of the CI epic, once the main repositories have migrated onto internal runners; `ara2-rs` must be added to the list first, and `packaging` has not migrated at all.
+`larger-runners` **contains no runners** — the billed GitHub larger runners are all still in `Default` — and it is no longer scoped either. Restricting billed capacity is the closing ticket of the CI epic, once the main repositories have migrated onto internal runners. Whatever mechanism that ticket picks, it starts from an unrestricted state rather than from the stale `hal`/`packaging` list that used to sit here and enforced nothing.
 
 ## Label convention
 
@@ -85,7 +89,7 @@ Legacy labels (`nxp-imx8mp-latest`, `imx8mpevk`) are retained until the epic wra
 
 ```bash
 gh api --method POST orgs/EdgeFirstAI/actions/runner-groups \
-  -f name=boards -F visibility=selected -F allows_public_repositories=true
+  -f name=boards -F visibility=all -F allows_public_repositories=true
 ```
 
 Then add it to `runners.json` and run the apply script.

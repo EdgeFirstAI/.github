@@ -3,38 +3,39 @@
   "groups": {
     "boards": {
       "id": 3,
-      "visibility": "selected",
-      "repositories": ["hal"],
+      "visibility": "all",
       "runners": ["imx8mpevk-04", "imx8mpevk-08"]
     },
     "build-x86": {
       "id": 4,
-      "visibility": "selected",
-      "repositories": ["hal", "ara2-rs"],
+      "visibility": "all",
       "runners": ["ubuntubuild"]
     },
     "gpu-cuda": {
       "id": 5,
-      "visibility": "selected",
-      "repositories": ["hal", "ara2-rs"],
+      "visibility": "all",
       "runners": ["mltrain-02", "mltrain-03"]
+    },
+    "mac": {
+      "id": 6,
+      "visibility": "all",
+      "runners": []
     },
     "windows": {
       "id": 7,
-      "visibility": "selected",
-      "repositories": ["hal", "ara2-rs"],
+      "visibility": "all",
       "runners": ["JENKINSW10BUILD"]
+    },
+    "larger-runners": {
+      "id": 8,
+      "visibility": "all",
+      "runners": []
     },
     "yocto": {
       "id": 9,
-      "visibility": "selected",
-      "repositories": ["yocto"],
+      "visibility": "all",
       "runners": ["mltrain-04"]
     }
-  },
-  "unmanaged": {
-    "mac": { "id": 6, "reason": "no macOS machine is provisioned" },
-    "larger-runners": { "id": 8, "reason": "holds the billed runners whose restriction is the CI epic's closing ticket" }
   },
   "labels": {
     "ubuntubuild": ["build"],

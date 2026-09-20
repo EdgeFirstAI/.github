@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Repository access lists on the runner groups, and the ability to declare one.** Every organisation runner group is `visibility: all` — `boards`, `build-x86`, `gpu-cuda`, `mac`, `windows`, `larger-runners` and `yocto` — with no scoped repositories on any of them. `runners.json` has no `repositories` key and no way to express one, and `apply_runners.py` drops the `SetRepositories` operation, the repository-id lookups and the `repos_ok` reporting: Phase B reconciles visibility alone.
+
+  A repository access list cannot distinguish a fork's pull request from the base repository's own push, because both run under the base repository's name. With 85 repositories in the organisation, the lists were maintenance against a threat they could not address. What keeps untrusted code off these machines is the fail-closed trusted-event guard in `resolve_lanes.py`, which is independent of group visibility and is unchanged. Reaching a self-hosted runner now takes someone with push access writing that `runs-on` deliberately.
+
+  `visibility` remains declared and reconciled, so a group narrowed to `selected` through the web UI is drift the converger catches.
+
+- **The `unmanaged` key in `runners.json`.** `mac` and `larger-runners` were exempted from the converger and documented in place; both are now declared like any other group, so every group except the built-in `Default` is reconciled. An undeclared group is where drift hides, which is the failure this file exists to prevent. Restricting billed larger runners remains the CI epic's closing ticket and now starts from an unrestricted state rather than from a stale `hal`/`packaging` list that enforced nothing.
+
 ## [1.2.0] - 2026-09-19
 
 ### Added

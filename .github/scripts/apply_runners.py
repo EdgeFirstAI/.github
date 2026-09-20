@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Converge the organisation's runner groups, access lists and custom labels
+"""Converge the organisation's runner groups, group visibility and custom labels
 onto .github/rulesets/runners.json.
 
 Ported from apply-runners.sh. The bash version could only add: it POSTed
@@ -29,17 +29,20 @@ Phases, in order, and why the order matters:
                            empty list is refused outright, since applying it
                            would strip every custom label the runner has.
 
-  B. Repository access -- reconciles both the selected-repository list and
-     and visibility        the group's visibility. An empty repositories
-                           list is a valid declared state (it revokes
-                           access, it is not "leave alone"), and a group
-                           whose visibility has drifted to `all` defeats the
-                           access list entirely regardless of what it says,
-                           so both are checked. Repositories are reconciled
-                           before visibility: if visibility is about to
-                           narrow to `selected`, the repository list should
-                           already be correct at that moment, mirroring why
-                           membership always follows access in Phase C.
+  B. Group visibility   -- every managed group is `all`, reachable by every
+                           repository in the organisation. Groups are an
+                           organisational seam, not an access boundary, so
+                           no per-repository list is declared or reconciled.
+                           What keeps untrusted code off these machines is
+                           the trusted-event guard in resolve_lanes.py,
+                           which runs per workflow run; a group's repository
+                           list cannot distinguish a fork's pull request
+                           from the base repository's own push and so never
+                           provided that guarantee. Visibility is still
+                           reconciled, because a group narrowed to
+                           `selected` in the web UI would silently strand
+                           every repository absent from the list it
+                           inherited.
 
   C. Group membership   -- adds a declared runner that is missing from its
                            group. A runner that is a member of a managed
@@ -52,11 +55,9 @@ Phases, in order, and why the order matters:
                            a hard error naming the runner and the group
                            instead.
 
-A group absent from .groups, or a key listed under the top-level
-"unmanaged", is not managed by this script at all -- see that key in
-runners.json for what those are and why. The script does not read
-"unmanaged"; it exists purely as documentation next to the data it
-describes.
+Every organisation runner group except the built-in Default is declared in
+.groups. A group absent from it is not managed here at all, which is a
+state worth avoiding: an undeclared group is exactly where drift hides.
 
 Usage:
   apply_runners.py --dry-run   # print what would change; touch nothing
@@ -95,7 +96,6 @@ class LabelInfo:
 class GroupSpec:
     name: str
     id: int
-    repositories: list[str]
     visibility: str
     runners: list[str]
 
@@ -114,7 +114,6 @@ class Spec:
             groups[name] = GroupSpec(
                 name=name,
                 id=g["id"],
-                repositories=list(g.get("repositories", [])),
                 visibility=g["visibility"],
                 runners=list(g.get("runners", [])),
             )
@@ -158,14 +157,6 @@ class RemoveLabel:
 
 
 @dataclass(frozen=True)
-class SetRepositories:
-    group: str
-    group_id: int
-    repo_ids: list[int]
-    repo_names: list[str]
-
-
-@dataclass(frozen=True)
 class SetVisibility:
     group: str
     group_id: int
@@ -180,7 +171,7 @@ class AddMember:
     runner_id: int
 
 
-Op = AddLabel | RemoveLabel | SetRepositories | SetVisibility | AddMember
+Op = AddLabel | RemoveLabel | SetVisibility | AddMember
 
 
 # --------------------------------------------------------------------------
@@ -201,7 +192,6 @@ class LabelReport:
 class AccessReport:
     group: str
     group_id: int
-    repos_ok: bool
     visibility_ok: bool
     ops: list[Op]
 
@@ -241,8 +231,6 @@ class PlanResult:
 class GitHubReader(Protocol):
     def runner_id(self, name: str) -> Optional[int]: ...
     def runner_labels(self, runner_id: int) -> list[LabelInfo]: ...
-    def repo_id(self, org: str, repo: str) -> int: ...
-    def group_repositories(self, group_id: int) -> list[int]: ...
     def group_visibility(self, group_id: int) -> str: ...
     def group_members(self, group_id: int) -> list[dict]: ...
 
@@ -303,33 +291,6 @@ class GitHub:
                 "DELETE",
                 f"orgs/{self.org}/actions/runners/{runner_id}/labels/{label}",
             ]
-        )
-
-    def repo_id(self, org: str, repo: str) -> int:
-        out = self._run([f"repos/{org}/{repo}", "--jq", ".id"]).strip()
-        return int(out)
-
-    def group_repositories(self, group_id: int) -> list[int]:
-        out = self._run(
-            [
-                f"orgs/{self.org}/actions/runner-groups/{group_id}/repositories",
-                "--jq",
-                "[.repositories[].id]",
-            ]
-        )
-        return json.loads(out)
-
-    def set_group_repositories(self, group_id: int, repo_ids: list[int]) -> None:
-        payload = json.dumps({"selected_repository_ids": repo_ids})
-        self._run(
-            [
-                "--method",
-                "PUT",
-                f"orgs/{self.org}/actions/runner-groups/{group_id}/repositories",
-                "--input",
-                "-",
-            ],
-            input_text=payload,
         )
 
     def group_visibility(self, group_id: int) -> str:
@@ -398,25 +359,9 @@ def plan_labels(
     return LabelReport(runner=runner, runner_id=runner_id, kept=kept, ops=ops)
 
 
-def plan_access(
-    group: GroupSpec,
-    declared_repo_ids: list[int],
-    live_repo_ids: list[int],
-    live_visibility: str,
-) -> AccessReport:
-    repos_ok = sorted(declared_repo_ids) == sorted(live_repo_ids)
+def plan_access(group: GroupSpec, live_visibility: str) -> AccessReport:
     visibility_ok = group.visibility == live_visibility
-
     ops: list[Op] = []
-    if not repos_ok:
-        ops.append(
-            SetRepositories(
-                group=group.name,
-                group_id=group.id,
-                repo_ids=declared_repo_ids,
-                repo_names=group.repositories,
-            )
-        )
     if not visibility_ok:
         ops.append(
             SetVisibility(group=group.name, group_id=group.id, visibility=group.visibility)
@@ -424,7 +369,6 @@ def plan_access(
     return AccessReport(
         group=group.name,
         group_id=group.id,
-        repos_ok=repos_ok,
         visibility_ok=visibility_ok,
         ops=ops,
     )
@@ -492,10 +436,7 @@ def build_plan(spec: Spec, client: GitHubReader) -> PlanResult:
 
     access_reports: list[AccessReport] = []
     for group in spec.groups.values():
-        declared_repo_ids = [client.repo_id(spec.org, repo) for repo in group.repositories]
-        live_repo_ids = client.group_repositories(group.id)
-        live_visibility = client.group_visibility(group.id)
-        access_reports.append(plan_access(group, declared_repo_ids, live_repo_ids, live_visibility))
+        access_reports.append(plan_access(group, client.group_visibility(group.id)))
 
     membership_reports: list[MembershipReport] = []
     for group in spec.groups.values():
@@ -539,9 +480,6 @@ def _format_op(op: Op, dry_run: bool) -> str:
         return f"{prefix}: DELETE label '{op.label}' from {op.runner} ({op.runner_id})"
     if isinstance(op, AddLabel):
         return f"    {verb}: POST label '{op.label}' to {op.runner} ({op.runner_id})"
-    if isinstance(op, SetRepositories):
-        names = ",".join(op.repo_names) or "(none)"
-        return f"    {verb}: PUT {op.group} ({op.group_id}) repositories <- {names}"
     if isinstance(op, SetVisibility):
         return f"    {verb}: PATCH {op.group} ({op.group_id}) visibility <- {op.visibility}"
     if isinstance(op, AddMember):
@@ -564,20 +502,13 @@ def print_plan(result: PlanResult, dry_run: bool) -> None:
                 _say(f"adding label '{op.label}' to {op.runner} ({op.runner_id})")
             print(_format_op(op, dry_run))
 
-    _say("Phase B: repository access lists and visibility")
+    _say("Phase B: group visibility")
     for r in result.access_reports:
         if not r.ops:
-            print(f"    ok: {r.group} access already correct")
-            continue
-        if r.repos_ok:
-            print(f"    ok: {r.group} repositories already correct")
-        if r.visibility_ok:
             print(f"    ok: {r.group} visibility already correct")
+            continue
         for op in r.ops:
-            if isinstance(op, SetRepositories):
-                _say(f"setting {op.group} ({op.group_id}) repositories to: {','.join(op.repo_names) or '(none)'}")
-            else:
-                _say(f"setting {op.group} ({op.group_id}) visibility to: {op.visibility}")
+            _say(f"setting {op.group} ({op.group_id}) visibility to: {op.visibility}")
             print(_format_op(op, dry_run))
 
     _say("Phase C: group membership")
@@ -603,10 +534,8 @@ def apply_plan(result: PlanResult, client: GitHub) -> None:
                 client.add_label(op.runner_id, op.label)
     for r in result.access_reports:
         for op in r.ops:
-            if isinstance(op, SetRepositories):
-                client.set_group_repositories(op.group_id, op.repo_ids)
-            elif isinstance(op, SetVisibility):
-                client.set_group_visibility(op.group_id, op.group, op.visibility)
+            assert isinstance(op, SetVisibility)
+            client.set_group_visibility(op.group_id, op.group, op.visibility)
     for r in result.membership_reports:
         for op in r.ops:
             assert isinstance(op, AddMember)
@@ -670,15 +599,11 @@ class FakeGitHub:
         *,
         runner_ids: Optional[dict[str, int]] = None,
         labels: Optional[dict[int, list[LabelInfo]]] = None,
-        repo_ids: Optional[dict[str, int]] = None,
-        group_repos: Optional[dict[int, list[int]]] = None,
         group_visibility: Optional[dict[int, str]] = None,
         group_members: Optional[dict[int, list[dict]]] = None,
     ):
         self._runner_ids = runner_ids or {}
         self._labels = labels or {}
-        self._repo_ids = repo_ids or {}
-        self._group_repos = group_repos or {}
         self._group_visibility = group_visibility or {}
         self._group_members = group_members or {}
 
@@ -688,14 +613,8 @@ class FakeGitHub:
     def runner_labels(self, runner_id: int) -> list[LabelInfo]:
         return self._labels.get(runner_id, [])
 
-    def repo_id(self, org: str, repo: str) -> int:
-        return self._repo_ids[repo]
-
-    def group_repositories(self, group_id: int) -> list[int]:
-        return self._group_repos.get(group_id, [])
-
     def group_visibility(self, group_id: int) -> str:
-        return self._group_visibility.get(group_id, "selected")
+        return self._group_visibility.get(group_id, "all")
 
     def group_members(self, group_id: int) -> list[dict]:
         return self._group_members.get(group_id, [])
@@ -746,25 +665,21 @@ def _self_test() -> int:
 
     # --- Phase B -------------------------------------------------------
 
-    boards = GroupSpec(name="boards", id=3, repositories=[], visibility="selected", runners=[])
-    access = plan_access(boards, declared_repo_ids=[], live_repo_ids=[111], live_visibility="selected")
-    check("empty repo list is a revoke, not a skip", len(access.ops), 1)
-    check("revoke sets an empty list", access.ops[0].repo_ids, [])
-
-    gpu = GroupSpec(name="gpu-cuda", id=5, repositories=["hal"], visibility="selected", runners=[])
-    access = plan_access(gpu, declared_repo_ids=[42], live_repo_ids=[42], live_visibility="all")
+    # A group narrowed to `selected` in the web UI is drift: whatever
+    # repository list it inherited now excludes everything absent from it.
+    gpu = GroupSpec(name="gpu-cuda", id=5, visibility="all", runners=[])
+    access = plan_access(gpu, live_visibility="selected")
     check("visibility drift detected", len(access.ops), 1)
     check("visibility drift op type", type(access.ops[0]).__name__, "SetVisibility")
-    check("visibility drift target", access.ops[0].visibility, "selected")
+    check("visibility drift target", access.ops[0].visibility, "all")
 
-    access = plan_access(gpu, declared_repo_ids=[42], live_repo_ids=[42], live_visibility="selected")
+    access = plan_access(gpu, live_visibility="all")
     check("converged access: no ops", access.ops, [])
-    check("converged access: repos_ok", access.repos_ok, True)
     check("converged access: visibility_ok", access.visibility_ok, True)
 
     # --- Phase C -------------------------------------------------------
 
-    group = GroupSpec(name="gpu-cuda", id=5, repositories=[], visibility="selected", runners=["mltrain-02"])
+    group = GroupSpec(name="gpu-cuda", id=5, visibility="all", runners=["mltrain-02"])
     report, errs = plan_membership(
         group,
         {"mltrain-02": 1},
@@ -776,7 +691,7 @@ def _self_test() -> int:
     check("declared member still reported ok", report.kept, ["mltrain-02"])
     check("no add op for the undeclared runner", report.ops, [])
 
-    group = GroupSpec(name="gpu-cuda", id=5, repositories=[], visibility="selected", runners=["mltrain-02"])
+    group = GroupSpec(name="gpu-cuda", id=5, visibility="all", runners=["mltrain-02"])
     report, errs = plan_membership(group, {"mltrain-02": 1}, [])
     check("missing member is added", len(report.ops), 1)
     check("missing member op type", type(report.ops[0]).__name__, "AddMember")
@@ -786,15 +701,13 @@ def _self_test() -> int:
 
     spec = Spec(
         org="EdgeFirstAI",
-        groups={"gpu-cuda": GroupSpec("gpu-cuda", 5, ["hal"], "selected", ["mltrain-02"])},
+        groups={"gpu-cuda": GroupSpec("gpu-cuda", 5, "all", ["mltrain-02"])},
         labels={"mltrain-02": ["CUDA"]},
     )
     client = FakeGitHub(
         runner_ids={"mltrain-02": 1},
         labels={1: [LabelInfo("CUDA", "custom")]},
-        repo_ids={"hal": 42},
-        group_repos={5: [42]},
-        group_visibility={5: "selected"},
+        group_visibility={5: "all"},
         group_members={5: [{"id": 1, "name": "mltrain-02"}]},
     )
     result = build_plan(spec, client)
