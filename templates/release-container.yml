@@ -49,7 +49,12 @@ env:
   # The registry the release candidate is pushed to. publish.yml reads this
   # back out of the digest manifest rather than being told again, so the two
   # cannot disagree about where the images are.
-  REGISTRY: ghcr.io/${{ github.repository }}
+  #
+  # `github.repository` keeps the owner's casing, and an OCI repository name
+  # must be lowercase, so this is normalised in the job below before anything
+  # uses it. Do not reference this value directly in a step; reference the
+  # normalised one.
+  REGISTRY_RAW: ghcr.io/${{ github.repository }}
 
 jobs:
   # Version consistency against the branch name, the changelog section
@@ -101,6 +106,19 @@ jobs:
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # An OCI repository name must be lowercase, and this organisation's
+      # name is not. Pushing `ghcr.io/EdgeFirstAI/...` fails in the registry
+      # rather than in buildx, so normalise once here and let every step
+      # below read `REGISTRY` from the environment.
+      - name: Normalise the registry name
+        env:
+          REGISTRY_RAW: ${{ env.REGISTRY_RAW }}
+        run: |
+          set -euo pipefail
+          registry="$(tr '[:upper:]' '[:lower:]' <<<"$REGISTRY_RAW")"
+          echo "REGISTRY=$registry" >> "$GITHUB_ENV"
+          echo "pushing to $registry"
 
       - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4.1.0
 

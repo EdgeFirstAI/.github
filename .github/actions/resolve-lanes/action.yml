@@ -1,7 +1,7 @@
 name: Resolve lanes
 description: >
   Resolve rust-full.yml's lane selection and runner classes, and emit them as
-  step outputs.
+  action outputs.
 
   It wraps `scripts/resolve_lanes.py` so the workflow can reach it through the
   self-repository `$/` reference rather than checking this repository out to
@@ -40,10 +40,60 @@ inputs:
     required: false
     default: ""
 
+outputs:
+  # Declared one by one because a composite action's outputs are the only
+  # thing a caller can read. The inner step's `$GITHUB_OUTPUT` writes are
+  # scoped to this file; `steps.<id>.outputs.<key>` at the call site resolves
+  # against this block, so a key missing here reads as an empty string and
+  # silently disables the lane that tested it.
+  linux:
+    description: Runner label for the x86_64 Linux lane.
+    value: ${{ steps.resolve.outputs.linux }}
+  linux_arm:
+    description: Runner label for the aarch64 Linux lane.
+    value: ${{ steps.resolve.outputs.linux_arm }}
+  macos:
+    description: Runner label for the macOS lane.
+    value: ${{ steps.resolve.outputs.macos }}
+  windows:
+    description: Runner label for the Windows lane.
+    value: ${{ steps.resolve.outputs.windows }}
+  gpu:
+    description: Runner labels for the CUDA lane.
+    value: ${{ steps.resolve.outputs.gpu }}
+  do_host:
+    description: Whether the host lanes run.
+    value: ${{ steps.resolve.outputs.do_host }}
+  do_arm:
+    description: Whether the aarch64 Linux lane runs; also true for a hardware-only run, which needs the archive.
+    value: ${{ steps.resolve.outputs.do_arm }}
+  do_macos:
+    description: Whether the macOS lane runs.
+    value: ${{ steps.resolve.outputs.do_macos }}
+  do_windows:
+    description: Whether the Windows lane runs.
+    value: ${{ steps.resolve.outputs.do_windows }}
+  do_hardware:
+    description: Whether the board lane runs.
+    value: ${{ steps.resolve.outputs.do_hardware }}
+  do_gpu:
+    description: Whether the CUDA lane runs.
+    value: ${{ steps.resolve.outputs.do_gpu }}
+  do_nightly:
+    description: Whether the nightly-only steps run.
+    value: ${{ steps.resolve.outputs.do_nightly }}
+  same_repo:
+    description: Whether the trigger is positively trusted; false forces every lane hosted and disables board and GPU.
+    value: ${{ steps.resolve.outputs.same_repo }}
+  board_matrix:
+    description: JSON matrix of boards for the hardware lane.
+    value: ${{ steps.resolve.outputs.board_matrix }}
+
 runs:
   using: composite
   steps:
-    - shell: bash
+    - id: resolve
+      shell: bash
       env:
         LANES: ${{ inputs.lanes }}
         BOARDS: ${{ inputs.boards }}

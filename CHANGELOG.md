@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`check_action_outputs.py`, run by `workflow-lint`, which asserts that every composite action output a caller reads is declared.** A composite action's inner `$GITHUB_OUTPUT` writes are scoped to the action; at the call site `steps.<id>.outputs.<key>` resolves against the action's own `outputs:` block. A key missing from that block is not an error — it is the empty string, so a guarded lane stops running and the workflow still reports success. `actionlint` does not resolve local composite outputs, so nothing else in the lint chain sees it. Both `$/` and `./` spellings are checked; a reference to another repository is skipped, since its definition is not present to check against.
+
 - **`clippy-report` on `rust-quick.yml`**, for a repository whose SonarCloud project imports a clippy report rather than letting Sonar compile the workspace itself. The self-compile is slower and less accurate: Sonar's runner carries none of a repository's build dependencies, so a crate with a build script fails to analyse while the scan still reports clean — measured on profiler at 171s of a 213s scan, with one crate silently unlinted.
 
   It could not be done through `clippy-args`. Adding `--message-format=json` there suppresses the rendered diagnostic, uploads nothing, and puts cargo's exit status behind a pipe, so a clippy failure reports success. The three clippy passes now share one implementation that renders diagnostics back, appends to a single report and sets `pipefail`.
@@ -128,6 +130,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`apply-runners.sh`**, replaced by `.github/scripts/apply_runners.py`.
 
 ### Fixed
+
+- **`resolve-lanes` declared no outputs, so `rust-full.yml` resolved every lane to the empty string.** The lane setup job publishes fourteen outputs — the four runner labels, the CUDA labels, seven `do_*` gates, `same_repo` and `board_matrix` — all read from the step that calls this action. Moving the script out of an inline `run:` step and into a composite action changed where those reads resolve, and the action declared none of them, so each evaluated to `''`: every `if: ... == 'true'` was false and the whole Full tier skipped while reporting success. The action now declares all fourteen, and the check above keeps it that way.
+
+- **The mirror never asserted that the digest survived the copy.** The source promotion fails if `imagetools create` changes a digest; the mirror performed the same operation against a different registry and checked nothing. A destination that rewrites a manifest therefore left the mirror serving an image the published digest does not identify, with the run green. The mirror now makes the same assertion as the source.
+
+- **A container release built an invalid image name in `templates/release-container.yml`.** `github.repository` preserves the owner's casing, and this organisation's name is not lowercase; an OCI repository name must be. A copied skeleton pushed `ghcr.io/EdgeFirstAI/...` and failed in the registry rather than in buildx. The name is normalised once, before login, build and recording, and `record-image-digests` normalises what it records so the manifest matches what was pushed.
+
+- **An `images` input of only comments recorded an empty digest manifest.** The non-whitespace guard passed, every line was skipped, and the "a release that pushed nothing is not a release" failure was deferred to promotion — after the tag exists. The recorder now rejects an empty entry set on the release branch.
+
+- **Three JSON inputs were consumed by `jq` inside a process substitution, where `set -e` cannot see it fail.** `aliases`, `mirror-images` and `payloads` each fed a `while read` loop from `< <(jq ...)`. A malformed value made the loop body never run and the step succeed: no alias moved, no payload downloaded. `mirror-images` failed worse — the `length` test yielded an empty string, `[[ "" -eq 0 ]]` is arithmetically true, and a malformed selection mirrored every image instead of the named ones. An element of `aliases` missing `alias` or `from` rendered as the string `null` and pushed a tag called `null`. All three are now validated for type and shape before the loop, by a `jq -e` whose exit status is actually tested.
 
 - `release-wheels.yml` attested before the caller's `post-command` ran, so a wheel that the assertion was about to reject already carried provenance. This is correct when `maturin-build` is called directly—it attests what it built—but wrong through this workflow, which has a rejection step after it. The workflow now passes `attest: false` and attests itself, after `post-command` and before the upload, so provenance covers exactly the set that reaches the artifact store. hal worked around this by hand; a caller should not have to know to.
 

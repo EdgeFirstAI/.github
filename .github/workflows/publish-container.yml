@@ -241,6 +241,21 @@ jobs:
           ALIASES: ${{ inputs.aliases }}
         run: |
           set -euo pipefail
+          # Validated as a whole before the loop. `jq` inside the process
+          # substitution below runs in a subshell whose failure `set -e` does
+          # not see, so a malformed value would skip every iteration and move
+          # no alias while the step reported success. An element missing
+          # `alias` or `from` is worse than malformed JSON: jq renders the
+          # absent key as the string "null" and the loop pushes a tag called
+          # `null`.
+          if ! jq -e 'type == "array" and all(.[];
+                type == "object"
+                and (.alias | type == "string" and length > 0)
+                and (.from  | type == "string" and length > 0))' \
+               >/dev/null 2>&1 <<<"$ALIASES"; then
+            echo "::error::aliases must be a JSON array of {\"alias\": \"...\", \"from\": \"...\"} objects with non-empty string values; got: $ALIASES"
+            exit 1
+          fi
           while IFS=$'\t' read -r alias from; do
             digest="$(jq -r --arg k "$from" '.[$k] // empty' <<<"$DIGESTS")"
             if [[ -z "$digest" ]]; then
@@ -275,6 +290,17 @@ jobs:
           VERSION: ${{ steps.resolve.outputs.version }}
         run: |
           set -euo pipefail
+          # Validated before it is used, for two reasons. A failing `jq` in
+          # the `length` test below yields an empty string, and `[[ "" -eq 0 ]]`
+          # is arithmetically true, so a malformed value would fall through to
+          # mirroring every image rather than the selected ones. A malformed
+          # value in the final process substitution would instead mirror
+          # nothing, and neither failure would turn the release red.
+          if ! jq -e 'type == "array" and all(.[]; type == "string" and length > 0)' \
+               >/dev/null 2>&1 <<<"$MIRROR_IMAGES"; then
+            echo "::error::mirror-images must be a JSON array of non-empty strings; got: $MIRROR_IMAGES"
+            exit 1
+          fi
           selected="$MIRROR_IMAGES"
           if [[ "$(jq -r 'length' <<<"$selected")" -eq 0 ]]; then
             selected="$(jq -c 'keys' <<<"$DIGESTS")"
@@ -287,6 +313,19 @@ jobs:
             fi
             echo "::group::mirror $key"
             docker buildx imagetools create -t "${MIRROR}:${VERSION}-${key}" "${REGISTRY}@${digest}"
+
+            # The same assertion the source promotion makes, for the same
+            # reason. A destination registry that rewrites the manifest --
+            # re-compressing layers, or normalising an index -- leaves the
+            # mirrored image under a digest that is not the one this run
+            # published, so the digest callers were handed no longer
+            # identifies what is in the mirror.
+            after="$(docker buildx imagetools inspect "${MIRROR}:${VERSION}-${key}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+            if [[ "$after" != "$digest" ]]; then
+              echo "::error::mirroring changed the digest for $key: $digest -> $after (the mirror is not serving the image this release published)"
+              exit 1
+            fi
+            echo "unchanged $digest"
             echo "::endgroup::"
           done < <(jq -r '.[]' <<<"$selected")
 

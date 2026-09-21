@@ -107,6 +107,9 @@ jobs:
       - name: wheel data staging
         run: python3 .github/scripts/stage_wheel_data.py --self-test
 
+      - name: composite output declarations
+        run: python3 .github/scripts/check_action_outputs.py --self-test
+
   ci-gate:
     if: always()
     needs: [changes, lint]

@@ -67,6 +67,12 @@ runs:
           exit 1
         fi
 
+        # An OCI repository name must be lowercase. A registry would have
+        # rejected the push before this ran, so this only keeps the recorded
+        # name identical to the one that was actually pushed to -- publish
+        # replays it verbatim against `imagetools`.
+        REGISTRY="$(tr '[:upper:]' '[:lower:]' <<<"$REGISTRY")"
+
         entries='{}'
         while IFS= read -r line; do
           [[ -z "${line//[[:space:]]/}" ]] && continue
@@ -92,6 +98,15 @@ runs:
 
           entries="$(jq --arg k "$key" --arg d "$digest" '.[$k] = $d' <<<"$entries")"
         done <<< "$IMAGES"
+
+        # The check above rejects whitespace; it does not reject an input that
+        # is only comments, which skips every line and leaves this empty. The
+        # advertised "pushed nothing" failure has to happen here, on the
+        # release branch, and not at promotion time once the tag exists.
+        if [[ "$(jq -r 'length' <<<"$entries")" -eq 0 ]]; then
+          echo "::error::no <key>=<reference> lines in 'images' — every line was blank or a comment, so there is nothing to record"
+          exit 1
+        fi
 
         jq -n \
           --arg version "$VERSION" \

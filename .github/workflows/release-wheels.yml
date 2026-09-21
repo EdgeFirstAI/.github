@@ -262,6 +262,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # Validated before the loop: `jq` inside the process substitution
+          # below runs in a subshell whose failure `set -e` does not see, so a
+          # malformed or non-array value would download nothing and let the
+          # lane build a wheel without the payload it was told to place.
+          if ! jq -e 'type == "array" and all(.[]; type == "string" and length > 0)' \
+               >/dev/null 2>&1 <<<"$PAYLOADS"; then
+            echo "::error::payloads must be a JSON array of non-empty artifact names; got: $PAYLOADS"
+            exit 1
+          fi
           mkdir -p payload
           while IFS= read -r name; do
             [[ -z "$name" ]] && continue
