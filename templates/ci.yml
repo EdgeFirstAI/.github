@@ -100,8 +100,10 @@ jobs:
     with:
       lanes: ${{ needs.changes.outputs.full == 'true' && 'all' || 'hardware' }}
       boards: nxp-imx8mp-latest
-      # Full is speed-optimised: larger runners by default. Phase 2 swaps
-      # these for the self-hosted fleet.
+      # Full is speed-optimised and runs once per PR, so the billed class is
+      # available to it and is what this skeleton starts with. Drop the line
+      # when the free class is fast enough for this repository. Phase 2 swaps
+      # these for the self-hosted fleet either way.
       runner-class-linux: larger
       # board-pre-command: SKIP_PACKAGES=1 bash .github/scripts/ci-setup.sh
       # board-extra-args: -j 1 --profile ci

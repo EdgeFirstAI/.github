@@ -66,10 +66,12 @@ on:
           with the sdist on x86_64 only, which is what every EdgeFirst binding
           ships today.
         type: string
-        # runner-class: larger -- a wheel build compiles, so the runner
-        # selection policy puts it on the larger class; it runs once per push
-        # to a release branch, not per push to a PR. A caller that wants the
-        # free class names the hosted labels here deliberately.
+        # runner-class: larger -- a wheel build compiles, and this runs once
+        # per push to a release branch rather than once per push to a PR, so
+        # the default spends billed minutes to shorten it. The billed class is
+        # offered, not required: a caller naming the hosted labels here has
+        # priced the trade the other way, which the runner selection policy
+        # allows.
         default: >-
           [{"name": "x86_64-linux", "runner": "ubuntu-24.04-xlarge",
             "args": "--sdist --zig --compatibility manylinux2014"},

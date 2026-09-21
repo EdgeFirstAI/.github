@@ -66,6 +66,14 @@ jobs:
 
   images:
     needs: verify
+    # A container build compiles, and the billed `larger` class is available
+    # to it. Whether to use one is a cost-versus-wall-clock decision for this
+    # repository, not something the tier decides: buildx layer caching often
+    # matters more here than core count, and this job runs once per push to a
+    # release branch. Measure the build on the free class first; move to
+    # `ubuntu-24.04-xlarge` only when the numbers say the minutes are worth
+    # buying, and record the measurement in a `# runner-class: larger`
+    # comment so the runner audit can see it was priced.
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:

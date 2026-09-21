@@ -53,6 +53,8 @@ Internally each shared workflow reaches its composite actions with GitHub's self
 
 `runner-class-linux` (and `-linux-arm`, `-macos`, `-windows`) selects a **cost** tier: `hosted` (default, free), `fleet` (our metal), or `larger` (billed). Capability is a separate axis: `lanes` is a comma-separated set of `host`, `hardware` and `gpu`, where `all` means `host,hardware` and never implies `gpu`. Board hardware is named through `boards:`.
 
+The billed `larger` class is **available** to the Full, Release and Nightly tiers, not mandated by them. Quick never bills; everything else is a trade of money for wall-clock that a repository makes from its own measured build times, and a release build left on a free runner is a valid outcome of that trade rather than a policy violation.
+
 The billed larger runners currently sit in the `Default` group, so they are **not** restricted to particular repositories. Restricting them is the closing ticket of the CI epic. See [`.github/rulesets/runner-groups.md`](.github/rulesets/runner-groups.md).
 
 ## Release chain

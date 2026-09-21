@@ -47,7 +47,11 @@ on:
       package-runner:
         description: >-
           Runner for the packaging job. Defaults to the `larger` class because
-          `cargo package` compiles; see the runner selection policy.
+          `cargo package` compiles, and this job runs once per push to a
+          release branch rather than once per push to a PR. Name a hosted
+          label instead when the measured packaging time does not justify the
+          billed minutes; the free class is a supported answer here, not a
+          deviation. See the runner selection policy.
         type: string
         default: ubuntu-24.04-xlarge
       package-env:
@@ -221,11 +225,12 @@ jobs:
     name: Package crates
     needs: verify-version
     if: ${{ inputs.package-crates }}
-    # runner-class: larger -- `cargo package` runs a verification compile, so
-    # this is a release build, and the runner selection policy puts release
-    # builds on the larger class. It runs once per push to a release branch,
-    # not per push to a PR. A caller that wants the free class passes
-    # `package-runner: ubuntu-24.04` deliberately.
+    # runner-class: larger -- `cargo package` runs a verification compile,
+    # and the default buys wall-clock for a job that runs once per push to a
+    # release branch rather than once per push to a PR. The billed class is
+    # the default, not a requirement: a caller passing
+    # `package-runner: ubuntu-24.04` has made the opposite trade, which the
+    # runner selection policy allows.
     runs-on: ${{ inputs.package-runner }}
     timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
     permissions:
