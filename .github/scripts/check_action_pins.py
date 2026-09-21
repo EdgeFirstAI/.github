@@ -10,8 +10,12 @@ Reusable workflow `uses:` lines are held to the same rule. A
 `EdgeFirstAI/.github/...@main` caller is the same mutable reference, and it
 silently changes which CI a repository runs.
 
-Local references (`./path`, `.ef-ci/...`) are skipped: a local action lives in
-the same reviewed commit as the workflow calling it.
+Same-repository references are skipped, because they carry no mutable ref to
+pin. `./path` is workspace-relative, and `$/path` is GitHub's self-repository
+syntax: it resolves to the running workflow's own repository at the exact
+commit already running, so a sibling action always matches the ref a caller
+pinned. That is stronger than a SHA written by hand, which is a second source
+of truth that drifts from the `uses:` pin it is supposed to track.
 
 A `docker://` reference is held to the same standard by its own rule. It is not
 exempt -- `uses: docker://vendor/image:latest` pulls whatever that tag points at
@@ -43,7 +47,7 @@ def scan(roots: list[pathlib.Path]) -> list[str]:
                 if not match:
                     continue
                 ref = match.group(1).split("#", 1)[0].strip().strip("'\"")
-                if ref.startswith(("./", ".ef-ci/")):
+                if ref.startswith(("./", "$/")):
                     continue
                 if ref.startswith("docker://"):
                     # Registry images pin by manifest digest, not by git SHA.

@@ -1,0 +1,106 @@
+# Caller skeleton — copy into the product repository as .github/workflows/publish.yml
+# Replace the all-zero placeholder in every EdgeFirstAI/.github `uses:` with
+# the commit you intend to pin, then let Dependabot bump it.
+#
+# The placeholder is deliberate. A real SHA here goes stale the moment the
+# shared repository moves, and a stale one is worse than an obviously invalid
+# one: it resolves, so a copied skeleton silently runs old CI, or forwards an
+# input the pinned revision does not declare. An unresolvable ref fails
+# immediately and says what to fix.
+#
+# PUBLISH, for a repository that ships a container image. Step 3 of 3:
+#
+#   release.yml      push to release/*.*.*  -> build and push every image, record digests
+#   tag-release.yml  release PR merged      -> annotated vX.Y.Z tag
+#   publish.yml      push of a v*.*.* tag   -> promote the recorded digests
+#
+# It builds nothing. The shared workflow finds the release.yml run that built
+# this tag's images, proves that run produced the tree the tag points at, and
+# adds the release tag to the manifests that run already pushed. A promotion
+# that changes a digest fails.
+#
+# REHEARSE BEFORE THE FIRST TAG. Section 4.5.6 requires a workflow_dispatch
+# rehearsal, and it can only run once this file is on the default branch --
+# GitHub will not dispatch a workflow that is not, and merging a release PR
+# fires tag-release.yml immediately. Land this file in its own pull request,
+# then prepare the release on top.
+#
+# `publish.yml` has one fixed meaning fleet-wide: publish the artifacts this
+# tag releases. On-demand deployment of an already-released version to a
+# Studio instance is a different event and belongs in studio.yml.
+
+name: Publish
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to rehearse against; nothing is promoted.
+        required: true
+        type: string
+
+concurrency:
+  group: publish-${{ github.ref }}
+  # Never cancel a publish in flight: a half-promoted set of images is worse
+  # than a slow one, and the digests are immutable so a retry is cheap.
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    uses: EdgeFirstAI/.github/.github/workflows/publish-container.yml@0000000000000000000000000000000000000000
+    with:
+      tag: ${{ inputs.tag }}
+      # Moving tags, applied only on a real tag push of a FINAL release. A
+      # pre-release never moves one: `:latest` pointing at an rc is how a
+      # `docker pull` with no tag gets a candidate.
+      aliases: '[{"alias": "latest", "from": "app"}]'
+      # Mirroring is optional and by digest. Authentication is derived from
+      # the destination hostname, so a private ECR needs only the
+      # organisation's AWS_ECR_ROLE_ARN -- no credentials are written here.
+      # mirror: 000000000000.dkr.ecr.us-east-1.amazonaws.com/edgefirst-app
+      # mirror-images: '["app"]'
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+      # The shared job declares this for the ECR OIDC exchange. A reusable
+      # workflow can only narrow what the call site holds, so omitting it
+      # fails the run at parse time even for a GHCR-only repository.
+      id-token: write
+    secrets: inherit
+
+  # ---------------------------------------------------------------------
+  # Deployment goes here, NOT in the shared workflow. Releasing and deploying
+  # are different events: an app is promoted test -> stage -> prod one
+  # dispatch at a time as part of QA, a tag firing straight at production
+  # would skip that sequence, and a deployment-side fix must be able to ship
+  # without a new release.
+  #
+  # REGISTER BY DIGEST. `needs.publish.outputs.digests` is a JSON map of
+  # manifest key to digest. An AWS Batch job definition that names a tag
+  # resolves it at container-start time, so re-tagging later silently changes
+  # what an already-released definition runs, with no new revision and nothing
+  # in the Batch history to show it.
+  # ---------------------------------------------------------------------
+  register:
+    needs: publish
+    if: ${{ needs.publish.outputs.publishing == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write   # OIDC into AWS; no stored key pair
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Register the job definition by digest
+        env:
+          DIGESTS: ${{ needs.publish.outputs.digests }}
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: |
+          set -euo pipefail
+          digest="$(jq -r '.app' <<<"$DIGESTS")"
+          echo "registering ${VERSION} at ${digest}"
+          # Replace with this repository's registration, taking the digest.

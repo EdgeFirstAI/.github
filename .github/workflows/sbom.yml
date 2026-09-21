@@ -54,24 +54,16 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Checkout shared CI
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          path: .ef-ci
-          persist-credentials: false
-
       - name: Setup Rust
         if: hashFiles('Cargo.toml') != ''
-        uses: ./.ef-ci/.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           components: rustfmt
           tools: cargo-cyclonedx
           cache-key: sbom-${{ inputs.mode }}
 
       - name: SBOM + license policy
-        uses: ./.ef-ci/.github/actions/sbom-tools
+        uses: $/.github/actions/sbom-tools
         with:
           mode: ${{ inputs.mode }}
           project-name: ${{ inputs.project-name }}

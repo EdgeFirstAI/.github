@@ -47,7 +47,11 @@ on:
       package-runner:
         description: >-
           Runner for the packaging job. Defaults to the `larger` class because
-          `cargo package` compiles; see the runner selection policy.
+          `cargo package` compiles, and this job runs once per push to a
+          release branch rather than once per push to a PR. Name a hosted
+          label instead when the measured packaging time does not justify the
+          billed minutes; the free class is a supported answer here, not a
+          deviation. See the runner selection policy.
         type: string
         default: ubuntu-24.04-xlarge
       package-env:
@@ -111,13 +115,6 @@ jobs:
       prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          path: .ef-ci
-          persist-credentials: false
 
       - name: Version from release branch
         id: version
@@ -194,9 +191,9 @@ jobs:
       # form, and a line-oriented scan sees only the second, so the manifest is
       # parsed rather than grepped.
       - name: Workspace internal versions
-        env:
-          VERSION: ${{ steps.version.outputs.value }}
-        run: python3 .ef-ci/.github/scripts/check_workspace_versions.py "$VERSION"
+        uses: $/.github/actions/verify-workspace-versions
+        with:
+          version: ${{ steps.version.outputs.value }}
 
       - name: Changelog has a section
         if: ${{ inputs.changelog != '' }}
@@ -228,11 +225,12 @@ jobs:
     name: Package crates
     needs: verify-version
     if: ${{ inputs.package-crates }}
-    # runner-class: larger -- `cargo package` runs a verification compile, so
-    # this is a release build, and the runner selection policy puts release
-    # builds on the larger class. It runs once per push to a release branch,
-    # not per push to a PR. A caller that wants the free class passes
-    # `package-runner: ubuntu-24.04` deliberately.
+    # runner-class: larger -- `cargo package` runs a verification compile,
+    # and the default buys wall-clock for a job that runs once per push to a
+    # release branch rather than once per push to a PR. The billed class is
+    # the default, not a requirement: a caller passing
+    # `package-runner: ubuntu-24.04` has made the opposite trade, which the
+    # runner selection policy allows.
     runs-on: ${{ inputs.package-runner }}
     timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
     permissions:
@@ -244,13 +242,6 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          path: .ef-ci
-          persist-credentials: false
 
       - name: Caller environment
         if: ${{ inputs.package-env != '' }}
@@ -278,7 +269,7 @@ jobs:
           set -euo pipefail
           bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
 
-      - uses: ./.ef-ci/.github/actions/setup-rust
+      - uses: $/.github/actions/setup-rust
         with:
           components: ""
           cache-key: release-package

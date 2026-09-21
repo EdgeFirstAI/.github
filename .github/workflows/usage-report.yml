@@ -37,7 +37,7 @@ jobs:
               f"# EdgeFirstAI Actions usage {datetime.date.today().isoformat()}",
               "",
               f"Period: {period.get('year', '')}-{period.get('month', '')}.",
-              "Larger-runner minutes should trend to zero except recorded `runner-class: larger` exceptions (hal, packaging).",
+              "Larger-runner minutes should trend to zero. Minutes that remain belong to lanes where someone priced the trade and recorded it in a `runner-class: larger` comment; anything else is an unexamined placement.",
               "",
               "| Product | SKU | Net qty | Unit | Net amount |",
               "| --- | --- | --- | --- | --- |",

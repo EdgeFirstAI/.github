@@ -1,5 +1,5 @@
 name: Workflow lint
-description: actionlint plus the SHA-pin policy over a repository's workflows
+description: actionlint, the SHA-pin policy and the composite-output check over a repository's workflows
 inputs:
   roots:
     description: Space-separated roots to scan for `uses:` references
@@ -91,3 +91,15 @@ runs:
         set -euo pipefail
         # shellcheck disable=SC2086  # ROOTS is a path list and must split
         python3 "${GITHUB_ACTION_PATH}/../../scripts/check_action_pins.py" $ROOTS
+
+    # actionlint does not resolve a local composite action's `outputs:` block,
+    # so a caller reading an output the action never declared is accepted by
+    # every other check here and evaluates to the empty string at run time.
+    - name: Composite output declarations
+      shell: bash
+      env:
+        ROOTS: ${{ inputs.roots }}
+      run: |
+        set -euo pipefail
+        # shellcheck disable=SC2086  # ROOTS is a path list and must split
+        python3 "${GITHUB_ACTION_PATH}/../../scripts/check_action_outputs.py" $ROOTS

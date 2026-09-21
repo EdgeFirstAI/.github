@@ -43,7 +43,7 @@ jobs:
       # The same action every product repository runs, so the policy has one
       # implementation rather than a copy here and a copy in rust-quick.yml.
       - name: Workflow lint
-        uses: ./.github/actions/workflow-lint
+        uses: $/.github/actions/workflow-lint
         with:
           roots: .github templates
 
@@ -103,6 +103,12 @@ jobs:
 
       - name: runner converger
         run: python3 .github/scripts/apply_runners.py --self-test
+
+      - name: wheel data staging
+        run: python3 .github/scripts/stage_wheel_data.py --self-test
+
+      - name: composite output declarations
+        run: python3 .github/scripts/check_action_outputs.py --self-test
 
   ci-gate:
     if: always()

@@ -1,0 +1,346 @@
+# PUBLISH, for a repository that ships a container image.
+#
+# It builds nothing. `resolve-release-build` finds the release.yml run that
+# built this tag's images and proves that run produced the tree the tag points
+# at; this workflow then promotes the digests that run recorded. A missing
+# manifest, an unresolvable digest or a tree mismatch fails the publish rather
+# than falling back to a build.
+#
+# Promotion adds a tag to an EXISTING manifest with `imagetools create`. No
+# rebuild, no new digest — and the workflow asserts that afterwards, because a
+# promotion that changes a digest means something rebuilt, which is the one
+# thing this chain exists to prevent.
+#
+# It stops at the registry. Registering AWS Batch job definitions and Studio
+# app versions is deployment configuration, not release machinery, and
+# releasing and deploying are different events — so this workflow hands the
+# caller an immutable reference through `digests` and goes no further.
+name: publish-container
+
+on:
+  workflow_call:
+    inputs:
+      registry:
+        description: >-
+          Registry the release build pushed to. Overrides the value recorded in
+          the manifest; empty uses the recorded one, which is what a caller
+          normally wants since it cannot then disagree with the build.
+        type: string
+        default: ""
+      build-workflow:
+        description: Workflow file whose run built and pushed the images.
+        type: string
+        default: release.yml
+      tag:
+        description: Tag to publish; required for a workflow_dispatch rehearsal.
+        type: string
+        default: ""
+      digest-artifact:
+        description: Artifact the build recorded its digest manifest as.
+        type: string
+        default: image-digests
+      aliases:
+        description: >-
+          JSON array of `{alias, from}` moving tags, applied only on a real tag
+          push of a final release. `from` names a key in the digest manifest.
+
+          A pre-release never moves one: `:latest` pointing at an rc is how a
+          `docker pull` with no tag gets a candidate, and a rehearsal that
+          repointed a production alias would be a rehearsal with consequences.
+        type: string
+        default: "[]"
+      mirror:
+        description: >-
+          Optional destination registry. Mirroring re-tags the source digest;
+          it never rebuilds, so the digest at the destination equals the digest
+          at the source and the assertion below covers both.
+
+          Authentication is derived from the hostname, exactly as it is for
+          the source: `ghcr.io`, a `*.dkr.ecr.*.amazonaws.com` registry, or
+          `docker.io`. A project names where it publishes; the organisation
+          owns the credentials. Mirroring to ECR needs the organisation
+          variable `AWS_ECR_ROLE_ARN` and `id-token: write` at the call site.
+        type: string
+        default: ""
+      mirror-images:
+        description: >-
+          JSON array of manifest keys to mirror. Empty mirrors everything,
+          which is rarely right — a repository usually mirrors the app-serving
+          subset and leaves developer variants in the source registry.
+        type: string
+        default: "[]"
+      runner:
+        type: string
+        default: ubuntu-24.04
+      timeout-minutes:
+        type: number
+        default: 30
+    secrets:
+      # Only Docker Hub needs a stored credential -- GHCR uses the job's own
+      # token and ECR uses OIDC. Declared optional so a caller passing
+      # `secrets: inherit`, which every template does, supplies them without
+      # naming them, and a repository publishing nowhere near Docker Hub is
+      # not required to hold them.
+      DOCKERHUB_USERNAME:
+        required: false
+      DOCKERHUB_TOKEN:
+        required: false
+    outputs:
+      version:
+        description: The tag without its leading v.
+        value: ${{ jobs.promote.outputs.version }}
+      tag:
+        value: ${{ jobs.promote.outputs.tag }}
+      prerelease:
+        description: "true for a -rcN tag"
+        value: ${{ jobs.promote.outputs.prerelease }}
+      publishing:
+        description: "false when this run is a rehearsal; gate caller steps on it"
+        value: ${{ jobs.promote.outputs.publishing }}
+      digests:
+        description: >-
+          JSON map of manifest key to promoted digest. A caller registering a
+          Batch job definition or a Studio app version consumes this rather
+          than composing a tag reference: a job definition that names a tag
+          resolves it at container-start time, so re-tagging later silently
+          changes what an already-released definition runs.
+        value: ${{ jobs.promote.outputs.digests }}
+
+jobs:
+  promote:
+    name: Promote
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
+    permissions:
+      contents: read   # ref, tag-object and commit-tree lookups do the binding
+      actions: read    # the build run and its artifacts
+      packages: write  # the promotion itself, when the registry is GHCR
+      # `registry-login` exchanges this for AWS credentials when either the
+      # source or the mirror is ECR. A caller must grant it too: a reusable
+      # workflow can only narrow what the call site already holds, so a job
+      # that omits it fails to start rather than falling back.
+      id-token: write
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+      publishing: ${{ steps.resolve.outputs.publishing }}
+      digests: ${{ steps.manifest.outputs.digests }}
+    steps:
+      # `$/` resolves to this workflow's own repository at the commit already
+      # running, so the action a run executes always matches the workflow that
+      # invoked it and there is no second SHA to drift from the `uses:` pin.
+      #
+      # The caller's own tree is deliberately NOT checked out: the rehearsal
+      # runs before the tag exists, so nothing here may assume the tag resolves
+      # as a ref, and promotion reads the registry rather than the repository.
+      - name: Resolve the release build
+        id: resolve
+        uses: $/.github/actions/resolve-release-build
+        with:
+          build-workflow: ${{ inputs.build-workflow }}
+          tag: ${{ inputs.tag }}
+
+      - name: Download the digest manifest
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: ${{ inputs.digest-artifact }}
+          run-id: ${{ steps.resolve.outputs.run-id }}
+          github-token: ${{ github.token }}
+          path: digests
+
+      - name: Read and verify the manifest
+        id: manifest
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
+          REGISTRY_INPUT: ${{ inputs.registry }}
+        run: |
+          set -euo pipefail
+          f=digests/image-digests.json
+          [[ -f "$f" ]] || { echo "::error::no image-digests.json in the build's artifact"; exit 1; }
+
+          recorded_version="$(jq -r '.version' "$f")"
+          if [[ "$recorded_version" != "$VERSION" ]]; then
+            echo "::error::manifest records version '$recorded_version' but the tag is for '$VERSION'"
+            exit 1
+          fi
+
+          registry="${REGISTRY_INPUT:-$(jq -r '.registry' "$f")}"
+          [[ -n "$registry" && "$registry" != null ]] || { echo "::error::no registry in the manifest and none given"; exit 1; }
+
+          count="$(jq -r '.images | length' "$f")"
+          [[ "$count" -gt 0 ]] || { echo "::error::manifest records no images"; exit 1; }
+
+          echo "registry=$registry" >> "$GITHUB_OUTPUT"
+          echo "digests=$(jq -c '.images' "$f")" >> "$GITHUB_OUTPUT"
+          echo "resolved $count image(s) in $registry"
+
+      # Resolved from the registry's hostname rather than assumed to be GHCR.
+      # A repository whose release build pushes candidates straight to ECR --
+      # which is what the converters' app_create.py does today -- needs this
+      # at the source end, not only at the mirror.
+      - name: Log in to the source registry
+        uses: $/.github/actions/registry-login
+        with:
+          registry: ${{ steps.manifest.outputs.registry }}
+          role-arn: ${{ vars.AWS_ECR_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Before promoting, because a digest the registry no longer holds is the
+      # failure this whole design is built to make loud. Garbage collection and
+      # retention policies both reach a release candidate during the
+      # human-paced gap between the build and the tag.
+      - name: Every recorded digest still resolves
+        env:
+          REGISTRY: ${{ steps.manifest.outputs.registry }}
+          DIGESTS: ${{ steps.manifest.outputs.digests }}
+        run: |
+          set -euo pipefail
+          missing=0
+          while IFS=$'\t' read -r key digest; do
+            if docker buildx imagetools inspect "${REGISTRY}@${digest}" >/dev/null 2>&1; then
+              echo "ok      $key  $digest"
+            else
+              echo "::error::$key: ${REGISTRY}@${digest} no longer resolves — the candidate expired; rebuild the release branch"
+              missing=1
+            fi
+          done < <(jq -r 'to_entries[] | "\(.key)\t\(.value)"' <<<"$DIGESTS")
+          exit "$missing"
+
+      - name: Promote digests to the release tag
+        if: ${{ steps.resolve.outputs.publishing == 'true' }}
+        env:
+          REGISTRY: ${{ steps.manifest.outputs.registry }}
+          DIGESTS: ${{ steps.manifest.outputs.digests }}
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          while IFS=$'\t' read -r key digest; do
+            echo "::group::promote $key"
+            docker buildx imagetools create -t "${REGISTRY}:${VERSION}-${key}" "${REGISTRY}@${digest}"
+
+            # A promotion that changes a digest means something rebuilt. This
+            # is EDGEAI-1936's acceptance criterion, asserted here rather than
+            # left to a runbook step someone has to remember to perform.
+            after="$(docker buildx imagetools inspect "${REGISTRY}:${VERSION}-${key}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+            if [[ "$after" != "$digest" ]]; then
+              echo "::error::promotion changed the digest for $key: $digest -> $after"
+              exit 1
+            fi
+            echo "unchanged $digest"
+            echo "::endgroup::"
+          done < <(jq -r 'to_entries[] | "\(.key)\t\(.value)"' <<<"$DIGESTS")
+
+      - name: Move release aliases
+        if: ${{ steps.resolve.outputs.publishing == 'true' && steps.resolve.outputs.prerelease == 'false' }}
+        env:
+          REGISTRY: ${{ steps.manifest.outputs.registry }}
+          DIGESTS: ${{ steps.manifest.outputs.digests }}
+          ALIASES: ${{ inputs.aliases }}
+        run: |
+          set -euo pipefail
+          # Validated as a whole before the loop. `jq` inside the process
+          # substitution below runs in a subshell whose failure `set -e` does
+          # not see, so a malformed value would skip every iteration and move
+          # no alias while the step reported success. An element missing
+          # `alias` or `from` is worse than malformed JSON: jq renders the
+          # absent key as the string "null" and the loop pushes a tag called
+          # `null`.
+          if ! jq -e 'type == "array" and all(.[];
+                type == "object"
+                and (.alias | type == "string" and length > 0)
+                and (.from  | type == "string" and length > 0))' \
+               >/dev/null 2>&1 <<<"$ALIASES"; then
+            echo "::error::aliases must be a JSON array of {\"alias\": \"...\", \"from\": \"...\"} objects with non-empty string values; got: $ALIASES"
+            exit 1
+          fi
+          while IFS=$'\t' read -r alias from; do
+            digest="$(jq -r --arg k "$from" '.[$k] // empty' <<<"$DIGESTS")"
+            if [[ -z "$digest" ]]; then
+              echo "::error::alias '$alias' names '$from', which is not in the digest manifest"
+              exit 1
+            fi
+            echo "alias $alias -> $from ($digest)"
+            docker buildx imagetools create -t "${REGISTRY}:${alias}" "${REGISTRY}@${digest}"
+          done < <(jq -r '.[] | "\(.alias)\t\(.from)"' <<<"$ALIASES")
+
+      # The destination needs its own credential: `imagetools create -t` PUSHES
+      # to it, and the source login above covers only the source. Mirroring
+      # GHCR to GHCR happened to work without this because one token covers
+      # both; the case this exists for, GHCR to a private ECR, never did.
+      - name: Log in to the mirror registry
+        if: ${{ steps.resolve.outputs.publishing == 'true' && inputs.mirror != '' }}
+        uses: $/.github/actions/registry-login
+        with:
+          registry: ${{ inputs.mirror }}
+          role-arn: ${{ vars.AWS_ECR_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Mirror to the destination registry
+        if: ${{ steps.resolve.outputs.publishing == 'true' && inputs.mirror != '' }}
+        env:
+          REGISTRY: ${{ steps.manifest.outputs.registry }}
+          MIRROR: ${{ inputs.mirror }}
+          MIRROR_IMAGES: ${{ inputs.mirror-images }}
+          DIGESTS: ${{ steps.manifest.outputs.digests }}
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Validated before it is used, for two reasons. A failing `jq` in
+          # the `length` test below yields an empty string, and `[[ "" -eq 0 ]]`
+          # is arithmetically true, so a malformed value would fall through to
+          # mirroring every image rather than the selected ones. A malformed
+          # value in the final process substitution would instead mirror
+          # nothing, and neither failure would turn the release red.
+          if ! jq -e 'type == "array" and all(.[]; type == "string" and length > 0)' \
+               >/dev/null 2>&1 <<<"$MIRROR_IMAGES"; then
+            echo "::error::mirror-images must be a JSON array of non-empty strings; got: $MIRROR_IMAGES"
+            exit 1
+          fi
+          selected="$MIRROR_IMAGES"
+          if [[ "$(jq -r 'length' <<<"$selected")" -eq 0 ]]; then
+            selected="$(jq -c 'keys' <<<"$DIGESTS")"
+          fi
+          while IFS= read -r key; do
+            digest="$(jq -r --arg k "$key" '.[$k] // empty' <<<"$DIGESTS")"
+            if [[ -z "$digest" ]]; then
+              echo "::error::mirror names '$key', which is not in the digest manifest"
+              exit 1
+            fi
+            echo "::group::mirror $key"
+            docker buildx imagetools create -t "${MIRROR}:${VERSION}-${key}" "${REGISTRY}@${digest}"
+
+            # The same assertion the source promotion makes, for the same
+            # reason. A destination registry that rewrites the manifest --
+            # re-compressing layers, or normalising an index -- leaves the
+            # mirrored image under a digest that is not the one this run
+            # published, so the digest callers were handed no longer
+            # identifies what is in the mirror.
+            after="$(docker buildx imagetools inspect "${MIRROR}:${VERSION}-${key}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+            if [[ "$after" != "$digest" ]]; then
+              echo "::error::mirroring changed the digest for $key: $digest -> $after (the mirror is not serving the image this release published)"
+              exit 1
+            fi
+            echo "unchanged $digest"
+            echo "::endgroup::"
+          done < <(jq -r '.[]' <<<"$selected")
+
+      - name: Rehearsal summary
+        if: ${{ steps.resolve.outputs.publishing != 'true' }}
+        env:
+          DIGESTS: ${{ steps.manifest.outputs.digests }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### Rehearsal — nothing was promoted"
+            echo
+            echo "Every digest below was resolved and would have been promoted."
+            echo
+            echo "| image | digest |"
+            echo "| --- | --- |"
+            jq -r 'to_entries[] | "| \(.key) | `\(.value)` |"' <<<"$DIGESTS"
+          } >> "$GITHUB_STEP_SUMMARY"

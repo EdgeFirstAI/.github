@@ -1,0 +1,73 @@
+name: Wheel data
+description: >
+  Place files into a built wheel's `.data/` directory — a CLI binary, a vendor
+  shim, anything produced by a job other than the one that ran maturin.
+
+  maturin honours a `<module>.data/` directory staged before the build, but
+  only for a binding that produces a Python module. A `bindings = "bin"` wheel
+  has no such directory, so the one mechanism that serves both is to unpack the
+  finished wheel, add the files and pack it again. That also removes the
+  caller's need to know which case it is in.
+
+  Run it after the build and BEFORE any attestation. `wheel pack` recomputes
+  `RECORD`, so the repacked wheel is a different artifact with a different
+  digest; provenance generated for the pre-injection wheel would describe
+  something nobody can install.
+
+  Pair it with `release-wheels.yml`'s `payloads`, which is what gets a sibling
+  job's artifact onto the disk this reads from.
+
+inputs:
+  entries:
+    description: >-
+      JSON array of `{from, scheme, path, mode, wheel}` objects.
+
+      `from` is a glob, relative to the working directory, of the files to
+      place. `scheme` is a wheel data scheme — `scripts`, `data`, `purelib`,
+      `platlib` or `headers` — and `path` an optional subdirectory under it.
+      `mode` is an optional octal chmod applied before packing. `wheel` is an
+      optional glob selecting which wheels the entry applies to; the default is
+      every wheel in the directory, which is right for a lane building one.
+
+      `mode` is not cosmetic. The Actions artifact store does not preserve the
+      executable bit, so a console script staged from a sibling job arrives
+      0644 and the wheel fails at first use — after publication, on a version
+      PyPI will not let you replace.
+
+      A `from` that matches nothing fails the lane, as does a `wheel` glob
+      naming a distribution this lane did not build. A payload that silently
+      did not arrive is the failure this exists to make loud.
+    required: true
+  wheel-dir:
+    description: >-
+      Directory holding the built wheels. Matches `maturin-build`'s default,
+      which is what it passes to maturin as `--out`.
+    required: false
+    default: target/wheels
+  wheel-version:
+    description: >-
+      Exact `wheel` package version for the unpack/pack pass. Pinned rather
+      than floating because it is what recomputes `RECORD`, and an unpinned
+      packaging tool is the same mutable dependency the SHA-pin policy exists
+      to reject.
+    required: false
+    default: 0.46.3
+
+runs:
+  using: composite
+  steps:
+    - name: Install wheel
+      shell: bash
+      env:
+        WHEEL_VERSION: ${{ inputs.wheel-version }}
+      run: pip install "wheel==${WHEEL_VERSION}"
+
+    - name: Place files into the wheels
+      shell: bash
+      env:
+        ENTRIES: ${{ inputs.entries }}
+        WHEEL_DIR: ${{ inputs.wheel-dir }}
+      # `$GITHUB_ACTION_PATH` is this action's own directory on the runner,
+      # which is how a composite action reaches a file beside it without the
+      # caller's workspace being involved at all.
+      run: python3 "$GITHUB_ACTION_PATH/../../scripts/stage_wheel_data.py"

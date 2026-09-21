@@ -66,10 +66,12 @@ on:
           with the sdist on x86_64 only, which is what every EdgeFirst binding
           ships today.
         type: string
-        # runner-class: larger -- a wheel build compiles, so the runner
-        # selection policy puts it on the larger class; it runs once per push
-        # to a release branch, not per push to a PR. A caller that wants the
-        # free class names the hosted labels here deliberately.
+        # runner-class: larger -- a wheel build compiles, and this runs once
+        # per push to a release branch rather than once per push to a PR, so
+        # the default spends billed minutes to shorten it. The billed class is
+        # offered, not required: a caller naming the hosted labels here has
+        # priced the trade the other way, which the runner selection policy
+        # allows.
         default: >-
           [{"name": "x86_64-linux", "runner": "ubuntu-24.04-xlarge",
             "args": "--sdist --zig --compatibility manylinux2014"},
@@ -108,6 +110,46 @@ on:
           from the run, so this only has to be unique within it.
         type: string
         default: wheels
+      payloads:
+        description: >-
+          JSON array of artifact names to download from THIS run into
+          `payload/<name>/` before `pre-command`, for a wheel whose native
+          content is built by another job. A matrix entry may carry its own
+          `payloads` key, overriding this for that lane alone -- which is what
+          a per-architecture shim or a per-target binary needs.
+
+          Downloading is all this input does. `wheel-data` below is what
+          places the files, for either binding mode; `pre-command` and
+          `post-command` remain available for a caller whose staging is not
+          expressible as a copy.
+
+          An artifact that is missing or empty fails the lane. A wheel whose
+          native payload silently did not arrive is worse than no wheel: it
+          installs, and fails at first use on a version PyPI will not let you
+          replace.
+        type: string
+        default: ""
+      wheel-data:
+        description: >-
+          JSON array of `{from, scheme, path, mode, wheel}` objects placing
+          files into the built wheel's `.data/` directory, applied after the
+          build and before `post-command`. A matrix entry may carry its own
+          `wheel-data` key, overriding this for that lane alone.
+
+          This works for every binding mode, which is the reason it exists.
+          maturin honours a `<module>.data/` directory staged before the build
+          only for a binding that produces a Python module; a
+          `bindings = "bin"` wheel has no such directory. Unpacking and
+          repacking the finished wheel serves both, and a caller no longer has
+          to know which case it is in.
+
+          `mode` is not cosmetic: the Actions artifact store does not preserve
+          the executable bit, so a console script staged from a sibling job
+          arrives 0644 and fails at first use.
+
+          See the `wheel-data` action for the full field reference.
+        type: string
+        default: ""
       pre-command:
         description: Caller setup, run from the repository root before the build.
         type: string
@@ -148,6 +190,12 @@ jobs:
     timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
     permissions:
       contents: read
+      # `payloads` reads artifacts produced by sibling jobs in this run.
+      # Without it the hooks below cannot reach one, and a caller cannot add a
+      # permission to a reusable workflow's job -- so a wheel whose native
+      # content is built elsewhere would have no route into this workflow at
+      # all. Read-only, and scoped to the run's own artifacts.
+      actions: read
       # Provenance is generated here rather than wherever the wheels are later
       # uploaded from, so the attestation describes the build. A caller that
       # sets `attest: false` may drop these two.
@@ -181,13 +229,6 @@ jobs:
         with:
           lfs: ${{ inputs.lfs }}
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          path: .ef-ci
-          persist-credentials: false
-
       - name: Caller environment
         if: ${{ inputs.env != '' }}
         env:
@@ -204,6 +245,45 @@ jobs:
             echo "${line#"${line%%[![:space:]]*}"}" >> "$GITHUB_ENV"
           done <<< "$CALLER_ENV"
 
+      # Before `pre-command`, so a staging script finds its payload on disk.
+      #
+      # GITHUB_RUN_ID inside a reusable workflow is the CALLER's run, which is
+      # what makes a sibling job's artifact reachable -- the same property
+      # publish.yml relies on when it downloads a release build by run-id.
+      #
+      # Each artifact lands in its own directory rather than being merged. Two
+      # artifacts may legitimately carry the same filename for different
+      # targets, and overwriting one with the other produces a wheel for the
+      # wrong architecture that nothing downstream can detect.
+      - name: Download caller payloads
+        if: ${{ (toJSON(matrix.payloads) != 'null' && toJSON(matrix.payloads) || inputs.payloads) != '' }}
+        env:
+          PAYLOADS: ${{ toJSON(matrix.payloads) != 'null' && toJSON(matrix.payloads) || inputs.payloads }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Validated before the loop: `jq` inside the process substitution
+          # below runs in a subshell whose failure `set -e` does not see, so a
+          # malformed or non-array value would download nothing and let the
+          # lane build a wheel without the payload it was told to place.
+          if ! jq -e 'type == "array" and all(.[]; type == "string" and length > 0)' \
+               >/dev/null 2>&1 <<<"$PAYLOADS"; then
+            echo "::error::payloads must be a JSON array of non-empty artifact names; got: $PAYLOADS"
+            exit 1
+          fi
+          mkdir -p payload
+          while IFS= read -r name; do
+            [[ -z "$name" ]] && continue
+            echo "::group::payload $name"
+            gh run download "$GITHUB_RUN_ID" --name "$name" --dir "payload/$name"
+            if [[ -z "$(find "payload/$name" -type f -print -quit)" ]]; then
+              echo "::error::payload artifact '$name' is empty"
+              exit 1
+            fi
+            find "payload/$name" -type f
+            echo "::endgroup::"
+          done < <(jq -r '.[]' <<<"$PAYLOADS")
+
       - name: Caller pre-command
         if: ${{ inputs.pre-command != '' }}
         env:
@@ -218,7 +298,7 @@ jobs:
       # tests ran on. Also the C compiler check below: a maturin build shells
       # out to cc for any crate with a build script, and a runner image without
       # one fails deep inside a dependency rather than here.
-      - uses: ./.ef-ci/.github/actions/setup-rust
+      - uses: $/.github/actions/setup-rust
         with:
           components: ""
           cache-key: release-wheels-${{ matrix.name }}
@@ -250,7 +330,7 @@ jobs:
       # workflow -- hal builds five distributions twice each, interleaved with
       # an SDK fetch and two Mach-O assertions -- gets the same implementation
       # without this workflow growing a hook for every interleaving.
-      - uses: ./.ef-ci/.github/actions/maturin-build
+      - uses: $/.github/actions/maturin-build
         with:
           # A matrix entry may carry its own build list, so one platform can
           # produce the sdist while the others do not. `runners` is parsed by
@@ -272,6 +352,22 @@ jobs:
           # wrong here: a wheel this workflow is about to reject would already
           # carry provenance.
           attest: false
+
+      # Between the build and `post-command`, and the position is forced from
+      # both sides. `wheel pack` recomputes RECORD, so the repacked wheel is a
+      # different artifact with a different digest: after the attestation
+      # below it would publish provenance for a wheel nobody can install.
+      # After `post-command` it would change a wheel the caller has already
+      # asserted over, and those assertions exist to describe what ships.
+      - name: Place files into the wheels
+        if: ${{ (toJSON(matrix['wheel-data']) != 'null' && toJSON(matrix['wheel-data']) || inputs.wheel-data) != '' }}
+        uses: $/.github/actions/wheel-data
+        with:
+          # Bracket syntax because the key has a hyphen: `matrix.wheel-data`
+          # parses as a subtraction. `runners` is parsed by fromJSON, so a
+          # matrix entry's value arrives as an array and toJSON serialises it
+          # back, yielding the string `null` when the key is absent.
+          entries: ${{ toJSON(matrix['wheel-data']) != 'null' && toJSON(matrix['wheel-data']) || inputs.wheel-data }}
 
       # Runs before the upload, deliberately. A wheel that fails a caller's
       # own assertion must never reach the artifact store, because

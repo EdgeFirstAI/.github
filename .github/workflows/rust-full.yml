@@ -174,29 +174,19 @@ jobs:
           [[ -f sonar-project.properties ]] && present=true
           echo "present=$present" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          path: .ef-ci
-          persist-credentials: false
-
       - id: map
-        env:
-          LANES: ${{ inputs.lanes }}
-          BOARDS: ${{ inputs.boards }}
-          CLASS_LINUX: ${{ inputs.runner-class-linux }}
-          CLASS_ARM: ${{ inputs.runner-class-linux-arm }}
-          CLASS_MAC: ${{ inputs.runner-class-macos }}
-          CLASS_WIN: ${{ inputs.runner-class-windows }}
-          SKIP_MAC: ${{ inputs.skip-macos }}
-          SKIP_WIN: ${{ inputs.skip-windows }}
-          NIGHTLY: ${{ inputs.nightly }}
-          GPU_ARGS: ${{ inputs.gpu-args }}
-          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          REPO: ${{ github.repository }}
-          EVENT: ${{ github.event_name }}
-        run: python3 .ef-ci/.github/scripts/resolve_lanes.py
+        uses: $/.github/actions/resolve-lanes
+        with:
+          lanes: ${{ inputs.lanes }}
+          boards: ${{ inputs.boards }}
+          runner-class-linux: ${{ inputs.runner-class-linux }}
+          runner-class-linux-arm: ${{ inputs.runner-class-linux-arm }}
+          runner-class-macos: ${{ inputs.runner-class-macos }}
+          runner-class-windows: ${{ inputs.runner-class-windows }}
+          skip-macos: ${{ inputs.skip-macos }}
+          skip-windows: ${{ inputs.skip-windows }}
+          nightly: ${{ inputs.nightly }}
+          gpu-args: ${{ inputs.gpu-args }}
 
   linux:
     name: Full linux
@@ -229,13 +219,6 @@ jobs:
           lfs: ${{ inputs.lfs }}
           fetch-depth: 0
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          path: .ef-ci
-          persist-credentials: false
-
       - name: Caller environment
         if: ${{ inputs.env != '' }}
         env:
@@ -265,7 +248,7 @@ jobs:
           set -euo pipefail
           bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
 
-      - uses: ./.ef-ci/.github/actions/setup-rust
+      - uses: $/.github/actions/setup-rust
         with:
           components: rustfmt, clippy, llvm-tools-preview
           tools: nextest,cargo-llvm-cov
@@ -317,13 +300,6 @@ jobs:
           lfs: ${{ inputs.lfs }}
           fetch-depth: 0
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          path: .ef-ci
-          persist-credentials: false
-
       - name: Caller environment
         if: ${{ inputs.env != '' }}
         env:
@@ -350,7 +326,7 @@ jobs:
           set -euo pipefail
           bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
 
-      - uses: ./.ef-ci/.github/actions/setup-rust
+      - uses: $/.github/actions/setup-rust
         with:
           components: llvm-tools-preview
           tools: nextest,cargo-llvm-cov
@@ -404,13 +380,6 @@ jobs:
           lfs: ${{ inputs.lfs }}
           fetch-depth: 1
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          path: .ef-ci
-          persist-credentials: false
-
       - name: Caller environment
         if: ${{ inputs.env != '' }}
         env:
@@ -449,7 +418,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - uses: ./.ef-ci/.github/actions/setup-rust
+      - uses: $/.github/actions/setup-rust
         with:
           components: rustfmt, clippy, llvm-tools-preview
           tools: nextest,cargo-llvm-cov
@@ -586,13 +555,6 @@ jobs:
           lfs: ${{ inputs.lfs }}
           fetch-depth: 1
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          path: .ef-ci
-          persist-credentials: false
-
       - name: Caller environment
         if: ${{ inputs.env != '' }}
         env:
@@ -622,7 +584,7 @@ jobs:
           set -euo pipefail
           bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
 
-      - uses: ./.ef-ci/.github/actions/setup-rust
+      - uses: $/.github/actions/setup-rust
         with:
           components: rustfmt, clippy, llvm-tools-preview
           tools: nextest,cargo-llvm-cov
@@ -668,13 +630,6 @@ jobs:
           lfs: ${{ inputs.lfs }}
           fetch-depth: 1
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          path: .ef-ci
-          persist-credentials: false
-
       - name: Caller environment
         if: ${{ inputs.env != '' }}
         env:
@@ -705,7 +660,7 @@ jobs:
           set -euo pipefail
           bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
 
-      - uses: ./.ef-ci/.github/actions/setup-rust
+      - uses: $/.github/actions/setup-rust
         with:
           components: rustfmt, clippy, llvm-tools-preview
           tools: nextest,cargo-llvm-cov
@@ -744,13 +699,6 @@ jobs:
         with:
           fetch-depth: 1
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          path: .ef-ci
-          persist-credentials: false
-
       - name: Caller environment
         if: ${{ inputs.env != '' }}
         env:
@@ -787,7 +735,7 @@ jobs:
           name: ci-testdata
           path: testdata/
 
-      - uses: ./.ef-ci/.github/actions/board-run
+      - uses: $/.github/actions/board-run
         with:
           command: ${{ inputs.board-command }}
           extra-args: ${{ inputs.board-extra-args }}
@@ -806,13 +754,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          path: .ef-ci
-          persist-credentials: false
-      - uses: ./.ef-ci/.github/actions/setup-rust
+      - uses: $/.github/actions/setup-rust
         with:
           components: llvm-tools-preview
           tools: cargo-llvm-cov
@@ -898,12 +840,6 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          path: .ef-ci
-          persist-credentials: false
       - name: Caller environment
         if: ${{ inputs.env != '' }}
         env:
@@ -932,7 +868,7 @@ jobs:
         run: |
           set -euo pipefail
           bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
-      - uses: ./.ef-ci/.github/actions/setup-rust
+      - uses: $/.github/actions/setup-rust
         with:
           tools: cargo-hack
           cache-key: nightly-extras

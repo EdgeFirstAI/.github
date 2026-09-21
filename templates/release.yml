@@ -65,6 +65,12 @@ jobs:
       # env: PYO3_CROSS_PYTHON_VERSION=3.11
     permissions:
       contents: read
+      # `payloads` reads artifacts produced by sibling jobs in this run, and
+      # the shared job declares this unconditionally. A reusable workflow can
+      # only narrow what the call site holds, so a caller omitting it fails to
+      # start -- "requesting 'actions: read', but is only allowed
+      # 'actions: none'" -- whether or not it uses payloads.
+      actions: read
       # Build provenance for the wheels, generated in the job that built them.
       # Without these two the attestation step fails; `attest: false` opts out,
       # and ships wheels no consumer can verify.
@@ -88,10 +94,12 @@ jobs:
     needs: verify
     strategy:
       fail-fast: false            # one broken target must not hide the rest
-      # The documented default for a release build is the `larger` class (see
-      # the runner selection policy). These hosted labels are placeholders so a
-      # copied skeleton cannot bill before anyone has reviewed it; pick the
-      # class deliberately when you replace the build below.
+      # These hosted labels are free, and are where a release build starts.
+      # The billed `larger` class is available to this tier but not required
+      # by it: trade for it when this repository's measured build time says
+      # the minutes are worth buying, and leave it here when it does not.
+      # Either way the choice belongs in this file, made once, with the
+      # reason beside it — see the runner selection policy.
       matrix:
         include:
           - os: ubuntu-24.04

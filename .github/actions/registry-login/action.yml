@@ -1,0 +1,186 @@
+name: Registry login
+description: >
+  Authenticate to a container registry, deriving how from the registry's
+  hostname.
+
+  A project decides WHERE it publishes; the organisation decides HOW we
+  authenticate there. A repository names a registry and gets the right
+  credential, because the hostname already says which class it is and each
+  class draws on organisation-level configuration set once for the fleet:
+
+    ghcr.io                      the job's own GITHUB_TOKEN; needs
+                                 `packages: write` and nothing else
+    *.dkr.ecr.*.amazonaws.com    OIDC into AWS, then `aws ecr
+                                 get-login-password`; needs `id-token: write`
+                                 and the organisation variable
+                                 AWS_ECR_ROLE_ARN
+    docker.io                    the organisation secrets DOCKERHUB_USERNAME
+                                 and DOCKERHUB_TOKEN
+
+  Neither `vars` nor `secrets` is readable from inside a composite action, so
+  the calling workflow resolves both and passes them as inputs. That is the
+  only reason the credentials appear in the signature at all; a caller does
+  not choose them.
+
+  There is deliberately no override input. The hostname is unambiguous, and a
+  registry class this does not recognise fails with the list of the ones it
+  does — adding a fourth is a reviewed change here, not a per-repository
+  guess that works until it does not.
+
+  It is used at every end of a promotion, not only the destination: a
+  repository whose release build pushes candidates to ECR needs the same
+  resolution for its source registry.
+
+inputs:
+  registry:
+    description: >-
+      Registry host, or a host with a path (`ghcr.io/edgefirstai/profiler`).
+      Only the host is used for the login and for deriving the class.
+    required: true
+  role-arn:
+    description: >-
+      AWS role to assume for an ECR registry. The calling workflow passes the
+      organisation variable `AWS_ECR_ROLE_ARN`; neither `vars` nor `secrets`
+      is readable from inside a composite action, so every credential arrives
+      as an input and the organisation-level wiring lives in the workflow.
+    required: false
+    default: ""
+  aws-region:
+    description: >-
+      Region for the ECR login. Empty falls back to the region embedded in the
+      registry host, which is where it is already written down and cannot
+      disagree with the registry being logged into.
+    required: false
+    default: ""
+  dockerhub-username:
+    description: The organisation secret `DOCKERHUB_USERNAME`, passed by the caller.
+    required: false
+    default: ""
+  dockerhub-token:
+    description: The organisation secret `DOCKERHUB_TOKEN`, passed by the caller.
+    required: false
+    default: ""
+
+outputs:
+  host:
+    description: The registry host, with any path stripped.
+    value: ${{ steps.classify.outputs.host }}
+  kind:
+    description: "`ghcr`, `ecr` or `dockerhub`."
+    value: ${{ steps.classify.outputs.kind }}
+
+runs:
+  using: composite
+  steps:
+    - name: Classify the registry
+      id: classify
+      shell: bash
+      env:
+        REGISTRY: ${{ inputs.registry }}
+      run: |
+        set -euo pipefail
+        host="${REGISTRY%%/*}"
+        if [[ -z "$host" ]]; then
+          echo "::error::registry is empty"
+          exit 1
+        fi
+
+        region=""
+        case "$host" in
+          ghcr.io)
+            kind=ghcr ;;
+          docker.io|index.docker.io|registry-1.docker.io)
+            kind=dockerhub ;;
+          *.dkr.ecr.*.amazonaws.com|*.dkr.ecr.*.amazonaws.com.cn)
+            kind=ecr
+            # <account>.dkr.ecr.<region>.amazonaws.com -- the region is the
+            # fourth label, and it is authoritative for this registry whatever
+            # a default says.
+            region="$(cut -d. -f4 <<<"$host")" ;;
+          *)
+            echo "::error::unsupported registry '$host' — this action knows ghcr.io, *.dkr.ecr.*.amazonaws.com and docker.io. Add the class here rather than passing credentials per repository."
+            exit 1 ;;
+        esac
+
+        echo "host=$host" >> "$GITHUB_OUTPUT"
+        echo "kind=$kind" >> "$GITHUB_OUTPUT"
+        echo "region=$region" >> "$GITHUB_OUTPUT"
+        echo "::notice::$host is a $kind registry"
+
+    # GHCR takes the job's own token. Nothing organisation-level is needed,
+    # which is why it is the default every template ships with.
+    - name: Log in to GHCR
+      if: steps.classify.outputs.kind == 'ghcr'
+      uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4.2.0
+      with:
+        registry: ${{ steps.classify.outputs.host }}
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+
+    # OIDC rather than a stored key pair: the organisation configures one role
+    # whose trust policy names the repositories, and no long-lived AWS
+    # credential exists to leak or rotate. The job must grant `id-token:
+    # write`, and so must the caller, since a reusable workflow can only
+    # narrow what the call site already holds.
+    - name: Resolve the AWS role
+      if: steps.classify.outputs.kind == 'ecr'
+      id: aws
+      shell: bash
+      env:
+        ROLE_ARN: ${{ inputs.role-arn }}
+        REGION_INPUT: ${{ inputs.aws-region }}
+        REGION_DERIVED: ${{ steps.classify.outputs.region }}
+      run: |
+        set -euo pipefail
+        if [[ -z "$ROLE_ARN" ]]; then
+          echo "::error::ECR login needs a role to assume. Set the organisation variable AWS_ECR_ROLE_ARN; the calling workflow passes it through as role-arn."
+          exit 1
+        fi
+        echo "role-arn=$ROLE_ARN" >> "$GITHUB_OUTPUT"
+        echo "region=${REGION_INPUT:-$REGION_DERIVED}" >> "$GITHUB_OUTPUT"
+
+    - name: Assume the AWS role
+      if: steps.classify.outputs.kind == 'ecr'
+      uses: aws-actions/configure-aws-credentials@00943011d9042930efac3dcd3a170e4273319bc8  # v5.1.0
+      with:
+        role-to-assume: ${{ steps.aws.outputs.role-arn }}
+        aws-region: ${{ steps.aws.outputs.region }}
+
+    - name: Log in to ECR
+      if: steps.classify.outputs.kind == 'ecr'
+      shell: bash
+      env:
+        HOST: ${{ steps.classify.outputs.host }}
+        REGION: ${{ steps.aws.outputs.region }}
+      run: |
+        set -euo pipefail
+        # Piped rather than interpolated: the password never becomes a
+        # command-line argument, so it cannot surface in a process listing.
+        aws ecr get-login-password --region "$REGION" \
+          | docker login --username AWS --password-stdin "$HOST"
+
+    # Docker Hub has no OIDC, so this is the one class that needs a stored
+    # credential. One organisation secret, reaching here through the
+    # `secrets: inherit` every caller template already passes.
+    - name: Resolve the Docker Hub credential
+      if: steps.classify.outputs.kind == 'dockerhub'
+      id: dockerhub
+      shell: bash
+      env:
+        USERNAME: ${{ inputs.dockerhub-username }}
+        TOKEN: ${{ inputs.dockerhub-token }}
+      run: |
+        set -euo pipefail
+        if [[ -z "$USERNAME" || -z "$TOKEN" ]]; then
+          echo "::error::Docker Hub login needs DOCKERHUB_USERNAME and DOCKERHUB_TOKEN. A composite action cannot read secrets, so the calling workflow must pass them."
+          exit 1
+        fi
+        echo "ok=true" >> "$GITHUB_OUTPUT"
+
+    - name: Log in to Docker Hub
+      if: steps.dockerhub.outputs.ok == 'true'
+      uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4.2.0
+      with:
+        registry: ${{ steps.classify.outputs.host }}
+        username: ${{ inputs.dockerhub-username }}
+        password: ${{ inputs.dockerhub-token }}

@@ -117,7 +117,7 @@ prefix = sys.argv[2]
 components = []
 seen = set()
 for path in sorted(pathlib.Path(".").rglob(f"{prefix}*")):
-    if any(part in {".ef-ci", "target", "venv", ".venv", "node_modules", "sbom"} for part in path.parts):
+    if any(part in {"target", "venv", ".venv", "node_modules", "sbom"} for part in path.parts):
         continue
     doc = json.loads(path.read_text(encoding="utf-8"))
     for component in doc.get("components") or []:
@@ -138,7 +138,7 @@ with out.open("w", encoding="utf-8") as handle:
     handle.write("\n")
 print(f"merged {len(components)} components into {out}")
 PY
-    find . -name "${scan_prefix}*" -not -path "./.ef-ci/*" -delete
+    find . -name "${scan_prefix}*" -delete
   elif [[ -f pyproject.toml ]]; then
     if command -v uv >/dev/null 2>&1; then
       uv run --with 'cyclonedx-bom==7.3.0' cyclonedx-py environment \

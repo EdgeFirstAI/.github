@@ -41,16 +41,8 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Checkout shared CI
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          path: .ef-ci
-          persist-credentials: false
-
       - name: Setup Python / uv
-        uses: ./.ef-ci/.github/actions/setup-python-uv
+        uses: $/.github/actions/setup-python-uv
         with:
           python-version: ${{ inputs.python-version }}
           extra-args: ${{ inputs.extra-sync-args }}
@@ -68,7 +60,7 @@ jobs:
         run: uv run pytest ${{ inputs.pytest-args }}
 
       - name: Dependency license policy
-        uses: ./.ef-ci/.github/actions/sbom-tools
+        uses: $/.github/actions/sbom-tools
         with:
           mode: dependency
           project-name: ${{ inputs.project-name }}
