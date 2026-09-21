@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check CycloneDX SBOM license policy (Au-Zone SPS).
 
-Policy version: 2.0 (2025-11-24). This is the single org-wide copy.
+Policy version: 2.1 (2026-09-21). This is the single org-wide copy.
 
 Exit 0 when every component is allowed or an approved override.
 Exit 1 on blocked licenses, LGPL in Rust, or undocumented proprietary.
@@ -41,6 +41,7 @@ ALLOWED_LICENSES: Set[str] = {
     "OpenSSL",
     "IJG",
     "IJG-short",
+    "WTFPL",
 }
 
 # Composite expressions ("MIT OR Apache-2.0", "(MIT OR Apache-2.0) AND IJG")
@@ -374,6 +375,7 @@ SELF_TEST_CASES = [
     ("MIT AND Apache-2.0", True, "ok"),
     ("Apache-2.0 WITH LLVM-exception", True, "ok"),
     ("MIT", True, "ok"),
+    ("WTFPL", True, "ok"),
     ("MIT+", True, "ok"),
     ("mit or apache-2.0", True, "ok"),
     # Case-insensitivity is asserted on the BLOCKED side, not only the allowed

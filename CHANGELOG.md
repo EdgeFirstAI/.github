@@ -5,6 +5,16 @@ All notable changes to the EdgeFirstAI shared CI workflows are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-09-21
+
+### Changed
+
+- **`WTFPL` added to the license policy's allowed list.** It is public-domain-equivalent and grants strictly more than MIT, Unlicense and CC0-1.0, each of which the policy already allows, so admitting it narrows nothing.
+
+  It surfaced on profiler through `ratatui` → `ratatui-termwiz` → `termwiz` → `terminfo`. No default feature set compiles that path — `cargo tree -i terminfo` finds nothing — but `cargo cyclonedx` reports the resolved `cargo metadata` graph including optional dependencies that are not enabled, so the crate reaches the SBOM without reaching any binary. Every repository whose graph contains a WTFPL crate, compiled or not, failed the policy until now.
+
+  Policy version moves to 2.1. The marker records which policy an SBOM was judged against, and leaving it at 2.0 would let one version name two different allowed lists.
+
 ## [1.2.0] - 2026-09-20
 
 **Upgrading.** Two permissions are now declared by shared jobs and must be granted at the call site, because a reusable workflow can only narrow what its caller holds — a job that omits one fails to start rather than degrading. A `release-wheels.yml` caller adds `actions: read`; a `publish-container.yml` caller adds `id-token: write`, including one publishing only to GHCR. `templates/release.yml` and `templates/publish-container.yml` carry both. The `$/` syntax below also requires an Actions runner of 2.336.0 or newer.
@@ -408,6 +418,7 @@ Everything here is exercised by a real release: `EdgeFirstAI/ara2-rs` v0.18.0 wa
   precedence over `ci:hardware`. PyPI publish requires the reusable release
   job to succeed.
 
+[1.2.1]: https://github.com/EdgeFirstAI/.github/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/EdgeFirstAI/.github/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/EdgeFirstAI/.github/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/EdgeFirstAI/.github/releases/tag/v1.0.0
