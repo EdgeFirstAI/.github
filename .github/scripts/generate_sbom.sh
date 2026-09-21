@@ -16,7 +16,7 @@
 #   NOTICE_FILE           default: NOTICE
 #   SCRIPT_DIR            directory containing the sibling Python policy scripts
 #
-# Policy version: 2.0 (2025-11-24)
+# Policy version: 2.1 (2026-09-21)
 
 set -euo pipefail
 
