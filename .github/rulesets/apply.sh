@@ -4,7 +4,8 @@
 #
 # Target list in protect-main*.json grows one repository at a time, as each
 # one gains a ci-gate job. Do not apply ci-gate to the whole org until every
-# repository has the check. Current: .github, ci-foundation-scratch, hal.
+# repository has the check. Current: .github, ci-foundation-scratch, hal,
+# profiler.
 #
 # A repository listed here must have its own hand-made protect-main and
 # protect-release-tags rulesets deleted, or the two layers both apply and no
