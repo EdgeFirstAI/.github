@@ -5,25 +5,25 @@ All notable changes to the EdgeFirstAI shared CI workflows are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.3.0] - 2026-09-22
+## [2.0.0] - 2026-09-22
+
+**Upgrading.** Nothing to do. `publish-pypi` is removed, and no repository referenced it: `hal`, `ara2-rs`, `client`, `videostream`, `tflite-rs` and `schemas` each call `pypa/gh-action-pypi-publish` directly from their own job, which is the supported usage and is untouched here. The major bump records that a published action was withdrawn, not that anything has to change.
+
+### Removed
+
+- **`publish-pypi`. It could not upload, and never did.** It was introduced in 1.2.0; profiler was its only consumer, adopted it in the tiered migration, and v1.17.0 was the first tag to reach it. It failed there, after the images had been promoted and the archives uploaded, leaving the wheels unpublished and the GitHub release a draft.
+
+  `pypa/gh-action-pypi-publish` resolves its own container image from the repository it is called from, and identifies itself by numeric repository ID. Called through an action of ours it sees `EdgeFirstAI/.github` instead, takes its "this is a fork, pull its prebuilt image" path, and runs `docker run ghcr.io/EdgeFirstAI/.github:<sha>` — an image that is rejected as a reference, because a repository name must be lowercase, and does not exist in any case. No input fixes it, and no pin does either: v1.14.2, which `hal` and `ara2-rs` already use, resolves the image the same way. The upload has to be a direct step of the calling job.
+
+  It is removed rather than deprecated because there is nothing to keep working. A deprecated copy would have been a broken action retained for no caller.
 
 ### Added
 
-- **`stage-pypi`, which selects one distribution's files into `dist/` and asserts their version.** It is `publish-pypi` without the upload. The caller runs `pypa/gh-action-pypi-publish` as a direct step of its own job, which is the only place that action works.
+- **`stage-pypi`, which selects one distribution's files into `dist/` and asserts their version.** It is `publish-pypi` without the upload, and it is what was actually shareable: the selection is by wheel filename, so nothing has to agree in advance about how a build names its artifacts. The caller runs `pypa/gh-action-pypi-publish` as a direct step of its own job.
 
-### Deprecated
+  `templates/publish.yml` keeps its `publish-pypi` **job** — the job name is unchanged and Trusted Publishing still requires it to live in the product repository — and carries the two-step shape.
 
-- **`publish-pypi`. It cannot upload, and now fails with that explanation instead of failing inside `docker`.** Everything up to the upload is unchanged, so a rehearsal behaves exactly as before; a real publish stops with a message naming `stage-pypi` and the step to add.
-
-  Nothing regressed: the action was introduced in 1.2.0 and never successfully published. profiler was its only consumer, adopted it in the tiered migration, and v1.17.0 was the first tag to reach it.
-
-  `pypa/gh-action-pypi-publish` resolves its own container image from the repository it is called from, and identifies itself by numeric repository ID. Called through an action of ours it sees `EdgeFirstAI/.github` instead, takes its "this is a fork, pull its prebuilt image" path, and runs `docker run ghcr.io/EdgeFirstAI/.github:<sha>` — an image that is rejected as a reference, because a repository name must be lowercase, and does not exist in any case. No input fixes it: the upload has to be a direct step of the calling job.
-
-  It failed on profiler's v1.17.0 tag, after the images had been promoted and the archives uploaded, leaving the wheels unpublished and the GitHub release a draft. No other repository is affected and none has to migrate: `hal`, `ara2-rs`, `client`, `videostream`, `tflite-rs` and `schemas` never referenced this action — each calls `pypa/gh-action-pypi-publish` directly from its own job, which is the supported usage and keeps working untouched. `templates/publish.yml` taught the nesting, though, so the next repository onboarded would have hit it on its first real tag.
-
-  Pinning a newer `pypa/gh-action-pypi-publish` does not help. v1.14.2, which `hal` and `ara2-rs` already use, resolves the image the same way.
-
-  **Migrating.** Replace the `publish-pypi` reference with `stage-pypi`, drop the `publish` and `skip-existing` inputs, and add an upload step gated on what `publish` used to carry. `templates/publish.yml` carries the shape.
+  Its first consumers are `profiler`, which stages the wheels before attaching them to the profiler-cli release, and `profiler-cli`, which stages them again before uploading.
 
 ## [1.2.2] - 2026-09-21
 
@@ -448,7 +448,7 @@ Everything here is exercised by a real release: `EdgeFirstAI/ara2-rs` v0.18.0 wa
   precedence over `ci:hardware`. PyPI publish requires the reusable release
   job to succeed.
 
-[1.3.0]: https://github.com/EdgeFirstAI/.github/compare/v1.2.2...v1.3.0
+[2.0.0]: https://github.com/EdgeFirstAI/.github/compare/v1.2.2...v2.0.0
 [1.2.2]: https://github.com/EdgeFirstAI/.github/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/EdgeFirstAI/.github/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/EdgeFirstAI/.github/compare/v1.1.0...v1.2.0

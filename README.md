@@ -23,7 +23,7 @@ The organisation profile README lives in [`profile/`](profile/README.md).
 | `.github/workflows/release-wheels.yml` | release-branch side: maturin wheels for a PyO3 binding, built on the `maturin-build` action |
 | `.github/workflows/publish-rust.yml` | tag side: resolve the build, verify the tree, crates OIDC, GitHub Release |
 | `.github/workflows/publish-container.yml` | tag side: promote the release build's recorded image digests, unchanged |
-| `.github/actions/` | `setup-rust`, `setup-python-uv`, `sbom-tools`, `board-run`, `resolve-release-build`, `resolve-lanes`, `verify-workspace-versions`, `maturin-build`, `wheel-data`, `stage-pypi`, `publish-pypi` (deprecated), `record-image-digests`, `registry-login`, `workflow-lint` |
+| `.github/actions/` | `setup-rust`, `setup-python-uv`, `sbom-tools`, `board-run`, `resolve-release-build`, `resolve-lanes`, `verify-workspace-versions`, `maturin-build`, `wheel-data`, `stage-pypi`, `record-image-digests`, `registry-login`, `workflow-lint` |
 | `.github/scripts/` | license policy, the SHA-pin check, the workspace version check, lane resolution, wheel data staging, the runner-fleet converger (single copy each) |
 | `.github/rulesets/` | `protect-main` (reviews; org-admin PR bypass), `protect-main-ci` (ci-gate, no bypass), `protect-release-tags` |
 | `.github/rulesets/runners.json` | declarative runner groups, visibility and labels |
