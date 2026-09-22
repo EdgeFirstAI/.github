@@ -51,13 +51,14 @@
 # convention meaning of its own. RUNNER_NAME is the board identity labels are
 # derived from (family[-board][-equipment], per runner-groups.md's label
 # convention) and defaults to SSH_ALIAS when omitted. The two are frequently
-# not the same string: an SSH alias like `rpi5-hailo` is whatever the box
-# happened to get called, but the board identity per convention is
-# `rpi5-hailo8l` (family `rpi5` plus equipment `hailo8l`) -- pass
-# `rpi5-hailo=rpi5-hailo8l` to reach the former and register/label the
-# latter. The board's own on-device `hostname` is never used for either
-# purpose: several boards share a build hostname (both Ezurio units report
-# "summit"), and GitHub runner names must be unique per org.
+# not the same string: an SSH alias is often just whatever the box happened
+# to get called when it was set up, while RUNNER_NAME needs to be the
+# convention-correct family/board/equipment identity -- e.g. an alias that
+# only names a fitted accelerator informally may need
+# `alias=family-equipment` to register and label correctly. The board's own
+# on-device `hostname` is never used for either purpose: multiple boards of
+# the same type can report an identical build hostname, and GitHub runner
+# names must be unique per org.
 
 set -euo pipefail
 
