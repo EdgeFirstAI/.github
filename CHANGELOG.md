@@ -5,6 +5,18 @@ All notable changes to the EdgeFirstAI shared CI workflows are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-09-22
+
+### Changed
+
+- **`publish-pypi` is renamed `stage-pypi` and no longer uploads.** It selects one distribution's files into `dist/` and asserts their version, as before; the caller now runs `pypa/gh-action-pypi-publish` as a direct step of its own `publish-pypi` job.
+
+  That action resolves its own container image from the repository it is called from, and identifies itself by numeric repository ID. Called through an action of ours it sees `EdgeFirstAI/.github` instead, takes its "this is a fork, pull its prebuilt image" path, and runs `docker run ghcr.io/EdgeFirstAI/.github:<sha>` — an image that both is rejected as a reference, because a repository name must be lowercase, and does not exist. It cannot be nested in a composite action at all.
+
+  It failed on profiler's v1.17.0 tag, after the images had been promoted and the archives uploaded: the wheels did not go out and the GitHub release stayed a draft. No other repository was affected — every other caller already ran the upload directly — but `templates/publish.yml` taught the nesting, so the next repository onboarded would have hit it on its first real tag.
+
+  **Upgrading.** A caller replaces its `publish-pypi` action reference with `stage-pypi`, drops the `publish` and `skip-existing` inputs, and adds an upload step gated on what `publish` used to carry. `templates/publish.yml` carries the shape.
+
 ## [1.2.2] - 2026-09-21
 
 ### Changed
@@ -428,6 +440,7 @@ Everything here is exercised by a real release: `EdgeFirstAI/ara2-rs` v0.18.0 wa
   precedence over `ci:hardware`. PyPI publish requires the reusable release
   job to succeed.
 
+[1.3.0]: https://github.com/EdgeFirstAI/.github/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/EdgeFirstAI/.github/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/EdgeFirstAI/.github/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/EdgeFirstAI/.github/compare/v1.1.0...v1.2.0

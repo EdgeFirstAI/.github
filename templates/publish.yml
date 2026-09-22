@@ -70,16 +70,17 @@ jobs:
   # (https://docs.pypi.org/trusted-publishers/troubleshooting/). This job stays
   # here. Re-check pypi/warehouse#11096 / PR 20083; if merged, fold it into
   # publish-rust.yml. Composite actions from the shared repo are fine inside
-  # it — only reusable workflows change the claim.
+  # it — only reusable workflows change the claim — but the upload itself is
+  # not one of them, for the reason on the upload step below.
   #
   # The artifacts were staged into this run by the job above, so this is a
   # plain download with no run-id and no actions: read of its own.
   publish-pypi:
     needs: publish
-    # Runs on a rehearsal too, and only the upload is gated inside the action.
-    # A rehearsal whose job is skipped proves nothing about the files; the
-    # point of rehearsing is to discover an empty or wrong set BEFORE the tag,
-    # not after the crates have already gone out.
+    # Runs on a rehearsal too: staging is unconditional and only the upload
+    # step is gated. A rehearsal whose job is skipped proves nothing about the
+    # files; the point of rehearsing is to discover an empty or wrong set
+    # BEFORE the tag, not after the crates have already gone out.
     if: ${{ always() && needs.publish.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -95,14 +96,27 @@ jobs:
       #
       # One call per distribution. A repository shipping several needs that
       # anyway, since each has its own PyPI environment.
-      - uses: EdgeFirstAI/.github/.github/actions/publish-pypi@0000000000000000000000000000000000000000
+      - uses: EdgeFirstAI/.github/.github/actions/stage-pypi@0000000000000000000000000000000000000000
         with:
           distribution: your-distribution-name
           # Asserts every selected file carries it. A PyPI version is immutable,
           # so a file for the wrong one is found when it cannot be corrected.
           version: ${{ needs.publish.outputs.version }}
-          # publish-registries, not publishing: false for a rehearsal AND for a
-          # release candidate whose manifests still carry the base version,
-          # where uploading would consume the version the final release needs.
-          # The shared workflow decides; this job obeys.
-          publish: ${{ needs.publish.outputs.publish-registries }}
+
+      # Directly in the job, never through a composite action. This action
+      # resolves its own container image from the repository it is called
+      # from; called through one of ours it resolves to that repository and
+      # fails on an image that does not exist.
+      #
+      # publish-registries, not publishing: false for a rehearsal AND for a
+      # release candidate whose manifests still carry the base version, where
+      # uploading would consume the version the final release needs. The
+      # shared workflow decides; this job obeys.
+      - name: Upload to PyPI
+        if: ${{ needs.publish.outputs.publish-registries == 'true' }}
+        uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e  # v1.13.0
+        with:
+          packages-dir: dist
+          # A release shipping several distributions can fail part way
+          # through, and the retry must not fail on the ones that landed.
+          skip-existing: true
