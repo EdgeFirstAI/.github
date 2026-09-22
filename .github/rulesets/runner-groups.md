@@ -1,6 +1,8 @@
 # Self-hosted runner groups
 
-Organisation, not access control. Labels describe what a machine has and are what a workflow selects on; the group just gathers runners under a name. **No group is scoped to a repository list.** Every group is `visibility: all`, reachable by every repository in the organisation, and `runners.json` has no way to express anything else. Desired state lives in [`runners.json`](runners.json) and is applied by [`apply_runners.py`](../scripts/apply_runners.py) — edit the JSON in a pull request rather than clicking through organisation settings, which is how the fleet drifted from this document in the first place.
+Organisation, not access control. Labels describe what a machine has and are what a workflow selects on; the group just gathers runners under a name. **No group is scoped to a repository list.** Every group is `visibility: all`, reachable by every repository in the organisation. Group settings live in [`runners.json`](runners.json) and are applied by [`apply_runners.py`](../scripts/apply_runners.py) — edit the JSON in a pull request rather than clicking through organisation settings, which is how the fleet drifted from this document in the first place.
+
+This repository is `EdgeFirstAI/.github`, which is public, so `runners.json` names groups only — category configuration, not machines. The fleet's actual composition lives in Confluence ("CICD Pipelines").
 
 A repository access list bounded which repositories could reach a runner, never which events could. It cannot distinguish a fork's pull request from the base repository's own push, because both run under the base repository's name.
 
@@ -22,6 +24,8 @@ Treat this as the boundary for self-hosted capacity. `resolve_lanes.py` hardens 
 
 `visibility` and `allows_public_repositories` are both declared per group and reconciled, and they travel in a single PATCH. A group narrowed to `selected` through the web UI is drift the converger catches. `allows_public_repositories` must stay `true` — the consuming repositories are themselves public, and that flag gates whether a public repository may use a group at all, so a group flipped to `false` strands every one of them while nothing else looks wrong.
 
+This is the only state `runners.json` tracks; a runner's labels and group membership are applied directly through the API at provisioning time instead (see "Registering a runner" below).
+
 ## Applying
 
 ```bash
@@ -32,74 +36,41 @@ python3 .github/scripts/apply_runners.py             # apply
 
 ## Registering a runner
 
-**Register with no custom labels.** Do not pass `--labels` to `config.sh` — let the agent assert only its defaults (`self-hosted` plus OS and architecture). Every custom label is added afterwards through the API, by `apply_runners.py` from `runners.json`. That way the converger owns every custom label a runner has: a board that is re-provisioned or re-registered comes back label-less, and the converger restores its identity entirely from the declarative file rather than from whatever was typed at the console.
+**Register with no custom labels.** Do not pass `--labels` to `config.sh` — let the agent assert only its defaults (`self-hosted` plus OS and architecture). A label set there is reasserted by the agent on every reconnect, which fights any label applied afterwards through the API over casing or content. Every custom label is applied through the API instead, once, at provisioning time:
 
-`mltrain-02`, `mltrain-03` and `mltrain-04` predate this rule and were registered with `--labels`.
-
-## The fleet
-
-Every machine is a dedicated box running a persistent, service-installed runner (`svc.sh`). **One runner instance per device is policy**, and with no workflow-level concurrency group on the board lane it is the only guarantee that a physical board runs one job at a time. Ephemeral runners are a future consideration, most likely a k8s cluster.
-
-| Runner | Group | Labels | Notes |
-| --- | --- | --- | --- |
-| `ubuntubuild` | `build-x86` | `self-hosted,Linux,X64,build` | General Linux build capacity; answers `runner-class-linux: fleet` |
-| `JENKINSW10BUILD` | `windows` | `self-hosted,X64,Windows,build` | Answers `runner-class-windows: fleet`. Not `d3d11`: it has no GPU |
-| `mltrain-02` | `gpu-cuda` | `self-hosted,Linux,X64,CUDA` | GPU-only; answers `lanes: gpu`. Casing predates the lowercase convention |
-| `mltrain-03` | `gpu-cuda` | `self-hosted,Linux,X64,CUDA` | GPU-only. Casing predates the lowercase convention |
-| `mltrain-04` | `yocto` | `self-hosted,Linux,X64,Yocto` | Shared with Jenkins during the Yocto migration. Casing predates the lowercase convention |
-| `imx8mpevk-08` | `boards` | `…,ARM64,imx8mp,imx8mp-evk,imx8mp-evk-6.12.34-2.1.0` | Plus legacy `nxp-imx8mp-latest` and `nxp-imx8mp-6.12.34-2.1.0` |
-| `imx8mpevk-04` | `boards` | `…,ARM64,imx8mp,imx8mp-evk` | Plus legacy `imx8mpevk`. Does not carry `nxp-imx8mp-latest` |
-
-`mltrain-02` and `mltrain-03` must have `git-lfs` preinstalled: the CI user has no passwordless sudo on either box, so the GPU lane requires it rather than installing it.
-
-**Accepted risk on `mltrain-04`:** `yocto-build.yml`'s `concurrency` group coordinates GitHub Actions jobs within the calling repository only. A Jenkins bitbake on the same box is invisible to it and can still overlap a GitHub-triggered build, despite the RAM and sstate contention that group exists to prevent. The mitigation is completing the Yocto migration off Jenkins, not a lock; there is no cross-scheduler lock available.
-
-`imx8mpevk-04` is in `boards` and carries the family and identity labels, but not `nxp-imx8mp-latest` — the deprecated label `hal` still targets. The two EVKs deliberately run different BSPs, so that legacy label stays on `imx8mpevk-08` alone rather than extending it to a second board with a different BSP than the one it names. `hal`'s move to `imx8mp-evk` retires the need for it and is robust to the BSP variance by design.
-
-`mac` exists and is empty; no macOS machine is provisioned. The same is true of `linux-arm`: `resolve_lanes.py`'s `FLEET` tuple for it names a machine that does not exist, so `runner-class-linux-arm: fleet` queues until timeout, silently.
-
-`larger-runners` **contains no runners** — the billed GitHub larger runners are all still in `Default` — and it is no longer scoped either. Restricting billed capacity is the closing ticket of the CI epic, once the main repositories have migrated onto internal runners. Whatever mechanism that ticket picks, it starts from an unrestricted state rather than from the stale `hal`/`packaging` list that used to sit here and enforced nothing.
+- **A board** gets its labels *derived* from its own registered name — family, identity and equipment, per the label convention below — by [`provision_runner.sh`](../scripts/provision_runner.sh). Group membership is set in the same step via `config.sh --runnergroup boards`. Nothing about a board's identity is stored in this repository: if a board is reflashed or re-registered, re-running its provisioning step reconstructs its labels from its name, the same way every time. The SSH host used to reach a board and the name it registers under are not required to match — see the script's usage comment.
+- **A non-board runner** (a build box, a CUDA host, the Yocto builder) has labels that don't follow a derivable naming pattern, so they're applied by hand with a single `gh api` call when the machine is set up, the same as a board's used to be applied from `runners.json`. This is a one-time step, not an ongoing declarative spec: these machines are stable and don't drift the way a board that gets reflashed does.
 
 ## Label convention
 
-Labels are generative, not a maintained list: a runner is described by four facts, and its label set follows from them. That is what will let provisioning derive labels later instead of someone maintaining a table.
+Labels are generative, not a maintained list: a runner is described by four facts, and its label set follows from them mechanically. This is what lets provisioning derive labels instead of anyone maintaining a table.
 
-- **family** — the processor family, e.g. `imx8mp`, `imx95`, `rpi5`, `rk3855`, `orin`.
-- **board** — the board within that family, e.g. `frdm`, `evk`. Omitted when the family name is the whole board (a Raspberry Pi 5 has no separate board slot).
-- **equipment** — zero or more fitted extras, e.g. `hailo8l`, `ara240`.
-- **bsp** — the pinned BSP version, when known, e.g. `6.12.34-2.1.0`.
+- **family** — the processor family, e.g. an NXP i.MX or Rockchip part number, an NVIDIA Jetson line.
+- **board** — the board within that family. Omitted when the family name is the whole board (some product lines have no separate board slot).
+- **equipment** — zero or more fitted extras (an accelerator, a HAT, a carrier option).
+- **bsp** — the pinned BSP version, when known.
 
-| Label | Form | Example |
-| --- | --- | --- |
-| family | `<family>` | `imx8mp` |
-| identity | `<family>-<board>` | `imx8mp-frdm` |
-| pinned BSP | `<identity>-<bsp>` | `imx8mp-frdm-6.12.34-2.1.0` |
-| equipment, bare | `<equipment>` | `ara240` |
-| equipment, compound | `<identity>-<equipment>` | `imx8mp-frdm-ara240` |
+| Label | Form |
+| --- | --- |
+| family | `<family>` |
+| identity | `<family>-<board>` |
+| pinned BSP | `<identity>-<bsp>` |
+| equipment, bare | `<equipment>` |
+| equipment, compound | `<identity>-<equipment>` |
 
-Worked examples:
+Worked examples, using placeholders rather than any specific board:
 
-- An `imx8mp-frdm` fitted with an ara240 generates `imx8mp`, `imx8mp-frdm`, `ara240` and `imx8mp-frdm-ara240`, plus a pinned-BSP label once the BSP is known.
-- An `rpi5` fitted with a Hailo generates `rpi5`, `hailo8l` and `rpi5-hailo8l` — family and identity coincide, since the family name is the whole board, so there is no separate identity label to duplicate.
-- A non-board service runner (a build box, a CUDA host, the Yocto builder) carries capability labels only: `build`, `CUDA`, `Yocto`.
+- A `<family>-<board>` fitted with `<equipment>` generates `<family>`, `<family>-<board>`, `<equipment>` and `<family>-<board>-<equipment>`, plus a pinned-BSP label once the BSP is known.
+- A `<family>` whose family name is the whole board, fitted with `<equipment>`, generates `<family>`, `<equipment>` and `<family>-<equipment>` — family and identity coincide, since there is no separate board slot to name, so there is no separate identity label to duplicate.
+- A non-board service runner (a build box, a CUDA host, the Yocto builder) carries capability labels only, with no family/identity/equipment structure at all.
 
-Board identities in use, SoC-prefixed only where the board name alone is ambiguous across SoCs:
+**Every label reference is written exactly as GitHub reports it**, so a reader can compare against `gh api .../runners` without translating. New custom labels are lowercase and hyphen-separated. A small number of pre-existing labels keep whatever casing they were first registered with, because GitHub's organisation-wide label registry fixes a label's casing at first creation and the API cannot change it thereafter — check `gh api orgs/EdgeFirstAI/actions/runners` before introducing a label that might collide on casing with one already in use. GitHub's auto-assigned labels are written as GitHub capitalises them: `self-hosted`, `Linux`, `X64`, `ARM64`, `Windows`, `macOS`. Matching is case-insensitive throughout, so none of this costs anything at runtime.
 
-```text
-imx8mp-frdm      imx95-frdm       orin-nano    rpi5
-imx8mp-evk       imx95-frdm-pro   orin-agx     rpi5-hailo8l
-imx8mp-phytec    imx95-evk        rk3855       imx8mp-maivin
-imx8mp-ezurio    imx95-phytec                  imx8mp-raivin
-imx8mp-verdin    imx95-verdin                  imx8mp-frdm-ara240
-```
+**The bare identity label matches any board of that identity regardless of BSP** — boards of the same identity may deliberately run different BSPs, so a caller using the bare label is robust to that variance by design. A pinned label targets one specific BSP by appending its numeric version to the identity. Version tails are numeric so they never read as an equipment suffix.
 
-**Every label reference is written exactly as GitHub reports it**, so a reader can compare a file against `gh api .../runners` without translating. New custom labels we create are lowercase and hyphen-separated. `CUDA` and `Yocto` are the exception and keep their registered casing, because GitHub's organisation-wide label registry fixes a label's casing at first creation and the API cannot change it thereafter. GitHub's auto-assigned labels are written as GitHub capitalises them: `self-hosted`, `Linux`, `X64`, `ARM64`, `Windows`, `macOS`. Matching is case-insensitive throughout, so none of this costs anything at runtime.
+**The compound equipment label exists only when the equipment is optional for that identity.** Some units of a given board carry an accelerator and some don't, so a caller can ask for either the family or specifically the equipped ones. Equipment that's intrinsic to every unit of a board (never optional) doesn't earn a compound label — the bare board identity plus the bare capability label is enough, since a compound of the two would never narrow anything beyond what the board identity already does.
 
-**The bare identity label matches any board of that identity regardless of BSP** — boards of the same identity may deliberately run different BSPs, so a caller using the bare label is robust to that variance by design. A pinned label targets one specific BSP by appending its numeric version: `imx8mp-evk-6.12.34-2.1.0`. Version tails are numeric so they never read as an equipment suffix.
-
-**The compound equipment label exists only when the equipment is optional for that identity.** `rpi5-hailo8l` earns its place because some Pi 5s carry the Hailo HAT and some do not, so a caller can ask for either the family or specifically the Hailo-equipped ones. A Jetson's CUDA is intrinsic to the board, not optional equipment, so `orin-nano` plus the bare `CUDA` label is enough and `orin-nano-cuda` would be a compound that never narrows anything.
-
-Legacy labels (`nxp-imx8mp-latest`, `imx8mpevk`) are retained until the epic wraps up, because `hal` pins the shared workflow at a SHA and names `nxp-imx8mp-latest` directly. They predate this convention and are not remade to fit it.
+`provision_runner.sh`'s `BOARD_FAMILIES` and `CAPABILITY_SUFFIXES` arrays are this convention's vocabulary in code form — extend them there when a new family or equipment type is provisioned, and see Confluence for the fleet's actual current composition.
 
 ## Creating a group
 

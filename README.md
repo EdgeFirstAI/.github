@@ -26,7 +26,7 @@ The organisation profile README lives in [`profile/`](profile/README.md).
 | `.github/actions/` | `setup-rust`, `setup-python-uv`, `sbom-tools`, `board-run`, `resolve-release-build`, `resolve-lanes`, `verify-workspace-versions`, `maturin-build`, `wheel-data`, `stage-pypi`, `record-image-digests`, `registry-login`, `workflow-lint` |
 | `.github/scripts/` | license policy, the SHA-pin check, the workspace version check, lane resolution, wheel data staging, the runner-fleet converger (single copy each) |
 | `.github/rulesets/` | `protect-main` (reviews; org-admin PR bypass), `protect-main-ci` (ci-gate, no bypass), `protect-release-tags` |
-| `.github/rulesets/runners.json` | declarative runner groups, visibility and labels |
+| `.github/rulesets/runners.json` | declarative runner *group settings* only (visibility, public-repository access) — no runner names; see `runner-groups.md` |
 | `templates/` | per-repo `ci.yml`, `nightly.yml`, `release.yml`, `tag-release.yml`, `publish.yml`, the container pair `release-container.yml` / `publish-container.yml`, plus `CODEOWNERS` and `dependabot.yml` |
 
 ## Pinning
@@ -86,6 +86,6 @@ gh auth refresh -h github.com -s admin:org
 bash .github/rulesets/apply.sh
 ```
 
-Runner groups, visibility and labels are declared in `.github/rulesets/runners.json` and applied with `.github/scripts/apply_runners.py` (`--dry-run` first). Machines are installed with the stock GitHub runner installer and registered as services with `svc.sh`; the procedure lives in Confluence.
+Runner group visibility and public-repository access are declared in `.github/rulesets/runners.json` and applied with `.github/scripts/apply_runners.py` (`--dry-run` first) — no runner names live in either. Boards are provisioned and labelled by `.github/scripts/provision_runner.sh`, which derives labels from the board's own name at registration time rather than from a committed spec. Machines are registered as services with `svc.sh`; the fleet's actual composition and the non-board install procedure live in Confluence.
 
 Set organisation Copilot custom instructions to `.github/copilot-instructions.md`.
