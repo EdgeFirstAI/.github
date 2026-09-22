@@ -2,11 +2,19 @@
 #
 # Requires: gh auth refresh -h github.com -s admin:org
 #
-# Target list in protect-main*.json grows one repository at a time, as each
-# one gains a ci-gate job. Do not apply ci-gate to the whole org until every
-# repository has the check. Current: .github, ci-foundation-scratch, hal.
+# protect-main*.json target the organisation custom property `ci_tier`, not a
+# list of repository names: a repository is covered once it is set to `tiered`,
+# which is a setting on that repository rather than an edit here. Onboard one
+# with
 #
-# A repository listed here must have its own hand-made protect-main and
+#   gh api --method PATCH orgs/EdgeFirstAI/properties/values \
+#     -f 'repository_names[]=<repo>' \
+#     -f 'properties[][property_name]=ci_tier' -f 'properties[][value]=tiered'
+#
+# Set it only once the repository has a ci-gate check, or its main branch
+# requires a check that can never report. Nothing enforces that ordering.
+#
+# A repository set to `tiered` must have its own hand-made protect-main and
 # protect-release-tags rulesets deleted, or the two layers both apply and no
 # single file is the source of truth. See the EDGEAI-1554 close-out.
 # protect-release-tags stays ~ALL so v* tags cannot be created by hand in any
