@@ -5,6 +5,12 @@ All notable changes to the EdgeFirstAI shared CI workflows are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`publish-rust.yml`'s `cargo publish` step now issues one multi-package invocation instead of looping per package.** For a workspace with an inter-dependency — `ara2` depending on `ara2-sys = "^X.Y.Z"` — the loop's second `cargo publish -p ara2 --dry-run` could never resolve: a dry run never actually uploads `ara2-sys`, so by the time the loop reached `ara2` the crates.io index still had no `X.Y.Z` to satisfy the requirement, and the rehearsal failed with `failed to select a version for the requirement`. This was not specific to `ara2-rs`'s tree; it fails identically for any inter-dependent workspace, on every rehearsal, regardless of what changed. `cargo publish -p foo -p bar` (stable since cargo 1.90) resolves every named package against the workspace graph in one pass, so the dependency is satisfied locally instead of through the registry. A real (non-rehearsal) publish is unaffected either way, since each package genuinely lands on the index before the next needs it.
+
 ## [2.0.0] - 2026-09-22
 
 **Upgrading.** Nothing to do. `publish-pypi` is removed, and no repository referenced it: `hal`, `ara2-rs`, `client`, `videostream`, `tflite-rs` and `schemas` each call `pypa/gh-action-pypi-publish` directly from their own job, which is the supported usage and is untouched here. The major bump records that a published action was withdrawn, not that anything has to change.

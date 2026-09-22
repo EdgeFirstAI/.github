@@ -274,11 +274,23 @@ jobs:
             echo "Packaging only, nothing is uploaded (rehearsal, or a candidate on the base version)."
           fi
           if [[ -n "$PACKAGES" ]]; then
-            # Dependency order matters: crates.io is the one target where a
-            # partial publish cannot be undone by re-running the job.
+            # One multi-package invocation (`-p foo -p bar`, stable since
+            # cargo 1.90) rather than a `cargo publish -p` loop. cargo
+            # resolves an inter-dependency such as `bar = { path = ..,
+            # version = "^X.Y.Z" }` against the workspace graph for every
+            # package named on the same command line, not just the first.
+            # A loop cannot do this on a dry run: dry-run never actually
+            # uploads, so by the second iteration the first package still
+            # is not on the index, and resolving the second package's
+            # dependency on it fails -- not a rehearsal of anything, a
+            # rehearsal that cannot pass for any workspace with an
+            # inter-dependency. cargo still publishes in dependency order
+            # regardless of the order these flags are given.
+            pkg_args=()
             for pkg in $PACKAGES; do
-              cargo publish -p "$pkg" "${args[@]}"
+              pkg_args+=(-p "$pkg")
             done
+            cargo publish "${pkg_args[@]}" "${args[@]}"
           else
             cargo publish "${args[@]}"
           fi
