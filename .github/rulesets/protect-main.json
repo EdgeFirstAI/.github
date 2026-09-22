@@ -11,11 +11,20 @@
   ],
   "conditions": {
     "ref_name": {
-      "include": ["refs/heads/main"],
+      "include": [
+        "refs/heads/main"
+      ],
       "exclude": []
     },
-    "repository_name": {
-      "include": [".github", "ci-foundation-scratch", "hal"],
+    "repository_property": {
+      "include": [
+        {
+          "name": "ci_tier",
+          "property_values": [
+            "tiered"
+          ]
+        }
+      ],
       "exclude": []
     }
   },
@@ -28,7 +37,10 @@
         "require_code_owner_review": true,
         "require_last_push_approval": false,
         "required_review_thread_resolution": false,
-        "allowed_merge_methods": ["merge", "squash"]
+        "allowed_merge_methods": [
+          "merge",
+          "squash"
+        ]
       }
     }
   ]

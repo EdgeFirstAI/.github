@@ -5,17 +5,30 @@
   "bypass_actors": [],
   "conditions": {
     "ref_name": {
-      "include": ["refs/heads/main"],
+      "include": [
+        "refs/heads/main"
+      ],
       "exclude": []
     },
-    "repository_name": {
-      "include": [".github", "ci-foundation-scratch", "hal"],
+    "repository_property": {
+      "include": [
+        {
+          "name": "ci_tier",
+          "property_values": [
+            "tiered"
+          ]
+        }
+      ],
       "exclude": []
     }
   },
   "rules": [
-    { "type": "deletion" },
-    { "type": "non_fast_forward" },
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "non_fast_forward"
+    },
     {
       "type": "required_status_checks",
       "parameters": {

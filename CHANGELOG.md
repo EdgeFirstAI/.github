@@ -5,6 +5,16 @@ All notable changes to the EdgeFirstAI shared CI workflows are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] - 2026-09-21
+
+### Changed
+
+- **`protect-main` and `protect-main-ci` target the organisation custom property `ci_tier` rather than a list of repository names.** A repository is covered once it is set to `ci_tier=tiered`, which is a setting on that repository; onboarding no longer means editing a central file here and re-applying. The list had already drifted — a repository could carry a green `ci-gate` for hours while the file that decides whether to enforce it knew nothing about that, because the question "does this repository have a ci-gate check" is a fact about the repository and was being tracked somewhere that cannot observe it. `protect-release-tags` is unchanged and stays `~ALL`.
+
+  Coverage is unchanged by the conversion: `.github`, `ci-foundation-scratch` and `hal` were set to `tiered` before the rulesets were re-applied, and each still reports the same four rulesets it did before. The ordering matters — a ruleset whose condition matches nothing silently protects nothing.
+
+  Setting the property on a repository that has no `ci-gate` check makes its main branch require a check that can never report. Nothing enforces that ordering.
+
 ## [1.2.1] - 2026-09-21
 
 ### Changed
@@ -418,6 +428,7 @@ Everything here is exercised by a real release: `EdgeFirstAI/ara2-rs` v0.18.0 wa
   precedence over `ci:hardware`. PyPI publish requires the reusable release
   job to succeed.
 
+[1.2.2]: https://github.com/EdgeFirstAI/.github/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/EdgeFirstAI/.github/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/EdgeFirstAI/.github/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/EdgeFirstAI/.github/compare/v1.0.0...v1.1.0
