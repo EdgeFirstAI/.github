@@ -1,7 +1,9 @@
 name: publish to PyPI (deprecated)
 description: >
   DEPRECATED — use `stage-pypi` and upload from the calling job. This action
-  cannot upload, and fails rather than pretending to.
+  cannot upload, and fails rather than pretending to. It never could: the
+  upload it wraps resolves its own container image from the repository it is
+  called from, which through this action is this one.
 
   Select one distribution's files out of a release's artifacts and upload them
   to PyPI.

@@ -15,9 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`publish-pypi`. It cannot upload, and now fails with that explanation instead of failing inside `docker`.** Everything up to the upload is unchanged, so a rehearsal behaves exactly as before; a real publish stops with a message naming `stage-pypi` and the step to add.
 
+  Nothing regressed: the action was introduced in 1.2.0 and never successfully published. profiler was its only consumer, adopted it in the tiered migration, and v1.17.0 was the first tag to reach it.
+
   `pypa/gh-action-pypi-publish` resolves its own container image from the repository it is called from, and identifies itself by numeric repository ID. Called through an action of ours it sees `EdgeFirstAI/.github` instead, takes its "this is a fork, pull its prebuilt image" path, and runs `docker run ghcr.io/EdgeFirstAI/.github:<sha>` — an image that is rejected as a reference, because a repository name must be lowercase, and does not exist in any case. No input fixes it: the upload has to be a direct step of the calling job.
 
-  It failed on profiler's v1.17.0 tag, after the images had been promoted and the archives uploaded, leaving the wheels unpublished and the GitHub release a draft. Every other caller in the fleet already ran the upload directly and is unaffected, so there is no migration pressure — but `templates/publish.yml` taught the nesting, so the next repository onboarded would have hit it on its first real tag.
+  It failed on profiler's v1.17.0 tag, after the images had been promoted and the archives uploaded, leaving the wheels unpublished and the GitHub release a draft. No other repository is affected and none has to migrate: `hal`, `ara2-rs`, `client`, `videostream`, `tflite-rs` and `schemas` never referenced this action — each calls `pypa/gh-action-pypi-publish` directly from its own job, which is the supported usage and keeps working untouched. `templates/publish.yml` taught the nesting, though, so the next repository onboarded would have hit it on its first real tag.
+
+  Pinning a newer `pypa/gh-action-pypi-publish` does not help. v1.14.2, which `hal` and `ara2-rs` already use, resolves the image the same way.
 
   **Migrating.** Replace the `publish-pypi` reference with `stage-pypi`, drop the `publish` and `skip-existing` inputs, and add an upload step gated on what `publish` used to carry. `templates/publish.yml` carries the shape.
 
