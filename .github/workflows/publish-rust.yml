@@ -273,26 +273,38 @@ jobs:
             args+=(--dry-run)
             echo "Packaging only, nothing is uploaded (rehearsal, or a candidate on the base version)."
           fi
-          if [[ -n "$PACKAGES" ]]; then
-            # One multi-package invocation (`-p foo -p bar`, stable since
-            # cargo 1.90) rather than a `cargo publish -p` loop. cargo
-            # resolves an inter-dependency such as `bar = { path = ..,
-            # version = "^X.Y.Z" }` against the workspace graph for every
-            # package named on the same command line, not just the first.
-            # A loop cannot do this on a dry run: dry-run never actually
-            # uploads, so by the second iteration the first package still
-            # is not on the index, and resolving the second package's
-            # dependency on it fails -- not a rehearsal of anything, a
-            # rehearsal that cannot pass for any workspace with an
-            # inter-dependency. cargo still publishes in dependency order
-            # regardless of the order these flags are given.
+          if [[ -z "$PACKAGES" ]]; then
+            cargo publish "${args[@]}"
+          elif [[ "$REGISTRIES" == true ]]; then
+            # A real publish lands each package on the index before the loop
+            # reaches the next one, so a plain per-package loop resolves an
+            # inter-dependency correctly and needs no particular cargo
+            # version -- unlike the dry-run branch below.
+            for pkg in $PACKAGES; do
+              cargo publish -p "$pkg" "${args[@]}"
+            done
+          else
+            # A dry run never uploads, so a loop's second package can never
+            # resolve a dependency on the first -- crates.io still has
+            # nothing at this version -- and every rehearsal of an
+            # inter-dependent workspace fails here regardless of what
+            # changed. One multi-package invocation (`-p foo -p bar`, stable
+            # since cargo 1.90: https://github.com/rust-lang/cargo/pull/15636)
+            # resolves every named package against the workspace graph
+            # instead of the registry, so it is used, and only required,
+            # for the rehearsal that actually needs it -- a real publish
+            # keeps the loop above and its lower cargo requirement.
+            cargo_version="$(cargo --version | awk '{print $2}')"
+            oldest="$(printf '%s\n%s\n' "1.90.0" "$cargo_version" | sort -V | head -1)"
+            if [[ "$oldest" != "1.90.0" ]]; then
+              echo "::error::cargo $cargo_version cannot rehearse a multi-package publish: repeated -p on one 'cargo publish' invocation needs 1.90+ (this repository's pinned toolchain is older). Pin a newer toolchain to rehearse crate-packages with more than one entry, or rehearse with a single package at a time."
+              exit 1
+            fi
             pkg_args=()
             for pkg in $PACKAGES; do
               pkg_args+=(-p "$pkg")
             done
             cargo publish "${pkg_args[@]}" "${args[@]}"
-          else
-            cargo publish "${args[@]}"
           fi
 
   github-release:
