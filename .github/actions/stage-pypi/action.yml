@@ -45,6 +45,11 @@ inputs:
       Assert every selected file carries this version. A file for the wrong
       version is unrecoverable once uploaded, because a PyPI version is
       immutable.
+
+      Either spelling of a release candidate is accepted — `1.2.0-rc1` as a
+      tag and a release branch spell it, or `1.2.0rc1` as PEP 440 and the
+      wheel filename do. The base version of a candidate is not: uploading it
+      would consume the version the final release needs.
     required: false
     default: ""
 
@@ -73,6 +78,17 @@ runs:
         VERSION: ${{ inputs.version }}
       run: |
         set -euo pipefail
+
+        # dist/ is this action's output, never its input. A caller pointing
+        # `path` at it would have each selected file copied onto itself, which
+        # cp rejects, failing the step on a file set that was in fact correct.
+        if [[ "$(readlink -f "$SRC")" == "$(readlink -f dist)" ]]; then
+          echo "::error::path must not be dist/ — that is where this action writes"
+          exit 1
+        fi
+        # Fresh every time: what a caller uploads is what was selected here,
+        # not that plus whatever an earlier step happened to leave behind.
+        rm -rf dist
         mkdir -p dist
 
         if [[ -n "$DIST" ]]; then
@@ -106,6 +122,18 @@ runs:
         fi
 
         if [[ -n "$VERSION" ]]; then
+          # PEP 440 spells a candidate 1.2.0rc1 where a tag and a release
+          # branch say 1.2.0-rc1, and the wheel filename maturin writes carries
+          # the PEP 440 form. Normalise here so a caller may pass either; it is
+          # a no-op on a version that is already normalised. Same rule as
+          # maturin-build, which checks the wheels at build time.
+          pep440="${VERSION//-rc/rc}"
+
+          # Unlike maturin-build, the base version is NOT also accepted. There
+          # a mismatch costs a rebuild; here the next step uploads to PyPI,
+          # where a 1.2.0 wheel published during the 1.2.0-rc1 release would
+          # consume the version the final release needs, permanently.
+          #
           # A PyPI version is immutable, so a file naming the wrong one is
           # found when it can no longer be corrected. The version is the second
           # '-' separated field of a wheel and the last of an sdist.
@@ -117,10 +145,10 @@ runs:
               *.tar.gz) got="$(sed -E 's/^.*-([0-9][^-]*)\.tar\.gz$/\1/' <<< "$name")" ;;
               *)        continue ;;
             esac
-            if [[ "$got" == "$VERSION" ]]; then
-              echo "ok  $name"
+            if [[ "$got" == "$pep440" ]]; then
+              echo "ok  $name  ($got)"
             else
-              echo "::error::$name carries version '$got', expected '$VERSION'"
+              echo "::error::$name carries version '$got', expected '$pep440'"
               fail=1
             fi
           done
