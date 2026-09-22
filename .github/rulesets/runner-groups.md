@@ -2,7 +2,7 @@
 
 Organisation, not access control. Labels describe what a machine has and are what a workflow selects on; the group just gathers runners under a name. **No group is scoped to a repository list.** Every group is `visibility: all`, reachable by every repository in the organisation. Group settings live in [`runners.json`](runners.json) and are applied by [`apply_runners.py`](../scripts/apply_runners.py) — edit the JSON in a pull request rather than clicking through organisation settings, which is how the fleet drifted from this document in the first place.
 
-This repository is `EdgeFirstAI/.github`, which is public. `runners.json` therefore names **groups only** — category configuration, not machines. It does not, and must not, list runner names, labels or which runner belongs to which group: that would make this public repository a de facto inventory of the internal board farm. The fleet's actual composition — which boards exist, what they're fitted with, which runner carries which label — is Confluence content (the "CICD Pipelines" space), not repository content.
+This repository is `EdgeFirstAI/.github`, which is public, so `runners.json` names groups only — category configuration, not machines. The fleet's actual composition lives in Confluence ("CICD Pipelines").
 
 A repository access list bounded which repositories could reach a runner, never which events could. It cannot distinguish a fork's pull request from the base repository's own push, because both run under the base repository's name.
 
@@ -24,7 +24,7 @@ Treat this as the boundary for self-hosted capacity. `resolve_lanes.py` hardens 
 
 `visibility` and `allows_public_repositories` are both declared per group and reconciled, and they travel in a single PATCH. A group narrowed to `selected` through the web UI is drift the converger catches. `allows_public_repositories` must stay `true` — the consuming repositories are themselves public, and that flag gates whether a public repository may use a group at all, so a group flipped to `false` strands every one of them while nothing else looks wrong.
 
-This is the only state `runners.json` tracks. Unlike a runner's labels or group membership, a group's visibility can be changed by hand through the web UI with no local event to prompt anyone to notice, so it genuinely needs an ongoing, declarative converger. A runner's identity does not: see "Registering a runner" below.
+This is the only state `runners.json` tracks; a runner's labels and group membership are applied directly through the API at provisioning time instead (see "Registering a runner" below).
 
 ## Applying
 
