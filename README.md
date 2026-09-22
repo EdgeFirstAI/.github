@@ -23,7 +23,7 @@ The organisation profile README lives in [`profile/`](profile/README.md).
 | `.github/workflows/release-wheels.yml` | release-branch side: maturin wheels for a PyO3 binding, built on the `maturin-build` action |
 | `.github/workflows/publish-rust.yml` | tag side: resolve the build, verify the tree, crates OIDC, GitHub Release |
 | `.github/workflows/publish-container.yml` | tag side: promote the release build's recorded image digests, unchanged |
-| `.github/actions/` | `setup-rust`, `setup-python-uv`, `sbom-tools`, `board-run`, `resolve-release-build`, `resolve-lanes`, `verify-workspace-versions`, `maturin-build`, `wheel-data`, `publish-pypi`, `record-image-digests`, `registry-login`, `workflow-lint` |
+| `.github/actions/` | `setup-rust`, `setup-python-uv`, `sbom-tools`, `board-run`, `resolve-release-build`, `resolve-lanes`, `verify-workspace-versions`, `maturin-build`, `wheel-data`, `stage-pypi`, `record-image-digests`, `registry-login`, `workflow-lint` |
 | `.github/scripts/` | license policy, the SHA-pin check, the workspace version check, lane resolution, wheel data staging, the runner-fleet converger (single copy each) |
 | `.github/rulesets/` | `protect-main` (reviews; org-admin PR bypass), `protect-main-ci` (ci-gate, no bypass), `protect-release-tags` |
 | `.github/rulesets/runners.json` | declarative runner groups, visibility and labels |
@@ -71,7 +71,7 @@ Three workflows, one action each. **A tag deploys; it never builds.**
 2. Merge. The shared tag workflow creates an annotated `vX.Y.Z` using `RELEASE_TAG_TOKEN` — but only if `release.yml` is green for the release-branch head being merged, when the caller sets `require-build: release.yml`. Branch protection requires `ci-gate` and nothing else, and the release build runs on a branch push rather than on the PR, so merging is not itself blocked; refusing the tag is where "the artifacts exist before the tag does" is enforced. A merged PR with a red build leaves no tag rather than a tag nothing can honour.
 3. The tag runs `publish.yml`. It finds the `release.yml` run for the matching branch, checks that run's **tree SHA** equals the tag's — a squash merge changes the commit but not the tree — downloads the artifacts and publishes. A missing artifact, an expired artifact or a tree mismatch fails the publish; there is no fallback to a build.
 4. `cargo publish --no-verify` is the one exception, because `cargo publish` has no pre-built input. crates.io trusted publishing uses the **caller** `workflow_ref` and environment `crates-io`.
-5. PyPI trusted publishing **cannot** use a reusable workflow. The caller keeps `publish-pypi` (see `templates/publish.yml`).
+5. PyPI trusted publishing **cannot** use a reusable workflow. The caller keeps a `publish-pypi` job: `stage-pypi` selects and verifies, then `pypa/gh-action-pypi-publish` uploads as a direct step of that job (see `templates/publish.yml`).
 
 Rehearse before the first tag in a repository: `publish.yml` takes a `workflow_dispatch` with a tag input and its publish steps are gated on a real tag push, so a dispatch verifies the whole chain and publishes nothing. The tag need not exist yet — that is the point — so a rehearsal binds the build to the release **branch** head instead, which catches the same "something was not built" failure.
 

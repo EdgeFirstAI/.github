@@ -1,13 +1,18 @@
-name: publish to PyPI
+name: stage for PyPI
 description: >
-  Select one distribution's files out of a release's artifacts and upload them
-  to PyPI.
+  Select one distribution's files out of a release's artifacts into `dist/` and
+  assert they carry the expected version. It stages; it does not upload.
 
-  It is an action rather than a reusable workflow because it has to be: PyPI
-  Trusted Publishing matches `job_workflow_ref` in the publishing repository,
-  so the job must live in the product repository and a reusable workflow cannot
-  be the publisher. An action inside that job does not change the claim, which
-  leaves the selection and verification shareable even though the job is not.
+  The caller uploads, with `pypa/gh-action-pypi-publish` as a direct step of its
+  own job. That action resolves its own container image from the repository it
+  is called from, so called through this one it resolves to this repository and
+  fails on an image that does not exist. It also cannot be replaced with a
+  reusable workflow: PyPI Trusted Publishing matches `job_workflow_ref` in the
+  publishing repository, so the job must live in the product repository.
+
+  What is left here is what is genuinely shareable — the selection and the
+  version assertion — and both run in rehearsal exactly as they do on a tag,
+  because an empty or wrong file set is the failure they exist to catch.
 
   Selection is by **filename**, not by artifact name. A wheel filename already
   carries the distribution and the version canonically, so nothing has to agree
@@ -40,22 +45,20 @@ inputs:
       Assert every selected file carries this version. A file for the wrong
       version is unrecoverable once uploaded, because a PyPI version is
       immutable.
+
+      Either spelling of a release candidate is accepted — `1.2.0-rc1` as a
+      tag and a release branch spell it, or `1.2.0rc1` as PEP 440 and the
+      wheel filename do. The base version of a candidate is not: uploading it
+      would consume the version the final release needs.
     required: false
     default: ""
-  publish:
+
+outputs:
+  packages-dir:
     description: >-
-      Upload. False still downloads, selects and verifies, which is what makes
-      a rehearsal worth running: the failure it exists to catch is an empty or
-      wrong file set, and a job that skips its own checks proves nothing.
-    required: false
-    default: "true"
-  skip-existing:
-    description: >-
-      Tolerate a file that is already on PyPI. On by default because a release
-      shipping several distributions can fail part way through, and the retry
-      must not fail on the ones that already landed.
-    required: false
-    default: "true"
+      Directory holding the selected files, to hand to the caller's
+      `pypa/gh-action-pypi-publish` step as `packages-dir`.
+    value: dist
 
 runs:
   using: composite
@@ -75,7 +78,14 @@ runs:
         VERSION: ${{ inputs.version }}
       run: |
         set -euo pipefail
-        mkdir -p dist
+
+        # Collected outside the workspace, then moved into place, so that no
+        # relationship between `path` and dist/ can go wrong: `path` may be
+        # dist/ itself, a directory inside it, or a parent of it. Selecting
+        # straight into dist/ breaks the first -- cp refuses to copy a file
+        # onto itself -- and clearing dist/ first breaks the second, by
+        # deleting the very files about to be selected.
+        staging="$(mktemp -d "${RUNNER_TEMP:-/tmp}/stage-pypi.XXXXXX")"
 
         if [[ -n "$DIST" ]]; then
           # PEP 427: a wheel filename escapes runs of -, _ and . in the
@@ -95,7 +105,7 @@ runs:
         found=0
         for pat in "${patterns[@]}"; do
           while IFS= read -r f; do
-            cp "$f" dist/
+            cp "$f" "$staging/"
             found=1
           done < <(find "$SRC" -name "$pat" -type f)
         done
@@ -104,10 +114,29 @@ runs:
           echo "::error::no files for ${DIST:-any distribution} in $SRC"
           echo "::error::the release build produced:"
           find "$SRC" -type f | sed 's/^/::error::  /'
+          rm -rf "$staging"
           exit 1
         fi
 
+        # Replaced wholesale rather than added to, so what a caller uploads is
+        # what was selected here and not that plus whatever an earlier step
+        # left behind. Nothing has been removed until everything is collected.
+        rm -rf dist
+        mv "$staging" dist
+
         if [[ -n "$VERSION" ]]; then
+          # PEP 440 spells a candidate 1.2.0rc1 where a tag and a release
+          # branch say 1.2.0-rc1, and the wheel filename maturin writes carries
+          # the PEP 440 form. Normalise here so a caller may pass either; it is
+          # a no-op on a version that is already normalised. Same rule as
+          # maturin-build, which checks the wheels at build time.
+          pep440="${VERSION//-rc/rc}"
+
+          # Unlike maturin-build, the base version is NOT also accepted. There
+          # a mismatch costs a rebuild; here the next step uploads to PyPI,
+          # where a 1.2.0 wheel published during the 1.2.0-rc1 release would
+          # consume the version the final release needs, permanently.
+          #
           # A PyPI version is immutable, so a file naming the wrong one is
           # found when it can no longer be corrected. The version is the second
           # '-' separated field of a wheel and the last of an sdist.
@@ -119,10 +148,10 @@ runs:
               *.tar.gz) got="$(sed -E 's/^.*-([0-9][^-]*)\.tar\.gz$/\1/' <<< "$name")" ;;
               *)        continue ;;
             esac
-            if [[ "$got" == "$VERSION" ]]; then
-              echo "ok  $name"
+            if [[ "$got" == "$pep440" ]]; then
+              echo "ok  $name  ($got)"
             else
-              echo "::error::$name carries version '$got', expected '$VERSION'"
+              echo "::error::$name carries version '$got', expected '$pep440'"
               fail=1
             fi
           done
@@ -131,22 +160,14 @@ runs:
 
         ls -la dist/
 
-    - name: Upload to PyPI
-      if: inputs.publish == 'true'
-      uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e  # v1.13.0
-      with:
-        packages-dir: dist
-        skip-existing: ${{ inputs.skip-existing }}
-
-    - name: Rehearsal summary
-      if: inputs.publish != 'true'
+    - name: Summarise what was staged
       shell: bash
       env:
         DIST: ${{ inputs.distribution }}
       run: |
         set -euo pipefail
         {
-          echo "### Would have published ${DIST:-the selected files} to PyPI"
+          echo "### Staged ${DIST:-the selected files} for PyPI"
           echo '```'
           ls -1 dist/
           echo '```'
