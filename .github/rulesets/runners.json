@@ -4,53 +4,37 @@
     "boards": {
       "id": 3,
       "visibility": "all",
-      "allows_public_repositories": true,
-      "runners": ["imx8mpevk-04", "imx8mpevk-08"]
+      "allows_public_repositories": true
     },
     "build-x86": {
       "id": 4,
       "visibility": "all",
-      "allows_public_repositories": true,
-      "runners": ["ubuntubuild"]
+      "allows_public_repositories": true
     },
     "gpu-cuda": {
       "id": 5,
       "visibility": "all",
-      "allows_public_repositories": true,
-      "runners": ["mltrain-02", "mltrain-03"]
+      "allows_public_repositories": true
     },
     "mac": {
       "id": 6,
       "visibility": "all",
-      "allows_public_repositories": true,
-      "runners": []
+      "allows_public_repositories": true
     },
     "windows": {
       "id": 7,
       "visibility": "all",
-      "allows_public_repositories": true,
-      "runners": ["JENKINSW10BUILD"]
+      "allows_public_repositories": true
     },
     "larger-runners": {
       "id": 8,
       "visibility": "all",
-      "allows_public_repositories": true,
-      "runners": []
+      "allows_public_repositories": true
     },
     "yocto": {
       "id": 9,
       "visibility": "all",
-      "allows_public_repositories": true,
-      "runners": ["mltrain-04"]
+      "allows_public_repositories": true
     }
-  },
-  "labels": {
-    "ubuntubuild": ["build"],
-    "JENKINSW10BUILD": ["build"],
-    "mltrain-02": ["CUDA"],
-    "mltrain-03": ["CUDA"],
-    "mltrain-04": ["Yocto"],
-    "imx8mpevk-08": ["imx8mp", "imx8mp-evk", "imx8mp-evk-6.12.34-2.1.0", "nxp-imx8mp-latest", "nxp-imx8mp-6.12.34-2.1.0"],
-    "imx8mpevk-04": ["imx8mp", "imx8mp-evk", "imx8mpevk"]
   }
 }

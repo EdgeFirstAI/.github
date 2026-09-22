@@ -64,8 +64,8 @@ jobs:
       # rather than as `build`'s first step. GitHub schedules a job onto its
       # runner the moment the job starts, not when a step inside it gets
       # around to evaluating -- a guard step on the fleet job would already
-      # have occupied mltrain-04, a machine shared with production Jenkins,
-      # for the event it goes on to refuse.
+      # have occupied the Yocto builder, a machine shared with production
+      # Jenkins, for the event it goes on to refuse.
       - name: Refuse untrusted trigger events
         env:
           EVENT: ${{ github.event_name }}
@@ -100,11 +100,11 @@ jobs:
     # jobs off this physical box is the one-runner-per-device policy.
     #
     # Accepted risk: this group coordinates GitHub Actions jobs only. A
-    # Jenkins bitbake on mltrain-04 is invisible to it and can still overlap
-    # a GitHub-triggered one, with the same RAM and sstate contention this
-    # group exists to prevent. The mitigation is completing the Yocto
-    # migration off Jenkins, not a lock -- there is no cross-scheduler lock
-    # available.
+    # Jenkins bitbake on the same box is invisible to it and can still
+    # overlap a GitHub-triggered one, with the same RAM and sstate
+    # contention this group exists to prevent. The mitigation is completing
+    # the Yocto migration off Jenkins, not a lock -- there is no
+    # cross-scheduler lock available.
     concurrency:
       group: yocto-${{ inputs.machine }}
       cancel-in-progress: false
