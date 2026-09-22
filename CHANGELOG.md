@@ -7,15 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.3.0] - 2026-09-22
 
-### Changed
+### Added
 
-- **`publish-pypi` is renamed `stage-pypi` and no longer uploads.** It selects one distribution's files into `dist/` and asserts their version, as before; the caller now runs `pypa/gh-action-pypi-publish` as a direct step of its own `publish-pypi` job.
+- **`stage-pypi`, which selects one distribution's files into `dist/` and asserts their version.** It is `publish-pypi` without the upload. The caller runs `pypa/gh-action-pypi-publish` as a direct step of its own job, which is the only place that action works.
 
-  That action resolves its own container image from the repository it is called from, and identifies itself by numeric repository ID. Called through an action of ours it sees `EdgeFirstAI/.github` instead, takes its "this is a fork, pull its prebuilt image" path, and runs `docker run ghcr.io/EdgeFirstAI/.github:<sha>` — an image that both is rejected as a reference, because a repository name must be lowercase, and does not exist. It cannot be nested in a composite action at all.
+### Deprecated
 
-  It failed on profiler's v1.17.0 tag, after the images had been promoted and the archives uploaded: the wheels did not go out and the GitHub release stayed a draft. No other repository was affected — every other caller already ran the upload directly — but `templates/publish.yml` taught the nesting, so the next repository onboarded would have hit it on its first real tag.
+- **`publish-pypi`. It cannot upload, and now fails with that explanation instead of failing inside `docker`.** Everything up to the upload is unchanged, so a rehearsal behaves exactly as before; a real publish stops with a message naming `stage-pypi` and the step to add.
 
-  **Upgrading.** A caller replaces its `publish-pypi` action reference with `stage-pypi`, drops the `publish` and `skip-existing` inputs, and adds an upload step gated on what `publish` used to carry. `templates/publish.yml` carries the shape.
+  `pypa/gh-action-pypi-publish` resolves its own container image from the repository it is called from, and identifies itself by numeric repository ID. Called through an action of ours it sees `EdgeFirstAI/.github` instead, takes its "this is a fork, pull its prebuilt image" path, and runs `docker run ghcr.io/EdgeFirstAI/.github:<sha>` — an image that is rejected as a reference, because a repository name must be lowercase, and does not exist in any case. No input fixes it: the upload has to be a direct step of the calling job.
+
+  It failed on profiler's v1.17.0 tag, after the images had been promoted and the archives uploaded, leaving the wheels unpublished and the GitHub release a draft. Every other caller in the fleet already ran the upload directly and is unaffected, so there is no migration pressure — but `templates/publish.yml` taught the nesting, so the next repository onboarded would have hit it on its first real tag.
+
+  **Migrating.** Replace the `publish-pypi` reference with `stage-pypi`, drop the `publish` and `skip-existing` inputs, and add an upload step gated on what `publish` used to carry. `templates/publish.yml` carries the shape.
 
 ## [1.2.2] - 2026-09-21
 
