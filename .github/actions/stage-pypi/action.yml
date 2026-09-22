@@ -79,17 +79,13 @@ runs:
       run: |
         set -euo pipefail
 
-        # dist/ is this action's output, never its input. A caller pointing
-        # `path` at it would have each selected file copied onto itself, which
-        # cp rejects, failing the step on a file set that was in fact correct.
-        if [[ "$(readlink -f "$SRC")" == "$(readlink -f dist)" ]]; then
-          echo "::error::path must not be dist/ — that is where this action writes"
-          exit 1
-        fi
-        # Fresh every time: what a caller uploads is what was selected here,
-        # not that plus whatever an earlier step happened to leave behind.
-        rm -rf dist
-        mkdir -p dist
+        # Collected outside the workspace, then moved into place, so that no
+        # relationship between `path` and dist/ can go wrong: `path` may be
+        # dist/ itself, a directory inside it, or a parent of it. Selecting
+        # straight into dist/ breaks the first -- cp refuses to copy a file
+        # onto itself -- and clearing dist/ first breaks the second, by
+        # deleting the very files about to be selected.
+        staging="$(mktemp -d "${RUNNER_TEMP:-/tmp}/stage-pypi.XXXXXX")"
 
         if [[ -n "$DIST" ]]; then
           # PEP 427: a wheel filename escapes runs of -, _ and . in the
@@ -109,7 +105,7 @@ runs:
         found=0
         for pat in "${patterns[@]}"; do
           while IFS= read -r f; do
-            cp "$f" dist/
+            cp "$f" "$staging/"
             found=1
           done < <(find "$SRC" -name "$pat" -type f)
         done
@@ -118,8 +114,15 @@ runs:
           echo "::error::no files for ${DIST:-any distribution} in $SRC"
           echo "::error::the release build produced:"
           find "$SRC" -type f | sed 's/^/::error::  /'
+          rm -rf "$staging"
           exit 1
         fi
+
+        # Replaced wholesale rather than added to, so what a caller uploads is
+        # what was selected here and not that plus whatever an earlier step
+        # left behind. Nothing has been removed until everything is collected.
+        rm -rf dist
+        mv "$staging" dist
 
         if [[ -n "$VERSION" ]]; then
           # PEP 440 spells a candidate 1.2.0rc1 where a tag and a release
