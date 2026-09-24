@@ -199,9 +199,9 @@ generate_source_sbom() {
           printf '%s\0' "$f"
         fi
       done |
-      xargs -0 -r cp -P --parents -t "$scan_root"
+      xargs -0 -r cp -P --parents -t "$scan_root" --
   else
-    cp -RP --parents "${paths[@]}" "$scan_root"
+    cp -RP --parents -t "$scan_root" -- "${paths[@]}"
   fi
   local staged
   staged="$(find "$scan_root" -type f | wc -l | tr -d ' ')"
