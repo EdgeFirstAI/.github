@@ -170,17 +170,46 @@ generate_source_sbom() {
     exit 1
   fi
 
-  local args=()
+  local paths=()
   # shellcheck disable=SC2206
   local dirs=( $SOURCE_DIRS )
   for dir in "${dirs[@]}"; do
     if [[ -d "$dir" ]]; then
-      args+=("$dir")
+      paths+=("$dir")
     fi
   done
-  if [[ ${#args[@]} -eq 0 ]]; then
-    args=(.)
+  if [[ ${#paths[@]} -eq 0 ]]; then
+    paths=(.)
   fi
+
+  # Scan a staged copy of the tracked sources, never the working tree. Given
+  # several inputs, scancode scans their common parent -- the repository root
+  # -- and filters afterwards, so it first walks everything beneath it: the
+  # venv this job installs scancode into, target/, build trees. Its include
+  # patterns also match path segments, so `lib`, `src` and `tests` select
+  # venv/lib/.../site-packages and scancode's own license corpus. Staging
+  # makes the tracked files of SOURCE_DIRS the only thing it can see.
+  local scan_root
+  scan_root="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/scancode-root.XXXXXX")"
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    # Submodules are listed as paths but are directories; skip them.
+    git ls-files -z -- "${paths[@]}" |
+      while IFS= read -r -d '' f; do
+        if [[ -f "$f" || -L "$f" ]]; then
+          printf '%s\0' "$f"
+        fi
+      done |
+      xargs -0 -r cp -P --parents -t "$scan_root"
+  else
+    cp -RP --parents "${paths[@]}" "$scan_root"
+  fi
+  local staged
+  staged="$(find "$scan_root" -type f | wc -l | tr -d ' ')"
+  if [[ "$staged" -eq 0 ]]; then
+    echo "error: no tracked files under SOURCE_DIRS (${paths[*]})" >&2
+    exit 1
+  fi
+  echo "scancode: ${staged} tracked files from ${paths[*]}"
 
   # ScanCode 32.4.1's --cyclonedx plugin sets --full-root internally and then
   # conflicts with --strip-root. Native JSON does not.
@@ -189,7 +218,8 @@ generate_source_sbom() {
     --license --copyright --package \
     --json-pp "$scan_json" \
     --processes "${SCANCODE_PROCESSES:-4}" \
-    "${args[@]}"
+    "$scan_root"
+  rm -rf "$scan_root"
 
   python3 "$SCRIPT_DIR/scancode_packages_to_cyclonedx.py" "$scan_json" "$SRC_SBOM"
 }
