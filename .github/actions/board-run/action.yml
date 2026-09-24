@@ -107,7 +107,7 @@ runs:
       if: inputs.command == '' && inputs.binaries != ''
       shell: bash
       env:
-        LLVM_PROFILE_FILE: ${{ github.workspace }}/${{ inputs.profraw-dir }}/board-%p-%m.profraw
+        LLVM_PROFILE_FILE: ${{ github.workspace }}/${{ inputs.profraw-dir }}/board-%h-%p-%m.profraw
         ARCHIVE_FILE: ${{ inputs.archive-file }}
         PROFRAW_DIR: ${{ inputs.profraw-dir }}
         NEXTEST_BIN: ${{ steps.probe.outputs.runner }}
@@ -252,7 +252,7 @@ runs:
       if: inputs.command != '' || inputs.binaries == ''
       shell: bash
       env:
-        LLVM_PROFILE_FILE: ${{ github.workspace }}/${{ inputs.profraw-dir }}/board-%p-%m.profraw
+        LLVM_PROFILE_FILE: ${{ github.workspace }}/${{ inputs.profraw-dir }}/board-%h-%p-%m.profraw
         BOARD_COMMAND: ${{ inputs.command }}
         EXTRA_ARGS: ${{ inputs.extra-args }}
         ARCHIVE_FILE: ${{ inputs.archive-file }}
