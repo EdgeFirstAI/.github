@@ -133,6 +133,15 @@ on:
           release-like profile with debug = "line-tables-only".
         type: string
         default: ""
+      archive-glibc:
+        description: >-
+          glibc version the on-target archive is linked against, e.g. `2.35`.
+          Empty links against the runner's own glibc (2.39 on Ubuntu 24.04),
+          and a board with an older one cannot load the binaries. When set,
+          the archive is compiled and linked by zig for that glibc, C and C++
+          build scripts included.
+        type: string
+        default: ""
     secrets:
       SONAR_TOKEN:
         required: false
@@ -437,6 +446,91 @@ jobs:
           path: coverage-linux-arm.lcov
           if-no-files-found: error
           retention-days: 7
+
+      # The runner links against its own glibc, so without a floor the archive
+      # needs 2.39 and a board on an older distribution cannot load a single
+      # test binary. zig ships glibc stubs for any version and targets one
+      # with an `aarch64-linux-gnu.<version>` triple, the mechanism
+      # cargo-zigbuild uses. cargo-zigbuild itself cannot be used: nextest
+      # runs `$CARGO test`, and cargo overwrites CARGO when it launches a
+      # subcommand. So zig is installed as the target's linker, C compiler and
+      # C++ compiler, which reaches build scripts through the cc crate too;
+      # the runner's gcc would otherwise compile against 2.39 headers and
+      # reference symbols such as __isoc23_strtol (GLIBC_2.38).
+      - name: Link the archive against a glibc floor
+        if: needs.setup.outputs.do_hardware == 'true' && inputs.archive-glibc != ''
+        env:
+          ARCHIVE_GLIBC: ${{ inputs.archive-glibc }}
+          ZIG_VERSION: "0.16.0"
+          SHA256_AARCH64: ea4b09bfb22ec6f6c6ceac57ab63efb6b46e17ab08d21f69f3a48b38e1534f17
+        run: |
+          set -euo pipefail
+          if [[ ! "$ARCHIVE_GLIBC" =~ ^2\.[0-9]+$ ]]; then
+            echo "::error::archive-glibc must be a glibc version such as 2.35, got '$ARCHIVE_GLIBC'"
+            exit 1
+          fi
+          if [[ "$(uname -m)" != aarch64 ]]; then
+            echo "::error::archive-glibc needs an aarch64 runner for the arm lane, got $(uname -m)"
+            exit 1
+          fi
+          zig_dir="$RUNNER_TEMP/zig"
+          archive="$RUNNER_TEMP/zig.tar.xz"
+          curl -fsSL --retry 5 --retry-connrefused -o "$archive" \
+            "https://ziglang.org/download/${ZIG_VERSION}/zig-aarch64-linux-${ZIG_VERSION}.tar.xz"
+          echo "${SHA256_AARCH64}  ${archive}" | sha256sum -c -
+          mkdir -p "$zig_dir"
+          tar -xJf "$archive" -C "$zig_dir" --strip-components=1
+          rm -f "$archive"
+
+          # Arguments zig's driver rejects or misreads, translated as
+          # cargo-zigbuild's linker_args.rs does for a gnu target:
+          # - `-u SYM` (rustc, for -C instrument-coverage) is read as an input
+          #   file, and `-Wl,--undefined=SYM` is unsupported: both become
+          #   `-Wl,-u,SYM`.
+          # - `--target=<rust triple>` (the cc crate) does not parse; the
+          #   wrapper's own `-target` stands.
+          # - Linker flags zig does not accept are dropped.
+          # - `-Wp,` options other than -MD/-MMD/-MT are dropped.
+          # - `-Wl,<file>` is how rustc passes a `+whole-archive` native
+          #   library bundled in an rlib. cc forwards a value that is not an
+          #   option to the linker as an input; zig checks every `-Wl,` value
+          #   against its known flags and fails, so an existing file is passed
+          #   positionally instead.
+          wrap="$RUNNER_TEMP/zig-wrap"
+          mkdir -p "$wrap"
+          cat > "$wrap/zig-cc" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          case "$(basename "$0")" in *c++) mode=c++ ;; *) mode=cc ;; esac
+          args=()
+          while (($#)); do
+            case "$1" in
+              -u) args+=("-Wl,-u,$2"); shift 2 ;;
+              -Wl,--undefined=*) args+=("-Wl,-u,${1#-Wl,--undefined=}"); shift ;;
+              --target=*) shift ;;
+              -Wl,--fix-cortex-a53-843419|-Wl,--no-undefined-version) shift ;;
+              -Wl,-znostart-stop-gc|-Wl,-plugin-opt*) shift ;;
+              -Wp,-MD*|-Wp,-MMD*|-Wp,-MT*) args+=("$1"); shift ;;
+              -Wp,*) shift ;;
+              -Wl,-*) args+=("$1"); shift ;;
+              -Wl,*)
+                if [[ -f "${1#-Wl,}" ]]; then args+=("${1#-Wl,}"); else args+=("$1"); fi
+                shift ;;
+              *) args+=("$1"); shift ;;
+            esac
+          done
+          exec "$ZIG" "$mode" -target "aarch64-linux-gnu.${ARCHIVE_GLIBC}" "${args[@]}"
+          EOF
+          chmod +x "$wrap/zig-cc"
+          ln -sf zig-cc "$wrap/zig-c++"
+          {
+            echo "ZIG=$zig_dir/zig"
+            echo "ARCHIVE_GLIBC=$ARCHIVE_GLIBC"
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=$wrap/zig-cc"
+            echo "CC_aarch64_unknown_linux_gnu=$wrap/zig-cc"
+            echo "CXX_aarch64_unknown_linux_gnu=$wrap/zig-c++"
+          } >> "$GITHUB_ENV"
+          "$zig_dir/zig" version
 
       - name: Archive instrumented tests
         if: needs.setup.outputs.do_hardware == 'true'
