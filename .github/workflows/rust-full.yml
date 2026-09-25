@@ -482,10 +482,20 @@ jobs:
           tar -xJf "$archive" -C "$zig_dir" --strip-components=1
           rm -f "$archive"
 
-          # rustc passes `-u __llvm_profile_runtime` for -C instrument-coverage,
-          # which zig's driver reads as an input file, and
-          # --fix-cortex-a53-843419, which zig's linker does not accept.
-          # cargo-zigbuild drops the latter for the same reason.
+          # Arguments zig's driver rejects or misreads, translated as
+          # cargo-zigbuild's linker_args.rs does for a gnu target:
+          # - `-u SYM` (rustc, for -C instrument-coverage) is read as an input
+          #   file, and `-Wl,--undefined=SYM` is unsupported: both become
+          #   `-Wl,-u,SYM`.
+          # - `--target=<rust triple>` (the cc crate) does not parse; the
+          #   wrapper's own `-target` stands.
+          # - Linker flags zig does not accept are dropped.
+          # - `-Wp,` options other than -MD/-MMD/-MT are dropped.
+          # - `-Wl,<file>` is how rustc passes a `+whole-archive` native
+          #   library bundled in an rlib. cc forwards a value that is not an
+          #   option to the linker as an input; zig checks every `-Wl,` value
+          #   against its known flags and fails, so an existing file is passed
+          #   positionally instead.
           wrap="$RUNNER_TEMP/zig-wrap"
           mkdir -p "$wrap"
           cat > "$wrap/zig-cc" <<'EOF'
@@ -496,7 +506,16 @@ jobs:
           while (($#)); do
             case "$1" in
               -u) args+=("-Wl,-u,$2"); shift 2 ;;
-              -Wl,--fix-cortex-a53-843419) shift ;;
+              -Wl,--undefined=*) args+=("-Wl,-u,${1#-Wl,--undefined=}"); shift ;;
+              --target=*) shift ;;
+              -Wl,--fix-cortex-a53-843419|-Wl,--no-undefined-version) shift ;;
+              -Wl,-znostart-stop-gc|-Wl,-plugin-opt*) shift ;;
+              -Wp,-MD*|-Wp,-MMD*|-Wp,-MT*) args+=("$1"); shift ;;
+              -Wp,*) shift ;;
+              -Wl,-*) args+=("$1"); shift ;;
+              -Wl,*)
+                if [[ -f "${1#-Wl,}" ]]; then args+=("${1#-Wl,}"); else args+=("$1"); fi
+                shift ;;
               *) args+=("$1"); shift ;;
             esac
           done
