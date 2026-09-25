@@ -111,7 +111,7 @@ runs:
     # which is why it is the default every template ships with.
     - name: Log in to GHCR
       if: steps.classify.outputs.kind == 'ghcr'
-      uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4.2.0
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
       with:
         registry: ${{ steps.classify.outputs.host }}
         username: ${{ github.actor }}
@@ -141,7 +141,7 @@ runs:
 
     - name: Assume the AWS role
       if: steps.classify.outputs.kind == 'ecr'
-      uses: aws-actions/configure-aws-credentials@00943011d9042930efac3dcd3a170e4273319bc8  # v5.1.0
+      uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd  # v6.3.0
       with:
         role-to-assume: ${{ steps.aws.outputs.role-arn }}
         aws-region: ${{ steps.aws.outputs.region }}
@@ -179,7 +179,7 @@ runs:
 
     - name: Log in to Docker Hub
       if: steps.dockerhub.outputs.ok == 'true'
-      uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4.2.0
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
       with:
         registry: ${{ steps.classify.outputs.host }}
         username: ${{ inputs.dockerhub-username }}
