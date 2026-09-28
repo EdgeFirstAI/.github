@@ -5,8 +5,8 @@ description: >
 
   Entries use rust-full's syntax: comma-separated, each one or more runner
   labels joined by `+` that one runner must all carry. Each matrix entry is
-  `{runner, labels}`; run the job on `runs-on: ${{ matrix.labels }}` and name
-  it and its artifacts from `matrix.runner`. It wraps
+  `{runner, labels}`; set the job's `runs-on` to the entry's `labels` and name
+  it and its artifacts from its `runner`. It wraps
   `scripts/resolve_boards.py`, whose `--self-test` ci.yml runs.
 
 inputs:
