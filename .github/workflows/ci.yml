@@ -92,6 +92,33 @@ jobs:
               sys.exit(1)
           print("all runs-on jobs have timeout-minutes")
           PY
+      # The runner evaluates `${{ }}` anywhere in an action's metadata,
+      # descriptions included, when it loads the action. There is no job
+      # context there, so an expression quoted in prose (`${{ matrix.x }}`)
+      # fails every caller at load time; actionlint does not check it.
+      - name: action metadata expressions check
+        run: |
+          python3 - <<'PY'
+          import pathlib, sys
+          import yaml
+          # Built from two halves: this script is itself workflow text, and a
+          # literal marker here would be evaluated the same way.
+          marker = "$" + "{{"
+          bad = []
+          for path in sorted(pathlib.Path(".github/actions").glob("*/action.y*ml")):
+              meta = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+              fields = {"name": meta.get("name"), "description": meta.get("description")}
+              for kind in ("inputs", "outputs"):
+                  for key, spec in (meta.get(kind) or {}).items():
+                      fields[f"{kind}.{key}.description"] = (spec or {}).get("description")
+              bad += [f"{path}: {field}" for field, text in fields.items()
+                      if marker in str(text or "")]
+          if bad:
+              print("action metadata text contains an expression, which the runner evaluates:")
+              print("\n".join(bad))
+              sys.exit(1)
+          print("no expressions in action metadata text")
+          PY
       - name: scancode CycloneDX mapping
         run: python3 .github/scripts/scancode_packages_to_cyclonedx.py --self-test
 
