@@ -11,7 +11,10 @@ on:
         type: string
         default: all
       boards:
-        description: Comma-separated self-hosted board labels
+        description: >-
+          Comma-separated board entries, one board job each. An entry is one
+          or more runner labels joined by `+`, all of which the runner must
+          carry: `imx8mp-evk, imx95-frdm+ara240`.
         type: string
         default: ""
       nightly:
@@ -774,7 +777,7 @@ jobs:
     name: Board ${{ matrix.runner }}
     needs: [setup, linux-arm]
     if: needs.setup.outputs.do_hardware == 'true' && needs.setup.outputs.same_repo == 'true'
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.labels }}
     timeout-minutes: ${{ fromJSON(inputs.board-timeout-minutes) }}
     # No concurrency group: the runner application already serialises one job
     # per installed instance, and one instance per device is policy. A group

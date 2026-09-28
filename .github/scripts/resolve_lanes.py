@@ -85,6 +85,48 @@ def parse_lanes(raw):
     return lanes
 
 
+def parse_boards(raw):
+    """Parse the comma-separated board entries into matrix entries.
+
+    Each entry is one or more runner labels joined by `+`, all of which the
+    runner must carry: `imx95-frdm+ara240` selects FRDM boards fitted with an
+    Ara240. `runner` keeps the entry as written, for job and artifact names;
+    `labels` is what `runs-on` takes.
+    """
+    entries = []
+    seen = set()
+    for entry in (e.strip() for e in (raw or "").split(",")):
+        if not entry:
+            continue
+        labels = [label.strip() for label in entry.split("+")]
+        if not all(labels):
+            raise LaneError(f"board entry '{entry}' has an empty label")
+        runner = "+".join(labels)
+        # Labels match case-insensitively and a label set is unordered, so
+        # `a+b` and `B+a` select the same runners. A second such entry would
+        # schedule the same job again, and an identical one would also upload
+        # its artifacts under the same name and fail the run.
+        key = frozenset(label.lower() for label in labels)
+        if len(key) != len(labels):
+            raise LaneError(f"board entry '{runner}' repeats a label")
+        if key in seen:
+            raise LaneError(f"board entry '{runner}' selects the same labels "
+                            "as an earlier entry")
+        seen.add(key)
+        entries.append({"runner": runner, "labels": ["self-hosted", *labels]})
+    return entries
+
+
+def is_trusted(env):
+    """Whether the triggering event cannot carry a fork's code."""
+    event = env.get("EVENT") or ""
+    if event in TRUSTED_EVENTS:
+        return True
+    if event == "pull_request":
+        return env.get("PR_HEAD_REPO") == env.get("REPO")
+    return False
+
+
 def resolve(env):
     lanes = parse_lanes(env.get("LANES", "all"))
     classes = {
@@ -94,13 +136,7 @@ def resolve(env):
         "windows": env.get("CLASS_WIN") or "hosted",
     }
 
-    event = env.get("EVENT") or ""
-    if event in TRUSTED_EVENTS:
-        same_repo = True
-    elif event == "pull_request":
-        same_repo = env.get("PR_HEAD_REPO") == env.get("REPO")
-    else:
-        same_repo = False
+    same_repo = is_trusted(env)
 
     do_host = "host" in lanes
     do_hardware = "hardware" in lanes
@@ -113,10 +149,10 @@ def resolve(env):
         do_hardware = False
         do_gpu = False
 
-    boards = [b.strip() for b in (env.get("BOARDS") or "").split(",") if b.strip()]
+    boards = parse_boards(env.get("BOARDS"))
     if not boards:
         do_hardware = False
-    board_matrix = [{"runner": b} for b in boards] if do_hardware else []
+    board_matrix = boards if do_hardware else []
 
     return {
         "linux": map_class(classes["linux"], "linux"),
@@ -208,7 +244,40 @@ def _self_test() -> int:
 
     r = resolve(base)
     check("same-repo hardware", r["do_hardware"], True)
-    check("board matrix", r["board_matrix"], [{"runner": "imx8mp-evk"}])
+    check("board matrix", r["board_matrix"],
+          [{"runner": "imx8mp-evk", "labels": ["self-hosted", "imx8mp-evk"]}])
+
+    # A `+` entry is a label set; each comma-separated entry is one job.
+    check("label set", parse_boards("imx95-frdm+ara240, rpi5"),
+          [{"runner": "imx95-frdm+ara240",
+            "labels": ["self-hosted", "imx95-frdm", "ara240"]},
+           {"runner": "rpi5", "labels": ["self-hosted", "rpi5"]}])
+    check("label set whitespace", parse_boards(" orin-nano + camera ,"),
+          [{"runner": "orin-nano+camera",
+            "labels": ["self-hosted", "orin-nano", "camera"]}])
+    check("no boards parsed", parse_boards(" , "), [])
+    check("no boards none", parse_boards(None), [])
+    check_raises("trailing plus", lambda: parse_boards("imx95-evk+"))
+    check_raises("leading plus", lambda: parse_boards("+imx95-evk"))
+    check_raises("double plus", lambda: parse_boards("imx95-evk++camera"))
+    check_raises("duplicate entry", lambda: parse_boards("rpi5, rpi5"))
+    check_raises("duplicate entry differing case",
+                 lambda: parse_boards("rpi5, RPI5"))
+    check_raises("duplicate label set in another order",
+                 lambda: parse_boards("imx95-frdm+ara240, ara240+imx95-frdm"))
+    check_raises("duplicate label set in another order and case",
+                 lambda: parse_boards("imx95-frdm+ara240, ARA240+imx95-frdm"))
+    check_raises("label repeated within an entry",
+                 lambda: parse_boards("rpi5+rpi5"))
+    check("overlapping but different label sets are both kept",
+          [e["runner"] for e in parse_boards("imx95-frdm, imx95-frdm+ara240")],
+          ["imx95-frdm", "imx95-frdm+ara240"])
+    check("label set in resolve",
+          resolve({**base, "BOARDS": "imx95-frdm+ara240"})["board_matrix"],
+          [{"runner": "imx95-frdm+ara240",
+            "labels": ["self-hosted", "imx95-frdm", "ara240"]}])
+    check_raises("bad board entry in resolve",
+                 lambda: resolve({**base, "BOARDS": "a+"}))
     check("all never implies gpu", r["do_gpu"], False)
 
     # Requested but unconfigured: exercises the gpu-args guard itself rather

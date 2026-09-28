@@ -51,7 +51,7 @@ Internally each shared workflow reaches its composite actions with GitHub's self
 
 ## Runner classes and capability lanes
 
-`runner-class-linux` (and `-linux-arm`, `-macos`, `-windows`) selects a **cost** tier: `hosted` (default, free), `fleet` (our metal), or `larger` (billed). Capability is a separate axis: `lanes` is a comma-separated set of `host`, `hardware` and `gpu`, where `all` means `host,hardware` and never implies `gpu`. Board hardware is named through `boards:`.
+`runner-class-linux` (and `-linux-arm`, `-macos`, `-windows`) selects a **cost** tier: `hosted` (default, free), `fleet` (our metal), or `larger` (billed). Capability is a separate axis: `lanes` is a comma-separated set of `host`, `hardware` and `gpu`, where `all` means `host,hardware` and never implies `gpu`. Board hardware is named through `boards:`: comma-separated entries, each one or more labels joined by `+` that one runner must all carry (`imx8mp-evk, imx95-frdm+ara240`). An on-demand workflow that selects boards itself uses the `resolve-boards` action, which takes the same syntax and, given a token that can read the organisation's runners, reports entries no online runner can serve instead of letting them queue.
 
 The billed `larger` class is **available** to the Full, Release and Nightly tiers, not mandated by them. Quick never bills; everything else is a trade of money for wall-clock that a repository makes from its own measured build times, and a release build left on a free runner is a valid outcome of that trade rather than a policy violation.
 

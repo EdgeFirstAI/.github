@@ -101,6 +101,9 @@ jobs:
       - name: lane resolver
         run: python3 .github/scripts/resolve_lanes.py --self-test
 
+      - name: board resolver
+        run: python3 .github/scripts/resolve_boards.py --self-test
+
       - name: runner converger
         run: python3 .github/scripts/apply_runners.py --self-test
 

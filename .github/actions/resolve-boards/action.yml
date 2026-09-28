@@ -1,0 +1,51 @@
+name: Resolve boards
+description: >
+  Turn a `boards` string into a job matrix for an on-demand board workflow,
+  optionally dropping entries no online runner can serve.
+
+  Entries use rust-full's syntax: comma-separated, each one or more runner
+  labels joined by `+` that one runner must all carry. Each matrix entry is
+  `{runner, labels}`; run the job on `runs-on: ${{ matrix.labels }}` and name
+  it and its artifacts from `matrix.runner`. It wraps
+  `scripts/resolve_boards.py`, whose `--self-test` ci.yml runs.
+
+inputs:
+  boards:
+    description: Comma-separated board entries, e.g. `imx8mp-evk, imx95-frdm+ara240`.
+    required: true
+  token:
+    description: >-
+      A token that can read the organisation's self-hosted runners. When set,
+      entries no online runner carries are reported in `unavailable` instead of
+      scheduled, where they would queue for 24 hours. When empty, every entry
+      is scheduled and a warning says the check was skipped.
+    required: false
+    default: ""
+
+outputs:
+  board_matrix:
+    description: JSON array of `{runner, labels}` to schedule.
+    value: ${{ steps.resolve.outputs.board_matrix }}
+  unavailable:
+    description: JSON array of `{runner, reason}` for entries not scheduled.
+    value: ${{ steps.resolve.outputs.unavailable }}
+  has_boards:
+    description: Whether board_matrix has at least one entry.
+    value: ${{ steps.resolve.outputs.has_boards }}
+  online_checked:
+    description: Whether entries were checked against online runners.
+    value: ${{ steps.resolve.outputs.online_checked }}
+
+runs:
+  using: composite
+  steps:
+    - id: resolve
+      shell: bash
+      env:
+        BOARDS: ${{ inputs.boards }}
+        TOKEN: ${{ inputs.token }}
+        ORG: ${{ github.repository_owner }}
+        PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        REPO: ${{ github.repository }}
+        EVENT: ${{ github.event_name }}
+      run: python3 "$GITHUB_ACTION_PATH/../../scripts/resolve_boards.py"
