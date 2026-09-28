@@ -98,7 +98,7 @@ RUNNER_GROUP="boards"
 # Known family prefixes and capability-suffix vocabulary from the org's
 # runner-label convention. These are category/taxonomy names, not specific
 # machines, so listing them here does not name any target.
-BOARD_FAMILIES=(imx8mp imx95 rpi5 rk3855 orin)
+BOARD_FAMILIES=(imx8mp imx95 rpi5 rk3855 orin iq9075)
 CAPABILITY_SUFFIXES=(hailo8l ara240)
 
 # Derives labels for a board purely from its own name, one per line: the
