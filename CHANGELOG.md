@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-01
+
 ### Added
 
 - **Board entries can require several labels, joined by `+`.** `boards: imx95-frdm+ara240` selects a runner carrying both labels, which a single label could not express: an identity label matches every unit of a board, fitted or not, and an equipment label matches every board fitted with it. Each comma-separated entry is still one board job. The matrix entry grows from `{runner}` to `{runner, labels}`; `rust-full.yml`'s board job now runs on `runs-on: ${{ matrix.labels }}`, and `matrix.runner` stays the entry as written, so job names and `coverage-hardware-<runner>` artifacts are unchanged for single-label entries. An entry with an empty label (`a+`, `a++b`) or a repeated one (`a+a`), or one selecting the same label set as an earlier entry in any order or case (`a+b, B+a`), is an error rather than silently dropped: a duplicate would schedule the same job twice, and an identical one would upload two artifacts under one name.
@@ -470,6 +472,7 @@ Everything here is exercised by a real release: `EdgeFirstAI/ara2-rs` v0.18.0 wa
   precedence over `ci:hardware`. PyPI publish requires the reusable release
   job to succeed.
 
+[2.1.0]: https://github.com/EdgeFirstAI/.github/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/EdgeFirstAI/.github/compare/v1.2.2...v2.0.0
 [1.2.2]: https://github.com/EdgeFirstAI/.github/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/EdgeFirstAI/.github/compare/v1.2.0...v1.2.1
