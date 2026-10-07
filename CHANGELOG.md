@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-10-07
+
 ### Added
 
 - **`archive-pre-command` on `rust-full`, setup for the on-target archive build.** It falls back to `pre-command`, like `board-pre-command` and `gpu-pre-command`, so a caller can skip host-lane dependencies the archive does not build against.
@@ -480,6 +482,7 @@ Everything here is exercised by a real release: `EdgeFirstAI/ara2-rs` v0.18.0 wa
   precedence over `ci:hardware`. PyPI publish requires the reusable release
   job to succeed.
 
+[2.2.0]: https://github.com/EdgeFirstAI/.github/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/EdgeFirstAI/.github/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/EdgeFirstAI/.github/compare/v1.2.2...v2.0.0
 [1.2.2]: https://github.com/EdgeFirstAI/.github/compare/v1.2.1...v1.2.2
