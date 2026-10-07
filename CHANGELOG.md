@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **On-target coverage is recorded again.** Since 2.1.0 an `archive-glibc` caller's board archive was linked by zig, which is not compatible with `-C instrument-coverage`: the boards ran every test, but the binaries kept profile records for only a few thousand of their functions, so `coverage-hardware` credited almost none of the code they exercised (97 of 5,447 lines of hal's GL processor). The archive is now built natively in its own `board-archive` job on `ubuntu-22.04-arm`, whose glibc 2.35 every board in the fleet can load, and zig is no longer used outside the release builds. `archive-glibc` now names the oldest glibc the boards run and fails the job if it is below the archive's 2.35. The `ci-testdata` artifact moves to the same job, the aarch64 host lane (`do_arm`) no longer runs for a hardware-only run, and the archive builds in parallel with the host lanes instead of after the arm lane's tests.
+
 ## [2.1.0] - 2026-10-01
 
 ### Added

@@ -65,7 +65,7 @@ outputs:
     description: Whether the host lanes run.
     value: ${{ steps.resolve.outputs.do_host }}
   do_arm:
-    description: Whether the aarch64 Linux lane runs; also true for a hardware-only run, which needs the archive.
+    description: Whether the aarch64 Linux host lane runs.
     value: ${{ steps.resolve.outputs.do_arm }}
   do_macos:
     description: Whether the macOS lane runs.

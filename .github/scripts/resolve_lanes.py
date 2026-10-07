@@ -161,7 +161,7 @@ def resolve(env):
         "windows": map_class(classes["windows"], "windows"),
         "gpu": GPU_RUNNER,
         "do_host": do_host,
-        "do_arm": do_host or do_hardware,
+        "do_arm": do_host,
         "do_macos": do_host and (env.get("SKIP_MAC") or "") != "true",
         "do_windows": do_host and (env.get("SKIP_WIN") or "") != "true",
         "do_hardware": do_hardware,
@@ -304,8 +304,10 @@ def _self_test() -> int:
     r = resolve({**base, "BOARDS": ""})
     check("no boards", r["do_hardware"], False)
 
-    # do_arm follows host or hardware, as before.
+    # do_arm follows host only: the board archive has its own job.
     check("arm follows host", resolve({**base, "LANES": "host"})["do_arm"], True)
+    check("arm off for hardware only",
+          resolve({**base, "LANES": "hardware"})["do_arm"], False)
     check("arm off for gpu only",
           resolve({**base, "LANES": "gpu", "GPU_ARGS": "-x"})["do_arm"], False)
 
