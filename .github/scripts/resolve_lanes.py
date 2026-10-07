@@ -24,7 +24,10 @@ HOSTED = {
 FLEET = {
     "linux": ["self-hosted", "Linux", "X64", "build"],
     "linux-arm": ["self-hosted", "Linux", "ARM64", "build"],
-    "archive": ["self-hosted", "Linux", "ARM64", "build"],
+    # The archive must be built on Ubuntu 22.04 (glibc 2.35), which no fleet
+    # build pool guarantees, so the fleet class builds it on the 22.04 larger
+    # runner rather than on whatever ARM64 machine answers `build`.
+    "archive": "ubuntu-22.04-arm-xlarge",
     "macos": ["self-hosted", "macOS", "ARM64", "build"],
     "windows": ["self-hosted", "Windows", "X64", "build"],
 }
@@ -242,6 +245,10 @@ def _self_test() -> int:
     check("larger linux", map_class("larger", "linux"), "ubuntu-24.04-xlarge")
     check("larger archive", map_class("larger", "archive"), "ubuntu-22.04-arm-xlarge")
     check("hosted archive", map_class("hosted", "archive"), "ubuntu-22.04-arm")
+    check("fleet archive", map_class("fleet", "archive"), "ubuntu-22.04-arm-xlarge")
+    for cls in CLASSES:
+        check(f"{cls} archive is Ubuntu 22.04",
+              map_class(cls, "archive").startswith("ubuntu-22.04-"), True)
     check_raises("unknown class", lambda: map_class("bogus", "linux"))
 
     base = {
