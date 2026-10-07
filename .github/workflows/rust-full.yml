@@ -95,6 +95,12 @@ on:
         description: GPU-only setup. Falls back to pre-command when empty.
         type: string
         default: ""
+      archive-pre-command:
+        description: >-
+          Setup for the on-target archive build, which runs in an Ubuntu 22.04
+          container. Falls back to pre-command when empty.
+        type: string
+        default: ""
       hack-args:
         description: >-
           Arguments for the nightly `cargo hack check` feature-combination
@@ -514,9 +520,9 @@ jobs:
           done <<< "$CALLER_ENV"
 
       - name: Caller pre-command
-        if: ${{ inputs.pre-command != '' }}
+        if: ${{ inputs.archive-pre-command != '' || inputs.pre-command != '' }}
         env:
-          PRE_COMMAND: ${{ inputs.pre-command }}
+          PRE_COMMAND: ${{ inputs.archive-pre-command != '' && inputs.archive-pre-command || inputs.pre-command }}
           GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
