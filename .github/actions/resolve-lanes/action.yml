@@ -52,6 +52,9 @@ outputs:
   linux_arm:
     description: Runner label for the aarch64 Linux lane.
     value: ${{ steps.resolve.outputs.linux_arm }}
+  archive:
+    description: Runner label for the on-target archive build (Ubuntu 22.04, aarch64).
+    value: ${{ steps.resolve.outputs.archive }}
   macos:
     description: Runner label for the macOS lane.
     value: ${{ steps.resolve.outputs.macos }}
