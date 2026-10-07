@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`archive-pre-command` on `rust-full`, setup for the on-target archive build.** It falls back to `pre-command`, like `board-pre-command` and `gpu-pre-command`, so a caller can skip host-lane dependencies the archive does not build against.
+
+### Fixed
+
+- **On-target coverage is recorded again.** Since 2.1.0 an `archive-glibc` caller's board archive was linked by zig, which is not compatible with `-C instrument-coverage`: the boards ran every test, but the binaries kept profile records for only a few thousand of their functions, so `coverage-hardware` credited almost none of the code they exercised (97 of 5,447 lines of hal's GL processor). The archive is now built natively in its own `board-archive` job on Ubuntu 22.04, whose glibc 2.35 every board in the fleet can load, and zig is no longer used outside the release builds. The job follows `runner-class-linux-arm` through a new `archive` runner from `resolve-lanes`, always an Ubuntu 22.04 image: `ubuntu-22.04-arm-xlarge` for `larger` and `fleet` (no fleet build pool guarantees 22.04), `ubuntu-22.04-arm` for `hosted`. `archive-glibc` now names the oldest glibc the boards run, 2.35 when empty, and the job fails unless the build host is Ubuntu 22.04 with a glibc no newer than it. The `ci-testdata` artifact moves to the same job, the aarch64 host lane (`do_arm`) no longer runs for a hardware-only run, and the archive builds in parallel with the host lanes instead of after the arm lane's tests.
+
 ## [2.1.0] - 2026-10-01
 
 ### Added

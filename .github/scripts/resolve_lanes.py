@@ -13,6 +13,7 @@ import sys
 HOSTED = {
     "linux": "ubuntu-24.04",
     "linux-arm": "ubuntu-24.04-arm",
+    "archive": "ubuntu-22.04-arm",
     "macos": "macos-latest",
     "windows": "windows-latest",
 }
@@ -23,6 +24,10 @@ HOSTED = {
 FLEET = {
     "linux": ["self-hosted", "Linux", "X64", "build"],
     "linux-arm": ["self-hosted", "Linux", "ARM64", "build"],
+    # The archive must be built on Ubuntu 22.04 (glibc 2.35), which no fleet
+    # build pool guarantees, so the fleet class builds it on the 22.04 larger
+    # runner rather than on whatever ARM64 machine answers `build`.
+    "archive": "ubuntu-22.04-arm-xlarge",
     "macos": ["self-hosted", "macOS", "ARM64", "build"],
     "windows": ["self-hosted", "Windows", "X64", "build"],
 }
@@ -30,6 +35,7 @@ FLEET = {
 LARGER = {
     "linux": "ubuntu-24.04-xlarge",
     "linux-arm": "ubuntu-24.04-arm-xlarge",
+    "archive": "ubuntu-22.04-arm-xlarge",
     "macos": "macos-latest-xlarge",
     # Requires an org-provisioned Windows larger runner; without one this
     # label queues until the job times out.
@@ -157,11 +163,14 @@ def resolve(env):
     return {
         "linux": map_class(classes["linux"], "linux"),
         "linux_arm": map_class(classes["linux-arm"], "linux-arm"),
+        # The on-target archive takes the arm lane's class on Ubuntu 22.04,
+        # whose glibc 2.35 every board can load.
+        "archive": map_class(classes["linux-arm"], "archive"),
         "macos": map_class(classes["macos"], "macos"),
         "windows": map_class(classes["windows"], "windows"),
         "gpu": GPU_RUNNER,
         "do_host": do_host,
-        "do_arm": do_host or do_hardware,
+        "do_arm": do_host,
         "do_macos": do_host and (env.get("SKIP_MAC") or "") != "true",
         "do_windows": do_host and (env.get("SKIP_WIN") or "") != "true",
         "do_hardware": do_hardware,
@@ -174,7 +183,7 @@ def resolve(env):
 
 def _emit(result, stream):
     for key, value in result.items():
-        if key in ("linux", "linux_arm", "macos", "windows", "gpu"):
+        if key in ("linux", "linux_arm", "archive", "macos", "windows", "gpu"):
             stream.write(f"{key}={json.dumps(value)}\n")
         elif key == "board_matrix":
             stream.write(f"board_matrix<<EOF\n{json.dumps(value)}\nEOF\n")
@@ -234,6 +243,12 @@ def _self_test() -> int:
           ["self-hosted", "macOS", "ARM64", "build"])
     check("hosted linux", map_class("hosted", "linux"), "ubuntu-24.04")
     check("larger linux", map_class("larger", "linux"), "ubuntu-24.04-xlarge")
+    check("larger archive", map_class("larger", "archive"), "ubuntu-22.04-arm-xlarge")
+    check("hosted archive", map_class("hosted", "archive"), "ubuntu-22.04-arm")
+    check("fleet archive", map_class("fleet", "archive"), "ubuntu-22.04-arm-xlarge")
+    for cls in CLASSES:
+        check(f"{cls} archive is Ubuntu 22.04",
+              map_class(cls, "archive").startswith("ubuntu-22.04-"), True)
     check_raises("unknown class", lambda: map_class("bogus", "linux"))
 
     base = {
@@ -304,8 +319,10 @@ def _self_test() -> int:
     r = resolve({**base, "BOARDS": ""})
     check("no boards", r["do_hardware"], False)
 
-    # do_arm follows host or hardware, as before.
+    # do_arm follows host only: the board archive has its own job.
     check("arm follows host", resolve({**base, "LANES": "host"})["do_arm"], True)
+    check("arm off for hardware only",
+          resolve({**base, "LANES": "hardware"})["do_arm"], False)
     check("arm off for gpu only",
           resolve({**base, "LANES": "gpu", "GPU_ARGS": "-x"})["do_arm"], False)
 
@@ -324,6 +341,7 @@ def _self_test() -> int:
     r = resolve(fork)
     check("fork linux downgraded", r["linux"], "ubuntu-24.04")
     check("fork linux_arm downgraded", r["linux_arm"], "ubuntu-24.04-arm")
+    check("fork archive downgraded", r["archive"], "ubuntu-22.04-arm")
     check("fork macos downgraded", r["macos"], "macos-latest")
     check("fork windows downgraded", r["windows"], "windows-latest")
 
