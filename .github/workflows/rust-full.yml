@@ -440,16 +440,23 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # The on-target archive is built natively on Ubuntu 22.04 so that every
-  # board, the oldest of which run glibc 2.35 (JetPack 6), can load it. zig is
-  # for release binaries only: it is not compatible with -C
+  # The on-target archive is built natively in an Ubuntu 22.04 container so
+  # that every board, the oldest of which run glibc 2.35 (JetPack 6), can load
+  # it. zig is for release binaries only: it is not compatible with -C
   # instrument-coverage, and an archive it links runs every test on the board
-  # while recording almost none of them.
+  # while recording almost none of them. The container runs on the arm lane's
+  # runner class: the instrumented build needs the larger runner's memory.
   board-archive:
     name: Board archive (aarch64)
     needs: setup
     if: needs.setup.outputs.do_hardware == 'true'
-    runs-on: ubuntu-22.04-arm
+    runs-on: ${{ fromJSON(needs.setup.outputs.linux_arm) }}
+    container:
+      image: ubuntu:22.04@sha256:5ec03bb3441e8b0bf3b4f9cd4629a1ae763010dc3035bb8da3ae6cf026486401
+    # A pre-command's apt install would otherwise stop at tzdata's prompt.
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      TZ: Etc/UTC
     timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
     permissions:
       contents: read
@@ -473,13 +480,17 @@ jobs:
             fi
           fi
 
-      - name: Ensure git-lfs
-        if: ${{ inputs.lfs }}
+      # The base image has none of what the steps below assume of a runner:
+      # git (or checkout falls back to a tarball), git-lfs, curl and jq for
+      # the toolchain installers, a C toolchain, and sudo for pre-commands
+      # written against a hosted runner.
+      - name: Container packages
         run: |
           set -euo pipefail
-          command -v git-lfs >/dev/null 2>&1 && exit 0
-          sudo apt-get update
-          sudo apt-get install -y git-lfs
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            sudo ca-certificates curl git git-lfs jq xz-utils zstd \
+            build-essential pkg-config
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
