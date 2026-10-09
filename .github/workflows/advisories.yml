@@ -45,7 +45,7 @@ jobs:
       # otherwise instant job. The runner image's cargo is enough to dispatch
       # the subcommand, and if that ever stopped being true this fails loudly
       # rather than skipping the scan.
-      - uses: taiki-e/install-action@dfae9bf3d6f6c6f20ef4ebb3486c01a51341ff12  # v2.87.18
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad  # v2.87.26
         with:
           tool: cargo-audit
 
