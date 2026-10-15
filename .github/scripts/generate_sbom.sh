@@ -148,7 +148,7 @@ PY
     if command -v uv >/dev/null 2>&1; then
       uv venv --quiet "$py_env"
       if [[ -f uv.lock ]]; then
-        uv export --frozen --no-dev --no-emit-project --no-hashes \
+        uv export --frozen --no-default-groups --no-emit-project --no-hashes \
           --format requirements-txt -o "${py_env}.requirements.txt"
         uv pip install --quiet --python "$py_env/bin/python" -r "${py_env}.requirements.txt"
         uv pip install --quiet --python "$py_env/bin/python" --no-deps .
