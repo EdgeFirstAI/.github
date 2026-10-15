@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The dependency SBOM of a Python project lists what the package depends on, not what CI installed.** `generate_sbom.sh` ran `cyclonedx-py environment` inside `uv run --with cyclonedx-bom`, which scans that environment: the project's optional extras and dev tools, plus `cyclonedx-bom`'s own dependencies. The license policy then judged CI tooling and optional frameworks (cameraadaptor's torch extra brought proprietary NVIDIA wheels, and `cyclonedx-bom` brought `chardet`, LGPL) rather than the package, and failed `python-quick` for its first pure-Python caller. The project is now installed into a fresh environment with its required dependencies only, at the locked versions when `uv.lock` exists, and that environment is scanned. Rust projects are unaffected.
+
 ### Added
 
 - **`python-full`, the Full tier for pure-Python repositories.** One test job per entry of `python-versions` runs pytest with coverage under the caller's `[tool.coverage]` settings; pytest-cov is added for the run, so callers need not declare it. `coverage-fail-under` sets a threshold for every version. A SonarCloud job imports every version's Cobertura report through `sonar.python.coverage.reportPaths`, and like `rust-full` it is skipped when the repository has no `sonar-project.properties`. Report paths are rewritten so the scan resolves them from its own checkout. `env` and `pre-command` follow the other shared workflows. An untrusted trigger, such as a fork pull request, runs on a GitHub-hosted runner whatever `runner` asks for, and skips SonarCloud, which GitHub gives it no token for. `pytest-args` is split like a shell command line, quotes included, and never evaluated. Until now a Python repository had no shared coverage or SonarCloud path: `python-quick` runs ruff and pytest only, and `rust-full` imports Rust lcov only.
