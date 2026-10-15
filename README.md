@@ -13,6 +13,7 @@ The organisation profile README lives in [`profile/`](profile/README.md).
 | `.github/workflows/rust-quick.yml` | fmt, clippy, nextest, dependency license |
 | `.github/workflows/rust-full.yml` | host matrix, boards, coverage, scancode |
 | `.github/workflows/python-quick.yml` | ruff + pytest |
+| `.github/workflows/python-full.yml` | pytest with coverage across a Python matrix, SonarCloud |
 | `.github/workflows/cmake-quick.yml` | ccache + ctest |
 | `.github/workflows/nightly-gate.yml` | skip nightly when `main` is unchanged |
 | `.github/workflows/advisories.yml` | `cargo audit`, run ungated so a new advisory is still reported |
@@ -27,7 +28,7 @@ The organisation profile README lives in [`profile/`](profile/README.md).
 | `.github/scripts/` | license policy, the SHA-pin check, the workspace version check, lane resolution, wheel data staging, the runner-fleet converger (single copy each) |
 | `.github/rulesets/` | `protect-main` (reviews; org-admin PR bypass), `protect-main-ci` (ci-gate, no bypass), `protect-release-tags` |
 | `.github/rulesets/runners.json` | declarative runner *group settings* only (visibility, public-repository access) — no runner names; see `runner-groups.md` |
-| `templates/` | per-repo `ci.yml`, `nightly.yml`, `release.yml`, `tag-release.yml`, `publish.yml`, the container pair `release-container.yml` / `publish-container.yml`, plus `CODEOWNERS` and `dependabot.yml` |
+| `templates/` | per-repo `ci.yml` (`ci-python.yml` for a pure-Python repository), `nightly.yml`, `release.yml`, `tag-release.yml`, `publish.yml`, the container pair `release-container.yml` / `publish-container.yml`, plus `CODEOWNERS` and `dependabot.yml` |
 
 ## Pinning
 

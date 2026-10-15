@@ -1,0 +1,96 @@
+# Caller skeleton for a pure-Python repository — copy into the product
+# repository as .github/workflows/ci.yml. Replace the all-zero placeholder in
+# every EdgeFirstAI/.github `uses:` with the commit you intend to pin, then let
+# Dependabot bump it. Third-party actions below are pinned for real and can be
+# copied as-is. See templates/ci.yml for why the placeholder is deliberate.
+
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
+  merge_group:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      full:
+        type: boolean
+        default: false
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# No workflow-level `permissions`; each job declares what it uses.
+
+jobs:
+  changes:
+    if: github.event.pull_request.draft != true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read        # checkout
+      pull-requests: read   # paths-filter compares the PR through the API
+    outputs:
+      code: ${{ steps.f.outputs.code }}
+      full: ${{ steps.mode.outputs.full }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d  # v4.0.3
+        id: f
+        with:
+          filters: |
+            code:
+              - '**/*.py'
+              - 'src/**'
+              - 'tests/**'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - 'sonar-project.properties'
+              - '.github/**'
+      - id: mode
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          DISPATCH_FULL: ${{ inputs.full }}
+        run: |
+          full=false
+          case "$EVENT_NAME" in
+            merge_group|push) full=true ;;
+            workflow_dispatch) full="$DISPATCH_FULL" ;;
+          esac
+          # Re-run Full on later pushes while the label is still present.
+          case ",$LABELS," in *,ci:full,*) full=true ;; esac
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+
+  quick:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    uses: EdgeFirstAI/.github/.github/workflows/python-quick.yml@0000000000000000000000000000000000000000
+    with:
+      python-version: "3.12"
+      # extra-sync-args: --all-extras
+
+  full:
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
+    uses: EdgeFirstAI/.github/.github/workflows/python-full.yml@0000000000000000000000000000000000000000
+    with:
+      python-versions: '["3.10", "3.11", "3.12", "3.13"]'
+      # extra-sync-args: --all-extras
+      # coverage-fail-under: "70"
+    secrets: inherit
+
+  ci-gate:
+    if: always()
+    needs: [changes, quick, full]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    # Reads its own `needs` context and nothing else.
+    permissions: {}
+    steps:
+      - env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -e 'to_entries | all(.value.result == "success" or .value.result == "skipped")'
