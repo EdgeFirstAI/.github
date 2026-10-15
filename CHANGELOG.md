@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`python-full`, the Full tier for pure-Python repositories.** One test job per entry of `python-versions` runs pytest with coverage under the caller's `[tool.coverage]` settings; pytest-cov is added for the run, so callers need not declare it. `coverage-fail-under` sets a threshold for every version. A SonarCloud job imports every version's Cobertura report through `sonar.python.coverage.reportPaths`, and like `rust-full` it is skipped when the repository has no `sonar-project.properties`. Report paths are rewritten so the scan resolves them from its own checkout. `env` and `pre-command` follow the other shared workflows. Until now a Python repository had no shared coverage or SonarCloud path: `python-quick` runs ruff and pytest only, and `rust-full` imports Rust lcov only.
+- **`templates/ci-python.yml`, the caller skeleton for a pure-Python repository:** `python-quick` on every non-draft push, `python-full` on `ci:full`, the merge queue and pushes to `main`, and `ci-gate`.
+
 ## [2.2.0] - 2026-10-07
 
 ### Added

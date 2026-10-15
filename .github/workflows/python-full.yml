@@ -1,0 +1,229 @@
+name: python-full
+
+on:
+  workflow_call:
+    inputs:
+      python-versions:
+        description: >-
+          JSON array of Python versions, one test job each. Coverage from
+          every version is uploaded and SonarCloud merges it.
+        type: string
+        default: '["3.10", "3.11", "3.12", "3.13"]'
+      runner:
+        type: string
+        default: ubuntu-24.04
+      timeout-minutes:
+        type: number
+        default: 30
+      extra-sync-args:
+        description: >-
+          Extra arguments for uv sync, e.g. `--all-extras` or
+          `--extra torch --extra dev`, so the tests see the optional
+          dependencies they exercise.
+        type: string
+        default: ""
+      pytest-args:
+        description: >-
+          Arguments appended to pytest. Coverage is configured by the
+          caller's `[tool.coverage]` settings; the workflow only adds the
+          report options.
+        type: string
+        default: ""
+      coverage-fail-under:
+        description: >-
+          Minimum total coverage percentage for every version. Empty reports
+          coverage without a threshold.
+        type: string
+        default: ""
+      env:
+        description: >-
+          Newline-separated KEY=VALUE pairs exported for every later step.
+          Values are written verbatim and never interpolated into a script.
+          Use `pre-command` for work, this for configuration.
+        type: string
+        default: ""
+      pre-command:
+        description: Caller setup before uv sync (system packages, testdata). Passed through env, never interpolated.
+        type: string
+        default: ""
+      sonar:
+        type: boolean
+        default: true
+    secrets:
+      SONAR_TOKEN:
+        required: false
+
+jobs:
+  setup:
+    name: Setup
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      has_sonar: ${{ steps.sonar.outputs.present }}
+    steps:
+      # Shallow, and only so the sonar gate below can ask whether this
+      # repository has a SonarCloud project at all. `hashFiles` is not
+      # available in a job-level `if`, so the question is answered here and
+      # passed down as an output.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 1
+      - id: sonar
+        run: |
+          set -euo pipefail
+          present=false
+          [[ -f sonar-project.properties ]] && present=true
+          echo "present=$present" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: Test (Python ${{ matrix.python }})
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ${{ fromJSON(inputs.python-versions) }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout caller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Caller environment
+        if: ${{ inputs.env != '' }}
+        env:
+          CALLER_ENV: ${{ inputs.env }}
+        run: |
+          set -euo pipefail
+          # Appended verbatim. A value is never interpolated into a script, and
+          # a malformed line is rejected rather than silently dropped.
+          while IFS= read -r line; do
+            [[ -z "${line// }" ]] && continue
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            if [[ ! "$line" =~ ^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*= ]]; then
+              echo "::error::env line is not KEY=VALUE: $line"
+              exit 1
+            fi
+            echo "${line#"${line%%[![:space:]]*}"}" >> "$GITHUB_ENV"
+          done <<< "$CALLER_ENV"
+          echo "Exported $(grep -c . <<< "$CALLER_ENV") caller environment line(s)."
+
+      - name: Caller pre-command
+        if: ${{ inputs.pre-command != '' }}
+        env:
+          PRE_COMMAND: ${{ inputs.pre-command }}
+          # Contract: pre-command scripts may rely on GH_TOKEN / GITHUB_TOKEN
+          # for gh and API calls (release asset downloads, etc). Nothing else
+          # is guaranteed beyond the default runner environment.
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
+
+      - name: Setup Python / uv
+        uses: $/.github/actions/setup-python-uv
+        with:
+          python-version: ${{ matrix.python }}
+          extra-args: ${{ inputs.extra-sync-args }}
+
+      # pytest-cov is layered on for this run rather than required of the
+      # caller's dependencies. The report's <source> paths are absolute; the
+      # checkout prefix is replaced with a placeholder that the SonarCloud job
+      # resolves against its own checkout, which may live at another path.
+      - name: pytest with coverage
+        env:
+          PYTEST_ARGS: ${{ inputs.pytest-args }}
+          FAIL_UNDER: ${{ inputs.coverage-fail-under }}
+          PYTHON_VERSION: ${{ matrix.python }}
+        run: |
+          set -euo pipefail
+          report="coverage/coverage-python-${PYTHON_VERSION}.xml"
+          mkdir -p coverage
+          args=(--cov --cov-report=term-missing:skip-covered "--cov-report=xml:${report}")
+          [[ -n "$FAIL_UNDER" ]] && args+=("--cov-fail-under=${FAIL_UNDER}")
+          read -r -a extra <<< "$PYTEST_ARGS"
+          status=0
+          uv run --with 'pytest-cov>=6' python -m pytest "${args[@]}" "${extra[@]}" || status=$?
+          if [[ -f "$report" ]]; then
+            python3 - "$report" "$GITHUB_WORKSPACE" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+          path, root = sys.argv[1], sys.argv[2].rstrip("/")
+          tree = ET.parse(path)
+          for source in tree.iter("source"):
+              text = (source.text or "").strip()
+              if text == root or text.startswith(root + "/"):
+                  source.text = "@WORKSPACE@" + text[len(root):]
+          tree.write(path, xml_declaration=True, encoding="utf-8")
+          PY
+          fi
+          exit "$status"
+
+      - name: Upload coverage
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: coverage-python-${{ matrix.python }}
+          path: coverage/coverage-python-${{ matrix.python }}.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+  sonar:
+    name: SonarCloud
+    needs: [setup, test]
+    # Skipped without sonar-project.properties, so a repository with no
+    # SonarCloud project does not boot a runner for it.
+    if: >-
+      always() && inputs.sonar == true
+      && needs.test.result == 'success'
+      && needs.setup.outputs.has_sonar == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          pattern: coverage-python-*
+          path: coverage
+          merge-multiple: true
+      - name: Resolve coverage paths
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          reports=(coverage/coverage-python-*.xml)
+          if [[ ${#reports[@]} -eq 0 ]]; then
+            echo "::error::no coverage reports were uploaded"
+            exit 1
+          fi
+          for report in "${reports[@]}"; do
+            python3 - "$report" "$GITHUB_WORKSPACE" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+          path, root = sys.argv[1], sys.argv[2].rstrip("/")
+          tree = ET.parse(path)
+          for source in tree.iter("source"):
+              source.text = (source.text or "").replace("@WORKSPACE@", root)
+          tree.write(path, xml_declaration=True, encoding="utf-8")
+          PY
+            echo "$report"
+          done
+      - uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9  # v8.3.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: >-
+            "-Dsonar.python.coverage.reportPaths=coverage/coverage-python-*.xml"
