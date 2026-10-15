@@ -140,20 +140,34 @@ print(f"merged {len(components)} components into {out}")
 PY
     find . -name "${scan_prefix}*" -delete
   elif [[ -f pyproject.toml ]]; then
+    # What the package depends on, not what CI happens to have installed: the
+    # project goes into a fresh environment with its required dependencies
+    # only, so optional extras, dev tools and the SBOM tool's own packages
+    # stay out of the license check. With uv.lock, the locked versions.
+    py_env="$(mktemp -d)/env"
     if command -v uv >/dev/null 2>&1; then
-      uv run --with 'cyclonedx-bom==7.3.0' cyclonedx-py environment \
-        --spec-version 1.5 --output-format JSON -o "$DEP_SBOM" --pyproject pyproject.toml
-    elif command -v cyclonedx-py >/dev/null 2>&1; then
-      env_path=()
-      if [[ -d .venv ]]; then
-        env_path=(.venv)
+      uv venv --quiet "$py_env"
+      if [[ -f uv.lock ]]; then
+        uv export --frozen --no-default-groups --no-emit-project --no-hashes \
+          --format requirements-txt -o "${py_env}.requirements.txt"
+        uv pip install --quiet --python "$py_env/bin/python" -r "${py_env}.requirements.txt"
+        uv pip install --quiet --python "$py_env/bin/python" --no-deps .
+      else
+        uv pip install --quiet --python "$py_env/bin/python" .
       fi
+      uvx --from 'cyclonedx-bom==7.3.0' cyclonedx-py environment \
+        --spec-version 1.5 --output-format JSON -o "$DEP_SBOM" --pyproject pyproject.toml \
+        "$py_env/bin/python"
+    elif command -v cyclonedx-py >/dev/null 2>&1; then
+      python3 -m venv "$py_env"
+      "$py_env/bin/pip" install --quiet .
       cyclonedx-py environment --spec-version 1.5 --output-format JSON \
-        -o "$DEP_SBOM" --pyproject pyproject.toml "${env_path[@]}"
+        -o "$DEP_SBOM" --pyproject pyproject.toml "$py_env/bin/python"
     else
       echo "error: cyclonedx-py or uv is required when pyproject.toml exists" >&2
       exit 1
     fi
+    rm -rf "$(dirname "$py_env")"
   else
     echo '{"bomFormat":"CycloneDX","specVersion":"1.5","components":[]}' > "$DEP_SBOM"
   fi
