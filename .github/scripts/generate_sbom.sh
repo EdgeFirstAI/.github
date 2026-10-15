@@ -31,29 +31,64 @@ SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 
 mkdir -p "$OUTPUT_DIR"
 
+# Static [project].version of a pyproject.toml, or nothing when it is dynamic.
+pyproject_version() {
+  python3 - "$1" <<'PY_EOF'
+import re
+import sys
+
+path = sys.argv[1]
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11: scan the [project] table
+    table, version = None, None
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            header = re.match(r"\s*\[([^\[\]]+)\]\s*(#.*)?$", line)
+            if header:
+                table = header.group(1).strip()
+            elif table == "project":
+                m = re.match(r"""\s*version\s*=\s*(["'])([^"']+)\1""", line)
+                if m:
+                    version = m.group(2)
+                    break
+else:
+    with open(path, "rb") as f:
+        version = tomllib.load(f).get("project", {}).get("version")
+print(version if isinstance(version, str) else "")
+PY_EOF
+}
+
+# Version recorded in a manifest, or nothing when the file is missing or
+# holds no static version.
 version_from_file() {
   local file="$1"
-  if [[ ! -f "$file" ]]; then
-    echo "unknown"
-    return
-  fi
+  [[ -f "$file" ]] || return 0
   case "$file" in
     Cargo.toml|*/Cargo.toml)
-      grep -E '^version\s*=' "$file" | head -1 | sed 's/.*"\(.*\)".*/\1/'
+      { grep -E '^version\s*=' "$file" || true; } | head -1 | sed 's/.*"\(.*\)".*/\1/'
       ;;
     pyproject.toml|*/pyproject.toml)
-      grep -E '^version\s*=' "$file" | head -1 | sed 's/.*"\(.*\)".*/\1/'
+      pyproject_version "$file"
       ;;
     VERSION|version)
       tr -d '[:space:]' < "$file"
       ;;
     *)
-      grep -E 'version' "$file" | head -1 | sed 's/.*"\([0-9][^"]*\)".*/\1/'
+      { grep -E 'version' "$file" || true; } | head -1 | sed 's/.*"\([0-9][^"]*\)".*/\1/'
       ;;
   esac
 }
 
-VERSION="$(version_from_file "$VERSION_FILE")"
+# The workflows default VERSION_FILE to Cargo.toml. A project without one
+# (pure Python), or whose named file has no static version, takes the first
+# version the manifests it does have record.
+VERSION=""
+for candidate in "$VERSION_FILE" Cargo.toml pyproject.toml VERSION; do
+  VERSION="$(version_from_file "$candidate")"
+  [[ -n "$VERSION" ]] && break
+done
+VERSION="${VERSION:-unknown}"
 echo "=================================================="
 echo "SBOM for ${PROJECT_NAME} ${VERSION} (${PROJECT_TYPE}), mode=${SBOM_MODE}"
 echo "=================================================="
