@@ -62,6 +62,8 @@ jobs:
       contents: read
     outputs:
       has_sonar: ${{ steps.sonar.outputs.present }}
+      runner: ${{ steps.trust.outputs.runner }}
+      same_repo: ${{ steps.trust.outputs.same_repo }}
     steps:
       # Shallow, and only so the sonar gate below can ask whether this
       # repository has a SonarCloud project at all. `hashFiles` is not
@@ -76,10 +78,36 @@ jobs:
           present=false
           [[ -f sonar-project.properties ]] && present=true
           echo "present=$present" >> "$GITHUB_OUTPUT"
+      # The same rule as resolve-lanes: only events that cannot carry a fork's
+      # code are trusted. An untrusted trigger keeps a GitHub-hosted runner
+      # and is moved to ubuntu-24.04 otherwise, because checkout, pre-command
+      # and pytest run the pull request's code.
+      - id: trust
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+          RUNNER: ${{ inputs.runner }}
+        run: |
+          set -euo pipefail
+          same_repo=false
+          case "$EVENT" in
+            push|workflow_dispatch|schedule|merge_group) same_repo=true ;;
+            pull_request) [[ "$PR_HEAD_REPO" == "$REPO" ]] && same_repo=true ;;
+          esac
+          runner="$RUNNER"
+          if [[ "$same_repo" != true ]] \
+            && ! [[ "$runner" =~ ^ubuntu-([0-9]{2}\.[0-9]{2}|latest)(-arm)?$ ]]; then
+            echo "::notice::untrusted trigger; running on ubuntu-24.04 instead of '$runner'"
+            runner=ubuntu-24.04
+          fi
+          echo "same_repo=$same_repo" >> "$GITHUB_OUTPUT"
+          echo "runner=$runner" >> "$GITHUB_OUTPUT"
 
   test:
     name: Test (Python ${{ matrix.python }})
-    runs-on: ${{ inputs.runner }}
+    needs: setup
+    runs-on: ${{ needs.setup.outputs.runner }}
     timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
     permissions:
       contents: read
@@ -149,7 +177,12 @@ jobs:
           mkdir -p coverage
           args=(--cov --cov-report=term-missing:skip-covered "--cov-report=xml:${report}")
           [[ -n "$FAIL_UNDER" ]] && args+=("--cov-fail-under=${FAIL_UNDER}")
-          read -r -a extra <<< "$PYTEST_ARGS"
+          # Split like a shell, quotes included, without evaluating anything.
+          # Through a file, so a malformed value fails the step.
+          python3 -c 'import os, shlex, sys
+          for arg in shlex.split(os.environ["PYTEST_ARGS"]):
+              sys.stdout.write(arg + "\0")' > "${RUNNER_TEMP}/pytest-args"
+          mapfile -d '' -t extra < "${RUNNER_TEMP}/pytest-args"
           status=0
           uv run --with 'pytest-cov>=6' python -m pytest "${args[@]}" "${extra[@]}" || status=$?
           if [[ -f "$report" ]]; then
@@ -180,11 +213,13 @@ jobs:
     name: SonarCloud
     needs: [setup, test]
     # Skipped without sonar-project.properties, so a repository with no
-    # SonarCloud project does not boot a runner for it.
+    # SonarCloud project does not boot a runner for it, and for untrusted
+    # triggers such as fork pull requests, which GitHub gives no SONAR_TOKEN.
     if: >-
       always() && inputs.sonar == true
       && needs.test.result == 'success'
       && needs.setup.outputs.has_sonar == 'true'
+      && needs.setup.outputs.same_repo == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
