@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **SBOM generation runs again.** pluggy 1.7.0 broke scancode-toolkit: plugincode 32.0.0 cannot register its hooks with it, so `scancode` failed at startup (`did not find any 'pre_scan' hooks`). The `sbom-tools` action now installs `pluggy==1.6.0` with scancode-toolkit.
 - **The dependency SBOM of a Python project lists what the package depends on, not what CI installed.** `generate_sbom.sh` ran `cyclonedx-py environment` inside `uv run --with cyclonedx-bom`, which scans that environment: the project's optional extras and dev tools, plus `cyclonedx-bom`'s own dependencies. The license policy then judged CI tooling and optional frameworks (cameraadaptor's torch extra brought proprietary NVIDIA wheels, and `cyclonedx-bom` brought `chardet`, LGPL) rather than the package, and failed `python-quick` for its first pure-Python caller. The project is now installed into a fresh environment with its required dependencies only, at the locked versions when `uv.lock` exists and without any dependency group, and that environment is scanned. Rust projects are unaffected.
 
 ### Added
