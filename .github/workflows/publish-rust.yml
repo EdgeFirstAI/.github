@@ -76,6 +76,12 @@ on:
           rehearsal, or a pre-release whose manifests carry the base version.
           Gate caller PyPI uploads on this, not on `publishing`.
         value: ${{ jobs.resolve.outputs.publish-registries }}
+      artifact-version:
+        description: >
+          Version the built files carry: `version`, or for a pre-release whose
+          manifests carry the base version, that base version. Stage and
+          verify the files against this, not `version`.
+        value: ${{ jobs.resolve.outputs.artifact-version }}
       sha:
         description: Commit the artifacts were verified against; check this out rather than the tag
         value: ${{ jobs.resolve.outputs.sha }}
@@ -96,6 +102,7 @@ jobs:
       sha: ${{ steps.resolve.outputs.sha }}
       publishing: ${{ steps.resolve.outputs.publishing }}
       publish-registries: ${{ steps.manifests.outputs.registries }}
+      artifact-version: ${{ steps.manifests.outputs.artifact-version }}
     steps:
       # Resolve first, check out second. On a pre-tag rehearsal there is no tag
       # to check out yet, so nothing may check out the caller until the resolve
@@ -162,6 +169,11 @@ jobs:
             registries=true
           fi
           echo "registries=$registries" >> "$GITHUB_OUTPUT"
+          if [[ "$exact" -eq 1 ]]; then
+            echo "artifact-version=$VERSION" >> "$GITHUB_OUTPUT"
+          else
+            echo "artifact-version=$base" >> "$GITHUB_OUTPUT"
+          fi
           if [[ "$PUBLISHING" == true && "$exact" -eq 0 ]]; then
             echo "::warning::$VERSION carries the base version $base in its manifests, so crates.io and PyPI are SKIPPED — publishing $base now would make the final release unpublishable. The GitHub pre-release is still created with every artifact."
             echo "- crates.io / PyPI: **skipped** (manifests carry \`$base\`)" >> "$GITHUB_STEP_SUMMARY"

@@ -101,7 +101,9 @@ jobs:
           distribution: your-distribution-name
           # Asserts every selected file carries it. A PyPI version is immutable,
           # so a file for the wrong one is found when it cannot be corrected.
-          version: ${{ needs.publish.outputs.version }}
+          # artifact-version, not version: a release candidate whose manifests
+          # still carry the base version built files with that version.
+          version: ${{ needs.publish.outputs.artifact-version }}
 
       # Directly in the job, never through a composite action. This action
       # resolves its own container image from the repository it is called
