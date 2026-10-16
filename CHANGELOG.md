@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-10-15
+
 ### Fixed
 
 - **A release candidate carrying its base version publishes without failing.** When `vX.Y.Z-rcN` is tagged while the manifests still say `X.Y.Z`, `publish-rust.yml` correctly skips the registries, but the template's `publish-pypi` job staged the files against the tag version and `stage-pypi` rejected the base-version files, failing the publish and its rehearsal. `publish-rust.yml` now outputs `artifact-version`, the version the built files carry (the tag version, or the base version in that case), and `templates/publish.yml` stages against it. Repositories using the template should make the same one-line change.
@@ -494,6 +496,7 @@ Everything here is exercised by a real release: `EdgeFirstAI/ara2-rs` v0.18.0 wa
   precedence over `ci:hardware`. PyPI publish requires the reusable release
   job to succeed.
 
+[2.3.0]: https://github.com/EdgeFirstAI/.github/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/EdgeFirstAI/.github/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/EdgeFirstAI/.github/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/EdgeFirstAI/.github/compare/v1.2.2...v2.0.0
