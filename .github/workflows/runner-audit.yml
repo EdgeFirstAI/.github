@@ -26,7 +26,7 @@ jobs:
           import json, os, re, subprocess, sys, pathlib, base64
 
           org = "EdgeFirstAI"
-          billed = re.compile(r"(xlarge|-8core|-8-cores|macos-latest-xlarge|windows-latest-8)", re.I)
+          billed = re.compile(r"(xlarge|-8core|-8-cores|macos-latest-xlarge|windows-latest-\d+-cores)", re.I)
           allowed = re.compile(r"runner-class:\s*larger")
           runs_on = re.compile(r"^\s*runs-on:\s*(.+)$")
           findings = []
