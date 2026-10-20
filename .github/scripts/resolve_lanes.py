@@ -37,9 +37,7 @@ LARGER = {
     "linux-arm": "ubuntu-24.04-arm-xlarge",
     "archive": "ubuntu-22.04-arm-xlarge",
     "macos": "macos-latest-xlarge",
-    # Requires an org-provisioned Windows larger runner; without one this
-    # label queues until the job times out.
-    "windows": "windows-latest-8-cores",
+    "windows": "windows-latest-16-cores",
 }
 
 # The GPU lane is self-hosted by definition: there is no hosted or billed

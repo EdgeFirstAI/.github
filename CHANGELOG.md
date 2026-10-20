@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The `larger` runner class for Windows resolves to a runner that exists.** It named `windows-latest-8-cores`, which the organisation never provisioned, so a Windows lane on `runner-class-windows: larger` queued until it timed out. It now resolves to `windows-latest-16-cores` (16 cores, 64 GB), and the runner audit counts that label as billed.
+
 ## [2.3.0] - 2026-10-15
 
 ### Fixed
