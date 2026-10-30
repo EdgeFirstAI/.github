@@ -111,7 +111,7 @@ runs:
     # which is why it is the default every template ships with.
     - name: Log in to GHCR
       if: steps.classify.outputs.kind == 'ghcr'
-      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+      uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6  # v4.7.0
       with:
         registry: ${{ steps.classify.outputs.host }}
         username: ${{ github.actor }}
@@ -179,7 +179,7 @@ runs:
 
     - name: Log in to Docker Hub
       if: steps.dockerhub.outputs.ok == 'true'
-      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+      uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6  # v4.7.0
       with:
         registry: ${{ steps.classify.outputs.host }}
         username: ${{ inputs.dockerhub-username }}
