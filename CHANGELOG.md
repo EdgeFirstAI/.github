@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking: ECR logins assume the repository's own build role.** `registry-login`, `publish-container.yml` and the container templates read the repository variable `AWS_STUDIO_BUILD_ROLE_ARN` instead of the organisation variable `AWS_ECR_ROLE_ARN`. That organisation variable reached every repository but its role trusted the profiler alone, so any other repository mirroring to ECR failed to assume it. Each app's build role trusts only that app's repository and can push only to that app's ECR repository.
+
+### Added
+
+- **`studio-app.yml`, on-demand Studio deployment.** Registers an already published version on one Studio server from the `studio-<server>` environment, which is the only place the app's publish role (`AWS_STUDIO_PUBLISH_ROLE_ARN`) can be assumed. Every input is checked before a credential is touched: the version must be `X.Y.Z` and, when the run is on a tag, that tag's version. The version is resolved to its published digests, which reach the repository's own registration and Studio commands as `STUDIO_IMAGES`, so job definitions name a digest rather than a tag. `templates/studio.yml` is the caller skeleton and states the promotion policy.
+- **`release-image.yml`, the release build for a single-Dockerfile image.** Builds on the release branch, pushes `candidate-<version>` to the app's ECR repository with the build role, runs an optional smoke test and records the digest under the key `app`. `pre-build-command` runs with the build role's credentials to stage vendor SDKs. `templates/release-image.yml` is the caller skeleton; `templates/release-container.yml` remains for repositories with several images.
+- **`publish-container.yml` re-runs after a partial promotion.** A release tag that already exists at the recorded digest is accepted as promoted (or mirrored) rather than written again, which a registry with immutable release tags refuses; a release tag at any other digest fails the publish, because a release tag is never moved.
+- **`publish-container.yml` input `unsuffixed-key`.** The manifest key promoted and mirrored as plain `:X.Y.Z` instead of `:X.Y.Z-<key>`, for a repository that ships one image. The rehearsal summary now shows the tag each image would be promoted under.
+
+### Removed
+
+- **Job-definition registration on the tag in `templates/publish-container.yml`.** Registering Batch job definitions and Studio apps is deployment, and lives in `studio.yml`.
+
+### Upgrading
+
+A repository that logs into ECR through these workflows (today, the profiler) must, before bumping its pin:
+
+1. Set the repository variable `AWS_STUDIO_BUILD_ROLE_ARN` to its build role. A Studio app also sets `AWS_STUDIO_PUBLISH_ROLE_ARN`, and `AWS_VENDOR_SDK_ROLE_ARN` if it has vendor SDKs.
+2. For `studio.yml`, create the `studio-<server>` environments with their deployment ref policies, and move `STUDIO_USERNAME` and `STUDIO_PASSWORD` into each as environment secrets.
+3. Bump the pin. The organisation variable `AWS_ECR_ROLE_ARN` is no longer read.
+
 ## [2.3.1] - 2026-10-20
 
 ### Fixed

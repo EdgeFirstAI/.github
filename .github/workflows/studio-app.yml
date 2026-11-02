@@ -1,0 +1,257 @@
+# STUDIO DEPLOYMENT: register an already published version of an app on one
+# Studio server. Dispatched on demand, never by a tag: an app is promoted
+# test -> stage -> saas one dispatch at a time, and only a version tested on
+# test or stage is promoted to saas (or ocean).
+#
+# The job runs in the GitHub environment studio-<server>. That is the whole
+# authorisation model:
+#
+#   - AWS: the repository variable AWS_STUDIO_PUBLISH_ROLE_ARN names the app's
+#     publish role, which trusts only the OIDC subject
+#     repo:<org>/<repo>:environment:studio-<server>. Nothing outside these
+#     environments can assume it.
+#   - Which refs may deploy: each environment's deployment ref policy.
+#     studio-saas and studio-ocean accept v* tags only, so production can only
+#     receive a released version; dispatch those from the release tag.
+#   - Studio: STUDIO_USERNAME and STUDIO_PASSWORD are environment secrets.
+#
+# Every input is checked before any credential is touched. The version is then
+# resolved to the digest it was published under, and the repository's own
+# scripts register the Batch job definitions BY DIGEST and add the app in
+# Studio. A job definition that named a tag would resolve it at container
+# start, so a re-tag would change what an already deployed version runs.
+#
+# Contract with register-command and publish-command, both run from
+# working-directory:
+#
+#   VERSION         X.Y.Z
+#   STUDIO_SERVER   dev | test | stage | saas | ocean
+#   STUDIO_IMAGES   JSON object, manifest key -> <repository-uri>@sha256:...
+#   AWS credentials for the publish role, in the standard AWS_* variables
+#   STUDIO_USERNAME, STUDIO_PASSWORD   publish-command only
+#
+# register-command must reuse an ACTIVE revision registered with an identical
+# definition rather than registering a new one, so promoting one version to
+# several servers registers it once.
+name: studio-app
+
+on:
+  workflow_call:
+    inputs:
+      server:
+        description: Studio server, one of dev, test, stage, saas, ocean.
+        type: string
+        required: true
+      version:
+        description: Published version to deploy, X.Y.Z (no leading v).
+        type: string
+        required: true
+      ecr-repository:
+        description: >-
+          The app's ECR repository name (not URI). The registry host is the
+          publish role's account in the organisation's AWS_REGION.
+        type: string
+        required: true
+      image-keys:
+        description: >-
+          JSON array of the manifest keys the version was published under, as
+          publish-container.yml promoted them.
+        type: string
+        required: true
+      unsuffixed-key:
+        description: >-
+          The key publish-container.yml promoted as plain :X.Y.Z, if any. Must
+          match what that workflow was given.
+        type: string
+        default: ""
+      register-command:
+        description: Registers the Batch job definitions by digest.
+        type: string
+        required: true
+      publish-command:
+        description: Adds the app version in Studio.
+        type: string
+        required: true
+      working-directory:
+        description: Directory both commands run from, relative to the repository root.
+        type: string
+        default: "."
+      python-version:
+        type: string
+        default: "3.12"
+      pip-install:
+        description: Packages the commands need, installed with pip before they run.
+        type: string
+        default: pyyaml boto3 requests
+      runner:
+        type: string
+        default: ubuntu-24.04
+      timeout-minutes:
+        type: number
+        default: 30
+    secrets:
+      # Environment secrets of studio-<server>. Declared optional so a caller
+      # passing `secrets: inherit` supplies them without naming them.
+      STUDIO_USERNAME:
+        required: false
+      STUDIO_PASSWORD:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.version }} to studio-${{ inputs.server }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    environment: studio-${{ inputs.server }}
+    concurrency:
+      group: studio-${{ github.repository }}-${{ inputs.server }}
+      # Never cancel a deployment in flight; a half-registered app is worse
+      # than a queued one.
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      # Exchanged for the publish role. There is no stored key pair.
+      id-token: write
+    steps:
+      - name: Check the inputs
+        env:
+          SERVER: ${{ inputs.server }}
+          VERSION: ${{ inputs.version }}
+          IMAGE_KEYS: ${{ inputs.image-keys }}
+          UNSUFFIXED_KEY: ${{ inputs.unsuffixed-key }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          ROLE_ARN: ${{ vars.AWS_STUDIO_PUBLISH_ROLE_ARN }}
+          REGION: ${{ vars.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          case "$SERVER" in
+            dev|test|stage|saas|ocean) ;;
+            *) echo "::error::server must be dev, test, stage, saas or ocean; got '$SERVER'"; exit 1 ;;
+          esac
+          # A leading v and an rc suffix are the likely mistakes. Studio
+          # versions are released versions only.
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must be X.Y.Z, with no leading v and no rc suffix; got '$VERSION'"
+            exit 1
+          fi
+          if [[ "$REF_TYPE" == tag && "$REF_NAME" != "v$VERSION" ]]; then
+            echo "::error::this run is on tag $REF_NAME but deploys version $VERSION; dispatch from v$VERSION or give version ${REF_NAME#v}"
+            exit 1
+          fi
+          if ! jq -e 'type == "array" and length > 0 and all(.[]; type == "string" and length > 0)' >/dev/null 2>&1 <<<"$IMAGE_KEYS"; then
+            echo "::error::image-keys must be a non-empty JSON array of non-empty strings; got: $IMAGE_KEYS"
+            exit 1
+          fi
+          if [[ -n "$UNSUFFIXED_KEY" ]] && ! jq -e --arg k "$UNSUFFIXED_KEY" 'index($k) != null' >/dev/null <<<"$IMAGE_KEYS"; then
+            echo "::error::unsuffixed-key '$UNSUFFIXED_KEY' is not one of image-keys $IMAGE_KEYS"
+            exit 1
+          fi
+          if [[ -z "$ROLE_ARN" ]]; then
+            echo "::error::set the repository variable AWS_STUDIO_PUBLISH_ROLE_ARN to this app's publish role"
+            exit 1
+          fi
+          if [[ -z "$REGION" ]]; then
+            echo "::error::the organisation variable AWS_REGION is not visible to this repository"
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install the commands' dependencies
+        if: ${{ inputs.pip-install != '' }}
+        env:
+          PIP_INSTALL: ${{ inputs.pip-install }}
+        run: |
+          set -euo pipefail
+          read -r -a packages <<<"$PIP_INSTALL"
+          python -m pip install "${packages[@]}"
+
+      - name: Assume the publish role
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd  # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_STUDIO_PUBLISH_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Resolve the published images
+        id: images
+        env:
+          VERSION: ${{ inputs.version }}
+          REPOSITORY: ${{ inputs.ecr-repository }}
+          IMAGE_KEYS: ${{ inputs.image-keys }}
+          UNSUFFIXED_KEY: ${{ inputs.unsuffixed-key }}
+          REGION: ${{ vars.AWS_REGION }}
+          SERVER: ${{ inputs.server }}
+        run: |
+          set -euo pipefail
+          # The publish role's account, in the organisation's region: the app's
+          # ECR repository lives in the same account and region as its roles.
+          account="$(aws sts get-caller-identity --query Account --output text)"
+          uri="${account}.dkr.ecr.${REGION}.amazonaws.com/${REPOSITORY}"
+          err="$(mktemp)"
+          images='{}'
+          while IFS= read -r key; do
+            if [[ "$key" == "$UNSUFFIXED_KEY" ]]; then
+              tag="$VERSION"
+              other="${VERSION}-${key}, if publish.yml did not set unsuffixed-key: ${key}"
+            else
+              tag="${VERSION}-${key}"
+              other="${VERSION}, if publish.yml set unsuffixed-key: ${key} (set the same here)"
+            fi
+            # stderr is kept apart: a warning printed by a successful call
+            # must not become part of the digest.
+            if ! digest="$(aws ecr describe-images --repository-name "$REPOSITORY" \
+                  --image-ids "imageTag=${tag}" --query 'imageDetails[0].imageDigest' --output text 2>"$err")"; then
+              echo "::error::version $VERSION is not published: no tag ${tag} in ${REPOSITORY}. It may be under ${other}. ($(tr '\n' ' ' <"$err"))"
+              exit 1
+            fi
+            if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::${REPOSITORY}:${tag} resolved to '${digest}', which is not an image digest"
+              exit 1
+            fi
+            echo "$key -> ${uri}@${digest}"
+            images="$(jq -c --arg k "$key" --arg v "${uri}@${digest}" '.[$k] = $v' <<<"$images")"
+          done < <(jq -r '.[]' <<<"$IMAGE_KEYS")
+          echo "json=$images" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Deploying ${VERSION} to studio-${SERVER}"
+            echo
+            echo "| image | reference |"
+            echo "| --- | --- |"
+            jq -r 'to_entries[] | "| \(.key) | `\(.value)` |"' <<<"$images"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Register the job definitions
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          REGISTER_COMMAND: ${{ inputs.register-command }}
+          VERSION: ${{ inputs.version }}
+          STUDIO_SERVER: ${{ inputs.server }}
+          STUDIO_IMAGES: ${{ steps.images.outputs.json }}
+        run: |
+          set -euo pipefail
+          bash --noprofile --norc -euo pipefail -c "$REGISTER_COMMAND"
+
+      - name: Add the app in Studio
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          PUBLISH_COMMAND: ${{ inputs.publish-command }}
+          VERSION: ${{ inputs.version }}
+          STUDIO_SERVER: ${{ inputs.server }}
+          STUDIO_IMAGES: ${{ steps.images.outputs.json }}
+          STUDIO_USERNAME: ${{ secrets.STUDIO_USERNAME }}
+          STUDIO_PASSWORD: ${{ secrets.STUDIO_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$STUDIO_USERNAME" || -z "$STUDIO_PASSWORD" ]]; then
+            echo "::error::STUDIO_USERNAME and STUDIO_PASSWORD must be secrets of the studio-${STUDIO_SERVER} environment"
+            exit 1
+          fi
+          bash --noprofile --norc -euo pipefail -c "$PUBLISH_COMMAND"

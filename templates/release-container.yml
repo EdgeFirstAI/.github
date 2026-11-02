@@ -9,21 +9,26 @@
 # input the pinned revision does not declare. An unresolvable ref fails
 # immediately and says what to fix.
 #
-# RELEASE BUILD, for a repository that ships a container image. Step 1 of 3:
+# RELEASE BUILD, for a repository that ships container images. Step 1 of 4:
 #
 #   release.yml      push to release/*.*.*  -> build and push every image, record digests
 #   tag-release.yml  release PR merged      -> annotated vX.Y.Z tag
 #   publish.yml      push of a v*.*.* tag   -> promote the recorded digests
+#   studio.yml       on demand              -> register a published version on a Studio server (Studio apps)
 #
-# WHY THERE IS NO SHARED release-container.yml.
+# USE templates/release-image.yml INSTEAD for a repository that builds one
+# image from one Dockerfile (every converter). That build is shared, as
+# release-image.yml. This skeleton is for a repository with several images.
 #
-# The other release chains hand the build to a reusable workflow. This one
-# cannot, because the builds have nothing in common: a converter runs
-# `docker build .` once, while profiler builds six variants across two
+# WHY A MULTI-IMAGE BUILD IS NOT SHARED.
+#
+# The builds have nothing in common: profiler builds six variants across two
 # architectures, staging three separate vendor runtimes onto binaries from a
-# sibling job. A workflow spanning both would need a hook per caller, which is
-# the same trap release-wheels.yml documented when it moved its build body into
-# the maturin-build action.
+# sibling job, and the next multi-image repository will differ again. A
+# workflow spanning them would need a hook per caller, which is the same trap
+# release-wheels.yml documented when it moved its build body into the
+# maturin-build action. A single Dockerfile has one shape, and its one varying
+# step (staging vendor SDKs) is the pre-build-command hook.
 #
 # What IS shared is the contract: every image pushed here is recorded as an
 # immutable digest by `record-image-digests`, and publish.yml promotes exactly
@@ -128,7 +133,7 @@ jobs:
       - uses: EdgeFirstAI/.github/.github/actions/registry-login@0000000000000000000000000000000000000000
         with:
           registry: ${{ env.REGISTRY }}
-          role-arn: ${{ vars.AWS_ECR_ROLE_ARN }}
+          role-arn: ${{ vars.AWS_STUDIO_BUILD_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}

@@ -1,0 +1,156 @@
+# RELEASE BUILD for a repository that ships ONE image from one Dockerfile —
+# every converter. A repository with several images or variants keeps its own
+# build and ends it with `record-image-digests`; see
+# templates/release-container.yml.
+#
+# Runs on a push to release/*.*.*. It builds the image, pushes it under a
+# candidate tag that cannot collide with the release tag, smoke-tests it, and
+# records its digest under the manifest key `app` for publish-container.yml to
+# promote. Nothing here registers anything with Batch or Studio; that is
+# studio-app.yml, on demand, for an already published version.
+#
+# The registry is the app's own ECR repository. Login assumes the repository
+# variable AWS_STUDIO_BUILD_ROLE_ARN, and the AWS credentials stay in the
+# job's environment for `pre-build-command`, which is how a build stages vendor
+# SDKs: the build role can read exactly the SDKs that app lists and nothing
+# else.
+name: release-image
+
+on:
+  workflow_call:
+    inputs:
+      registry:
+        description: >-
+          The app's ECR repository, `<account>.dkr.ecr.<region>.amazonaws.com/<name>`.
+          The candidate and, after publish, the release tag both live here.
+        type: string
+        required: true
+      version:
+        description: >-
+          X.Y.Z or X.Y.Z-rcN, from the calling release build's verify job, so
+          the image cannot claim a version the branch does not carry.
+        type: string
+        required: true
+      context:
+        description: Docker build context, relative to the repository root.
+        type: string
+        default: "."
+      file:
+        description: Dockerfile path, relative to the repository root.
+        type: string
+        default: Dockerfile
+      pre-build-command:
+        description: >-
+          Shell run from the repository root after the ECR login and before
+          the build, with the build role's AWS credentials in the environment
+          and VERSION and REGISTRY set. Stages what the Dockerfile COPYs but
+          the tree does not hold: vendor SDKs. Receives no secrets.
+        type: string
+        default: ""
+      smoke-command:
+        description: >-
+          Shell run after the push with IMAGE set to the candidate reference.
+          An image that does not start is not a release artifact, and the
+          release PR is the last cheap place to find out. Empty skips it.
+        type: string
+        default: ""
+      runner:
+        type: string
+        default: ubuntu-24.04
+      timeout-minutes:
+        type: number
+        default: 60
+    outputs:
+      digest:
+        description: Digest of the pushed candidate, recorded under the manifest key `app`.
+        value: ${{ jobs.image.outputs.digest }}
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+      # The build role is assumed through OIDC; there is no stored key pair.
+      id-token: write
+    outputs:
+      digest: ${{ steps.digest.outputs.digest }}
+    steps:
+      - name: Validate inputs
+        env:
+          REGISTRY: ${{ inputs.registry }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$REGISTRY" =~ ^[0-9]+\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/[a-z0-9._/-]+$ ]]; then
+            echo "::error::registry must be an ECR repository, <account>.dkr.ecr.<region>.amazonaws.com/<name>; got '$REGISTRY'"
+            exit 1
+          fi
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$ ]]; then
+            echo "::error::version must be X.Y.Z or X.Y.Z-rcN; got '$VERSION'"
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4.1.0
+
+      - name: Log in to the app's ECR repository
+        uses: $/.github/actions/registry-login
+        with:
+          registry: ${{ inputs.registry }}
+          role-arn: ${{ vars.AWS_STUDIO_BUILD_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Caller pre-build-command
+        if: ${{ inputs.pre-build-command != '' }}
+        env:
+          PRE_BUILD_COMMAND: ${{ inputs.pre-build-command }}
+          REGISTRY: ${{ inputs.registry }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          bash --noprofile --norc -euo pipefail -c "$PRE_BUILD_COMMAND"
+
+      - name: Build and push the candidate
+        env:
+          REGISTRY: ${{ inputs.registry }}
+          VERSION: ${{ inputs.version }}
+          CONTEXT: ${{ inputs.context }}
+          FILE: ${{ inputs.file }}
+        run: |
+          set -euo pipefail
+          # --provenance=false keeps the push a plain image manifest, so the
+          # digest recorded below is the one AWS Batch pulls. See
+          # templates/release-container.yml.
+          docker buildx build --push \
+            --provenance=false \
+            --file "$FILE" \
+            --tag "${REGISTRY}:candidate-${VERSION}" \
+            "$CONTEXT"
+
+      - name: Smoke test
+        if: ${{ inputs.smoke-command != '' }}
+        env:
+          SMOKE_COMMAND: ${{ inputs.smoke-command }}
+          IMAGE: ${{ inputs.registry }}:candidate-${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          bash --noprofile --norc -euo pipefail -c "$SMOKE_COMMAND"
+
+      - name: Record the digest
+        uses: $/.github/actions/record-image-digests
+        with:
+          registry: ${{ inputs.registry }}
+          version: ${{ inputs.version }}
+          images: |
+            app=${{ inputs.registry }}:candidate-${{ inputs.version }}
+
+      - name: Expose the digest
+        id: digest
+        run: |
+          set -euo pipefail
+          echo "digest=$(jq -r '.images.app' image-digests.json)" >> "$GITHUB_OUTPUT"

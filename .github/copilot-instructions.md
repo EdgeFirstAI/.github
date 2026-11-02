@@ -138,9 +138,11 @@ The body of that workflow is the `maturin-build` composite action: install the r
 `maturin-spec` is derived from the runner OS when unset — `zig` produces the manylinux wheels and `patchelf` has no wheel for macOS or Windows — so set it only to pin a maturin version.
 
 - `publish-rust` (tag side): `tag` (rehearsal), `build-workflow`, `publish-crates`, `crate-packages` (dependency order; the list `release-rust` recorded is authoritative and a different value here fails the publish), `changelog`, `require-sbom`, `release-files`, `dry-run`
-- `publish-container` (tag side, for a repository shipping an image): `tag` (rehearsal), `build-workflow`, `digest-artifact`, `registry` (empty uses the one the build recorded), `aliases` (moving tags, final releases only), `mirror` and `mirror-images`. It builds nothing: the release branch pushes candidates and records an immutable digest per image with the `record-image-digests` action, and this promotes exactly those digests, asserting afterwards that promotion did not change one. There is deliberately no `release-container.yml` — the builds have nothing in common, so `templates/release-container.yml` is the caller skeleton and the digest manifest is the shared contract. Promotion stops at the registry; registering Batch job definitions or Studio app versions is deployment, and must use the `digests` output rather than a tag
+- `publish-container` (tag side, for a repository shipping an image): `tag` (rehearsal), `build-workflow`, `digest-artifact`, `registry` (empty uses the one the build recorded), `aliases` (moving tags, final releases only), `unsuffixed-key` (the key a single-image repository publishes as plain `:X.Y.Z` rather than `:X.Y.Z-<key>`), `mirror` and `mirror-images`. It builds nothing: the release branch pushes candidates and records an immutable digest per image with the `record-image-digests` action, and this promotes exactly those digests, asserting afterwards that promotion did not change one. Promotion stops at the registry; registering Batch job definitions or Studio app versions is `studio-app`
+- `release-image` (release-branch side, one Dockerfile — every converter): `registry` (the app's ECR repository), `version` (from the caller's verify job), `context`, `file`, `pre-build-command` (runs with the build role's AWS credentials; stages vendor SDKs; no secrets), `smoke-command` (`IMAGE` is the candidate). Pushes `candidate-<version>` and records it under the key `app`. A repository with several images keeps its own build and ends it with `record-image-digests`; `templates/release-container.yml` is that skeleton
+- `studio-app` (on demand, see "Studio deployment" below): `server`, `version`, `ecr-repository`, `image-keys`, `unsuffixed-key`, `register-command`, `publish-command`, `working-directory`, `python-version`, `pip-install`
 
-**Registry authentication is organisational, not per repository.** A project names *where* it publishes and the `registry-login` action derives *how* from the hostname: `ghcr.io` takes the job's own token, a `*.dkr.ecr.*.amazonaws.com` registry takes OIDC via the organisation variable `AWS_ECR_ROLE_ARN`, and `docker.io` takes the organisation's `DOCKERHUB_*` secrets. An unrecognised registry fails with the supported list rather than falling back. ECR needs `id-token: write` at the call site, and the container jobs declare it unconditionally, so a caller must grant it even when publishing only to GHCR.
+**A project names where it publishes; the `registry-login` action derives how.** `ghcr.io` takes the job's own token, a `*.dkr.ecr.*.amazonaws.com` registry takes OIDC through the repository variable `AWS_STUDIO_BUILD_ROLE_ARN` (the app's own build role, which can push only to that app's repository), and `docker.io` takes the organisation's `DOCKERHUB_*` secrets. An unrecognised registry fails with the supported list rather than falling back. ECR needs `id-token: write` at the call site, and the container jobs declare it unconditionally, so a caller must grant it even when publishing only to GHCR.
 
 Every lane reaches its toolchain through the `setup-rust` action, which also
 guarantees the things a lane assumes rather than checks: a committed
@@ -169,13 +171,14 @@ Every job in the shared workflows has `timeout-minutes`. Every third-party actio
 
 ## Release chain
 
-Three workflows, one action each. **A tag deploys; it never builds.**
+Three workflows, one action each, plus a fourth for Studio apps. **A tag publishes; it never builds, and it never deploys to Studio.**
 
 | File | Trigger | Action |
 | --- | --- | --- |
 | `release.yml` | push to `release/*.*.*` | **build** every distribution artifact; publish nothing |
 | `tag-release.yml` | `release/*.*.*` PR merged to `main` | **tag**: annotated `vX.Y.Z` at the merge commit |
 | `publish.yml` | push of a `v*.*.*` tag | **publish** what was already built; build nothing |
+| `studio.yml` (Studio apps) | dispatch | **deploy** an already published version to one Studio server; see "Studio deployment" |
 
 1. Branch `release/X.Y.Z` (or `release/X.Y.Z-rcN`), bump versions and CHANGELOG, open a PR to `main`. Label `ci:full`.
 2. Every push to that branch runs `release.yml`: the shared `release-rust.yml` checks version consistency — including each `[workspace.dependencies]` entry carrying both `path` and `version`, so a workspace cannot half-bump and publish a member depending on its sibling's previous release — checks the changelog section, produces the SBOM, and runs `cargo package`, recording the package list beside the `.crate` files it produced. `release-wheels.yml` builds the wheels where the repository ships a PyO3 binding. Anything else — C API archives, container images, binaries — stays in the repository's own build jobs and uploads with `retention-days: 30` or more.
@@ -204,6 +207,8 @@ Two rules make a repository's build work with `publish-rust.yml`:
 
 `publish.yml` carries a `workflow_dispatch` with a tag input, and its publishing steps are gated inside the shared workflow on a real tag push. A dispatch therefore resolves the build, verifies the tree binding, downloads every artifact, collects the wheel set, renders the release notes and publishes nothing. The tag does not need to exist — rehearsing *before* the tag is the entire point — so a dispatch binds the build to the release branch head instead of to the tag. It is free, it is the only pre-tag test the publish path has, and it is a **required** step of every repository's migration.
 
+A repository whose release images are in ECR dispatches the rehearsal **on the release branch**, not from `main`: its build role (`AWS_STUDIO_BUILD_ROLE_ARN`) trusts `release/*` branches and `v*` tags only, so a rehearsal from `main` cannot log in to read the candidates.
+
 ### PyPI and crates.io trusted publishing
 
 Both match on workflow **filename**. Splitting the chain moves publishing from `release.yml` to `publish.yml`, so **every publisher configuration must be re-pointed before the first tag** or the upload fails on a claim mismatch. The rehearsal will not catch it, because a rehearsal skips the upload. Re-point first, dispatch second, tag third.
@@ -211,6 +216,24 @@ Both match on workflow **filename**. Splitting the chain moves publishing from `
 PyPI matches `job_workflow_ref` in the **publisher repository**, so a reusable workflow in `EdgeFirstAI/.github` cannot be a Trusted Publisher ([docs](https://docs.pypi.org/trusted-publishers/troubleshooting/)). `publish-rust.yml` stages the artifacts into the caller's run under the name `release-artifacts`, and each repo's `publish.yml` keeps a small `publish-pypi` job with environment `pypi`. Composite actions are fine inside that job — only reusable workflows change the claim — so the selection and verification are the shared `stage-pypi` action. The upload is not shareable: `pypa/gh-action-pypi-publish` resolves its own container image from the repository it is called from, so nesting it in one of our actions resolves it to `EdgeFirstAI/.github` and fails on an image that does not exist. It goes directly in the job.
 
 That action selects by **filename**, not by artifact name: a wheel filename already carries the distribution and the version canonically, so nothing has to agree in advance about how a build names its artifacts. Call it once per distribution, which a repository shipping several needs anyway since each has its own environment. Naming the distribution also makes its sdist safe to take — an unscoped `*.tar.gz` matches a C API archive, and PyPI rejects it after the crates have already published. crates.io **does** work from the shared workflow (caller `workflow_ref`).
+
+## Studio deployment
+
+A Studio app (an image AWS Batch runs for EdgeFirst Studio) adds a fourth workflow to the release chain: `studio.yml`, dispatched on demand, which calls `studio-app.yml` to register an already published version on one Studio server. A tag never deploys to Studio. Copy `templates/studio.yml`; a single-image app sets `unsuffixed-key` identically in `publish.yml` and `studio.yml`.
+
+**Each app has its own AWS roles**, assumed through GitHub OIDC; no repository holds an AWS key. They are defined in Terraform outside this repository, and each trusts only its own app's repository:
+
+| Repository variable | Assumed by | Can |
+| --- | --- | --- |
+| `AWS_STUDIO_BUILD_ROLE_ARN` | `release/*` branches and `v*` tags | push to the app's own ECR repository; read its vendor SDKs |
+| `AWS_STUDIO_PUBLISH_ROLE_ARN` | the `studio-<server>` environments only | register the app's own Batch job definitions; pass the shared execution role to ECS tasks |
+| `AWS_VENDOR_SDK_ROLE_ARN` | pull requests and `main` | read the app's vendor SDKs; nothing else. Only apps with vendor SDKs have one |
+
+**Environments.** `studio-dev`, `studio-test`, `studio-stage`, `studio-saas`, and `studio-ocean` for apps deployed there. Each holds the secrets `STUDIO_USERNAME` and `STUDIO_PASSWORD`. `studio-saas` and `studio-ocean` accept runs from `v*` tags only, so dispatch them from the release tag; the others also accept `main`.
+
+**Promotion policy.** Deploy a release to test (or stage) and test it there. Promote to saas or ocean only a version tested on test or stage, and only with another developer's agreement. Studio versions are `X.Y.Z`; release candidates are not deployed to Studio.
+
+**Register by digest.** `studio-app.yml` resolves the version to the digests it was published under and hands the repository's scripts `STUDIO_IMAGES`; a job definition must name `<repository-uri>@sha256:…`, never a tag. Registration reuses an ACTIVE revision whose definition is identical, so one version promoted to several servers is registered once.
 
 ## License policy (zero tolerance)
 

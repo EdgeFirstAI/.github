@@ -1,0 +1,67 @@
+# Caller skeleton — copy into the product repository as .github/workflows/release.yml
+# Replace the all-zero placeholder in every EdgeFirstAI/.github `uses:` with
+# the commit you intend to pin, then let Dependabot bump it.
+#
+# The placeholder is deliberate. A real SHA here goes stale the moment the
+# shared repository moves, and a stale one is worse than an obviously invalid
+# one: it resolves, so a copied skeleton silently runs old CI, or forwards an
+# input the pinned revision does not declare. An unresolvable ref fails
+# immediately and says what to fix.
+#
+# RELEASE BUILD, for a repository that ships ONE image from one Dockerfile
+# (every converter). Step 1 of 4:
+#
+#   release.yml      push to release/*.*.*  -> build and push the candidate, record its digest
+#   tag-release.yml  release PR merged      -> annotated vX.Y.Z tag
+#   publish.yml      push of a v*.*.* tag   -> promote the digest as :X.Y.Z
+#   studio.yml       on demand              -> register the published version on a Studio server
+#
+# A repository with several images keeps its own build: templates/release-container.yml.
+#
+# The image is recorded under the key `app` and published as plain :X.Y.Z, so
+# the other two callers must say so: publish.yml (templates/publish-container.yml)
+# sets `unsuffixed-key: app` and no `aliases`, and studio.yml
+# (templates/studio.yml) sets `image-keys: '["app"]'` and `unsuffixed-key: app`.
+# If publish.yml and studio.yml disagree, studio.yml looks for a tag publish.yml
+# never pushed.
+#
+# Needs the repository variable AWS_STUDIO_BUILD_ROLE_ARN (the app's build
+# role) and the organisation variable AWS_REGION.
+
+name: Release Build
+
+on:
+  push:
+    branches: ['release/*.*.*']   # release/X.Y.Z and release/X.Y.Z-rcN
+  workflow_dispatch:              # rebuild a release branch on demand
+
+concurrency:
+  group: release-build-${{ github.ref }}
+  cancel-in-progress: true        # a fixup commit supersedes the build it interrupts
+
+jobs:
+  # Version consistency against the branch name, the changelog section
+  # publish.yml will need, and the full SBOM. Fails the release PR, not the tag.
+  verify:
+    uses: EdgeFirstAI/.github/.github/workflows/release-rust.yml@0000000000000000000000000000000000000000
+    with:
+      sbom: true
+      # A container repository publishes no crate.
+      package-crates: false
+    secrets: inherit
+
+  image:
+    needs: verify
+    uses: EdgeFirstAI/.github/.github/workflows/release-image.yml@0000000000000000000000000000000000000000
+    with:
+      # The app's own ECR repository. Its images carry licensed vendor SDKs
+      # and are never public, so there is no GHCR leg and no mirror.
+      registry: 000000000000.dkr.ecr.us-west-2.amazonaws.com/edgefirst-app
+      version: ${{ needs.verify.outputs.version }}
+      # Stage what the Dockerfile COPYs but the tree does not hold. The build
+      # role's AWS credentials are in the environment.
+      # pre-build-command: aws s3 cp s3://<bucket>/ext/<sdk> ext/
+      smoke-command: docker run --rm "$IMAGE" --help
+    permissions:
+      contents: read
+      id-token: write
