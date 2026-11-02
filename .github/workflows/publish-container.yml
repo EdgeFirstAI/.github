@@ -58,8 +58,9 @@ on:
           Authentication is derived from the hostname, exactly as it is for
           the source: `ghcr.io`, a `*.dkr.ecr.*.amazonaws.com` registry, or
           `docker.io`. A project names where it publishes; the organisation
-          owns the credentials. Mirroring to ECR needs the organisation
-          variable `AWS_ECR_ROLE_ARN` and `id-token: write` at the call site.
+          owns the credentials. Mirroring to ECR needs the repository
+          variable `AWS_STUDIO_BUILD_ROLE_ARN` and `id-token: write` at the
+          call site.
         type: string
         default: ""
       mirror-images:
@@ -69,6 +70,15 @@ on:
           subset and leaves developer variants in the source registry.
         type: string
         default: "[]"
+      unsuffixed-key:
+        description: >-
+          Manifest key promoted (and mirrored) as plain `<registry>:<version>`
+          rather than `<registry>:<version>-<key>`. For a repository that
+          ships one image, where the key adds nothing to the tag. Empty keeps
+          the suffix on every key. A key the manifest does not record fails
+          the publish.
+        type: string
+        default: ""
       runner:
         type: string
         default: ubuntu-24.04
@@ -154,6 +164,7 @@ jobs:
         env:
           VERSION: ${{ steps.resolve.outputs.version }}
           REGISTRY_INPUT: ${{ inputs.registry }}
+          UNSUFFIXED_KEY: ${{ inputs.unsuffixed-key }}
         run: |
           set -euo pipefail
           f=digests/image-digests.json
@@ -171,8 +182,21 @@ jobs:
           count="$(jq -r '.images | length' "$f")"
           [[ "$count" -gt 0 ]] || { echo "::error::manifest records no images"; exit 1; }
 
-          echo "registry=$registry" >> "$GITHUB_OUTPUT"
-          echo "digests=$(jq -c '.images' "$f")" >> "$GITHUB_OUTPUT"
+          if [[ -n "$UNSUFFIXED_KEY" ]] && ! jq -e --arg k "$UNSUFFIXED_KEY" '.images | has($k)' "$f" >/dev/null; then
+            echo "::error::unsuffixed-key '$UNSUFFIXED_KEY' is not in the digest manifest (keys: $(jq -r '.images | keys | join(", ")' "$f"))"
+            exit 1
+          fi
+
+          # The tag each key is promoted and mirrored under, decided once so
+          # the promotion, the mirror and the summary cannot disagree.
+          tags="$(jq -c --arg v "$VERSION" --arg u "$UNSUFFIXED_KEY" \
+            '.images | with_entries(.value = (if .key == $u then $v else "\($v)-\(.key)" end))' "$f")"
+
+          {
+            echo "registry=$registry"
+            echo "digests=$(jq -c '.images' "$f")"
+            echo "tags=$tags"
+          } >> "$GITHUB_OUTPUT"
           echo "resolved $count image(s) in $registry"
 
       # Resolved from the registry's hostname rather than assumed to be GHCR.
@@ -183,7 +207,7 @@ jobs:
         uses: $/.github/actions/registry-login
         with:
           registry: ${{ steps.manifest.outputs.registry }}
-          role-arn: ${{ vars.AWS_ECR_ROLE_ARN }}
+          role-arn: ${{ vars.AWS_STUDIO_BUILD_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -214,17 +238,53 @@ jobs:
         env:
           REGISTRY: ${{ steps.manifest.outputs.registry }}
           DIGESTS: ${{ steps.manifest.outputs.digests }}
-          VERSION: ${{ steps.resolve.outputs.version }}
+          TAGS: ${{ steps.manifest.outputs.tags }}
         run: |
           set -euo pipefail
+          # The digest a tag points at, or nothing when the registry says the
+          # tag does not exist. Any other lookup failure fails, so a transient
+          # error is never read as "absent" and followed by a write that
+          # would move a release tag on a registry that allows it.
+          tag_digest() {
+            local out err
+            err="$(mktemp)"
+            if out="$(docker buildx imagetools inspect "$1" --format '{{json .Manifest.Digest}}' 2>"$err")"; then
+              tr -d '"' <<<"$out"
+            elif ! grep -qiE 'not found|manifest unknown|name unknown' "$err"; then
+              cat "$err" >&2
+              return 1
+            fi
+          }
           while IFS=$'\t' read -r key digest; do
-            echo "::group::promote $key"
-            docker buildx imagetools create -t "${REGISTRY}:${VERSION}-${key}" "${REGISTRY}@${digest}"
+            tag="$(jq -r --arg k "$key" '.[$k]' <<<"$TAGS")"
+            echo "::group::promote $key as :$tag"
+            # A re-run after a partial promotion finds some tags already in
+            # place. A registry with immutable release tags refuses to write
+            # them again even unchanged, so an existing tag at the recorded
+            # digest is accepted as done; at any other digest it is an error,
+            # because a release tag is never moved.
+            if ! existing="$(tag_digest "${REGISTRY}:${tag}")"; then
+              echo "::error::$key: cannot tell whether :$tag already exists; not writing a release tag over an unknown state"
+              exit 1
+            fi
+            if [[ "$existing" == "$digest" ]]; then
+              echo "already promoted: :$tag is $digest"
+              echo "::endgroup::"
+              continue
+            fi
+            if [[ -n "$existing" ]]; then
+              echo "::error::$key: :$tag already exists at $existing, not the recorded $digest; a release tag is never moved"
+              exit 1
+            fi
+            # --prefer-index=false: a single plain image manifest (what a
+            # --provenance=false build pushes) is copied as is. By default it
+            # would be wrapped in a new index under a new digest.
+            docker buildx imagetools create --prefer-index=false -t "${REGISTRY}:${tag}" "${REGISTRY}@${digest}"
 
             # A promotion that changes a digest means something rebuilt. This
             # is EDGEAI-1936's acceptance criterion, asserted here rather than
             # left to a runbook step someone has to remember to perform.
-            after="$(docker buildx imagetools inspect "${REGISTRY}:${VERSION}-${key}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+            after="$(docker buildx imagetools inspect "${REGISTRY}:${tag}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
             if [[ "$after" != "$digest" ]]; then
               echo "::error::promotion changed the digest for $key: $digest -> $after"
               exit 1
@@ -263,7 +323,9 @@ jobs:
               exit 1
             fi
             echo "alias $alias -> $from ($digest)"
-            docker buildx imagetools create -t "${REGISTRY}:${alias}" "${REGISTRY}@${digest}"
+            # --prefer-index=false keeps the alias at the release's own digest;
+            # see the promotion above.
+            docker buildx imagetools create --prefer-index=false -t "${REGISTRY}:${alias}" "${REGISTRY}@${digest}"
           done < <(jq -r '.[] | "\(.alias)\t\(.from)"' <<<"$ALIASES")
 
       # The destination needs its own credential: `imagetools create -t` PUSHES
@@ -275,7 +337,7 @@ jobs:
         uses: $/.github/actions/registry-login
         with:
           registry: ${{ inputs.mirror }}
-          role-arn: ${{ vars.AWS_ECR_ROLE_ARN }}
+          role-arn: ${{ vars.AWS_STUDIO_BUILD_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
           dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -287,9 +349,21 @@ jobs:
           MIRROR: ${{ inputs.mirror }}
           MIRROR_IMAGES: ${{ inputs.mirror-images }}
           DIGESTS: ${{ steps.manifest.outputs.digests }}
-          VERSION: ${{ steps.resolve.outputs.version }}
+          TAGS: ${{ steps.manifest.outputs.tags }}
         run: |
           set -euo pipefail
+          # As in the promotion: nothing for a tag the registry says does not
+          # exist, a failure for any other lookup error.
+          tag_digest() {
+            local out err
+            err="$(mktemp)"
+            if out="$(docker buildx imagetools inspect "$1" --format '{{json .Manifest.Digest}}' 2>"$err")"; then
+              tr -d '"' <<<"$out"
+            elif ! grep -qiE 'not found|manifest unknown|name unknown' "$err"; then
+              cat "$err" >&2
+              return 1
+            fi
+          }
           # Validated before it is used, for two reasons. A failing `jq` in
           # the `length` test below yields an empty string, and `[[ "" -eq 0 ]]`
           # is arithmetically true, so a malformed value would fall through to
@@ -311,8 +385,24 @@ jobs:
               echo "::error::mirror names '$key', which is not in the digest manifest"
               exit 1
             fi
-            echo "::group::mirror $key"
-            docker buildx imagetools create -t "${MIRROR}:${VERSION}-${key}" "${REGISTRY}@${digest}"
+            tag="$(jq -r --arg k "$key" '.[$k]' <<<"$TAGS")"
+            echo "::group::mirror $key as :$tag"
+            # As for the promotion: an existing tag at the recorded digest is
+            # a re-run, anything else is a moved release tag.
+            if ! existing="$(tag_digest "${MIRROR}:${tag}")"; then
+              echo "::error::$key: cannot tell whether mirror :$tag already exists; not writing a release tag over an unknown state"
+              exit 1
+            fi
+            if [[ "$existing" == "$digest" ]]; then
+              echo "already mirrored: :$tag is $digest"
+              echo "::endgroup::"
+              continue
+            fi
+            if [[ -n "$existing" ]]; then
+              echo "::error::$key: mirror :$tag already exists at $existing, not the recorded $digest; a release tag is never moved"
+              exit 1
+            fi
+            docker buildx imagetools create --prefer-index=false -t "${MIRROR}:${tag}" "${REGISTRY}@${digest}"
 
             # The same assertion the source promotion makes, for the same
             # reason. A destination registry that rewrites the manifest --
@@ -320,7 +410,7 @@ jobs:
             # mirrored image under a digest that is not the one this run
             # published, so the digest callers were handed no longer
             # identifies what is in the mirror.
-            after="$(docker buildx imagetools inspect "${MIRROR}:${VERSION}-${key}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+            after="$(docker buildx imagetools inspect "${MIRROR}:${tag}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
             if [[ "$after" != "$digest" ]]; then
               echo "::error::mirroring changed the digest for $key: $digest -> $after (the mirror is not serving the image this release published)"
               exit 1
@@ -333,14 +423,15 @@ jobs:
         if: ${{ steps.resolve.outputs.publishing != 'true' }}
         env:
           DIGESTS: ${{ steps.manifest.outputs.digests }}
+          TAGS: ${{ steps.manifest.outputs.tags }}
         run: |
           set -euo pipefail
           {
             echo "### Rehearsal — nothing was promoted"
             echo
-            echo "Every digest below was resolved and would have been promoted."
+            echo "Every digest below was resolved and would have been promoted under the tag shown."
             echo
-            echo "| image | digest |"
-            echo "| --- | --- |"
-            jq -r 'to_entries[] | "| \(.key) | `\(.value)` |"' <<<"$DIGESTS"
+            echo "| image | tag | digest |"
+            echo "| --- | --- | --- |"
+            jq -r --argjson t "$TAGS" 'to_entries[] | "| \(.key) | `\($t[.key])` | `\(.value)` |"' <<<"$DIGESTS"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -5,15 +5,15 @@ description: >
 
   A project decides WHERE it publishes; the organisation decides HOW we
   authenticate there. A repository names a registry and gets the right
-  credential, because the hostname already says which class it is and each
-  class draws on organisation-level configuration set once for the fleet:
+  credential, because the hostname already says which class it is:
 
     ghcr.io                      the job's own GITHUB_TOKEN; needs
                                  `packages: write` and nothing else
     *.dkr.ecr.*.amazonaws.com    OIDC into AWS, then `aws ecr
                                  get-login-password`; needs `id-token: write`
-                                 and the organisation variable
-                                 AWS_ECR_ROLE_ARN
+                                 and the repository variable
+                                 AWS_STUDIO_BUILD_ROLE_ARN, the app's own
+                                 build role
     docker.io                    the organisation secrets DOCKERHUB_USERNAME
                                  and DOCKERHUB_TOKEN
 
@@ -40,9 +40,9 @@ inputs:
   role-arn:
     description: >-
       AWS role to assume for an ECR registry. The calling workflow passes the
-      organisation variable `AWS_ECR_ROLE_ARN`; neither `vars` nor `secrets`
-      is readable from inside a composite action, so every credential arrives
-      as an input and the organisation-level wiring lives in the workflow.
+      repository variable `AWS_STUDIO_BUILD_ROLE_ARN`; neither `vars` nor
+      `secrets` is readable from inside a composite action, so every
+      credential arrives as an input and the wiring lives in the workflow.
     required: false
     default: ""
   aws-region:
@@ -117,9 +117,9 @@ runs:
         username: ${{ github.actor }}
         password: ${{ github.token }}
 
-    # OIDC rather than a stored key pair: the organisation configures one role
-    # whose trust policy names the repositories, and no long-lived AWS
-    # credential exists to leak or rotate. The job must grant `id-token:
+    # OIDC rather than a stored key pair: each repository has its own build
+    # role, whose trust policy names that repository alone, and no long-lived
+    # AWS credential exists to leak or rotate. The job must grant `id-token:
     # write`, and so must the caller, since a reusable workflow can only
     # narrow what the call site already holds.
     - name: Resolve the AWS role
@@ -133,7 +133,7 @@ runs:
       run: |
         set -euo pipefail
         if [[ -z "$ROLE_ARN" ]]; then
-          echo "::error::ECR login needs a role to assume. Set the organisation variable AWS_ECR_ROLE_ARN; the calling workflow passes it through as role-arn."
+          echo "::error::ECR login needs a role to assume. Set the repository variable AWS_STUDIO_BUILD_ROLE_ARN to this repository's build role; the calling workflow passes it through as role-arn."
           exit 1
         fi
         echo "role-arn=$ROLE_ARN" >> "$GITHUB_OUTPUT"

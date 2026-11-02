@@ -1,0 +1,72 @@
+# Caller skeleton — copy into the product repository as .github/workflows/studio.yml
+# Replace the all-zero placeholder in every EdgeFirstAI/.github `uses:` with
+# the commit you intend to pin, then let Dependabot bump it.
+#
+# The placeholder is deliberate. A real SHA here goes stale the moment the
+# shared repository moves, and a stale one is worse than an obviously invalid
+# one: it resolves, so a copied skeleton silently runs old CI, or forwards an
+# input the pinned revision does not declare. An unresolvable ref fails
+# immediately and says what to fix.
+#
+# STUDIO DEPLOYMENT. Step 4 of 4, on demand:
+#
+#   release.yml      push to release/*.*.*  -> build and push, record digests
+#   tag-release.yml  release PR merged      -> annotated vX.Y.Z tag
+#   publish.yml      push of a v*.*.* tag   -> promote the recorded digests
+#   studio.yml       on demand              -> register a published version on a Studio server
+#
+# PROMOTION POLICY. Deploy a release to test (or stage) and test it there.
+# Promote to saas (or ocean) only a version tested on test or stage, and only
+# with another developer's agreement. studio-saas and studio-ocean accept runs
+# from v* tags only, so dispatch those from the release tag ("Use workflow
+# from" -> the tag); dev, test and stage also accept main.
+#
+# Needs, per repository: the variable AWS_STUDIO_PUBLISH_ROLE_ARN (the app's
+# publish role), and the environments studio-<server> each holding the
+# secrets STUDIO_USERNAME and STUDIO_PASSWORD.
+
+name: Studio
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published version to deploy, X.Y.Z (no leading v)
+        required: true
+        type: string
+      server:
+        description: Studio server. Promote test -> stage -> saas; saas is production.
+        required: true
+        default: test
+        type: choice
+        # Remove ocean unless this app is deployed there; the app has no
+        # studio-ocean environment otherwise.
+        options:
+          - dev
+          - test
+          - stage
+          - saas
+          - ocean
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    uses: EdgeFirstAI/.github/.github/workflows/studio-app.yml@0000000000000000000000000000000000000000
+    with:
+      server: ${{ inputs.server }}
+      version: ${{ inputs.version }}
+      ecr-repository: edgefirst-app
+      # One image published as plain :X.Y.Z. A multi-image app lists every
+      # key its release build recorded and leaves unsuffixed-key empty.
+      # unsuffixed-key MUST equal the value publish.yml passes to
+      # publish-container.yml, or this looks for a tag that was never pushed.
+      image-keys: '["app"]'
+      unsuffixed-key: app
+      register-command: python app_create.py
+      publish-command: python -u app_publish.py
+    permissions:
+      contents: read
+      id-token: write
+    secrets: inherit

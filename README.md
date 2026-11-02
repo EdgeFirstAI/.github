@@ -24,11 +24,13 @@ The organisation profile README lives in [`profile/`](profile/README.md).
 | `.github/workflows/release-wheels.yml` | release-branch side: maturin wheels for a PyO3 binding, built on the `maturin-build` action |
 | `.github/workflows/publish-rust.yml` | tag side: resolve the build, verify the tree, crates OIDC, GitHub Release |
 | `.github/workflows/publish-container.yml` | tag side: promote the release build's recorded image digests, unchanged |
+| `.github/workflows/release-image.yml` | release-branch side for a single-Dockerfile image: build, push the candidate to the app's ECR repository, record its digest |
+| `.github/workflows/studio-app.yml` | on demand: register a published version on one Studio server, by digest, from its `studio-<server>` environment |
 | `.github/actions/` | `setup-rust`, `setup-python-uv`, `sbom-tools`, `board-run`, `resolve-release-build`, `resolve-lanes`, `verify-workspace-versions`, `maturin-build`, `wheel-data`, `stage-pypi`, `record-image-digests`, `registry-login`, `workflow-lint` |
 | `.github/scripts/` | license policy, the SHA-pin check, the workspace version check, lane resolution, wheel data staging, the runner-fleet converger (single copy each) |
 | `.github/rulesets/` | `protect-main` (reviews; org-admin PR bypass), `protect-main-ci` (ci-gate, no bypass), `protect-release-tags` |
 | `.github/rulesets/runners.json` | declarative runner *group settings* only (visibility, public-repository access) — no runner names; see `runner-groups.md` |
-| `templates/` | per-repo `ci.yml` (`ci-python.yml` for a pure-Python repository), `nightly.yml`, `release.yml`, `tag-release.yml`, `publish.yml`, the container pair `release-container.yml` / `publish-container.yml`, plus `CODEOWNERS` and `dependabot.yml` |
+| `templates/` | per-repo `ci.yml` (`ci-python.yml` for a pure-Python repository), `nightly.yml`, `release.yml`, `tag-release.yml`, `publish.yml`, the container set `release-image.yml` (one Dockerfile) or `release-container.yml` (several images) / `publish-container.yml` / `studio.yml`, plus `CODEOWNERS` and `dependabot.yml` |
 
 ## Pinning
 
@@ -60,7 +62,7 @@ The billed larger runners currently sit in the `Default` group, so they are **no
 
 ## Release chain
 
-Three workflows, one action each. **A tag deploys; it never builds.**
+Three workflows, one action each. **A tag publishes; it never builds, and it never deploys to Studio.** A Studio app adds a fourth, `studio.yml` (`studio-app.yml`), dispatched to deploy an already published version to one Studio server.
 
 | Caller | Trigger | Action | Shared workflow |
 | --- | --- | --- | --- |
