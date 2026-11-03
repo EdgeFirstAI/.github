@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-11-03
+
 ### Added
 
 - **The SBOM's Python environment can be built on a chosen Python.** `sbom-tools` and `sbom.yml` take `python-version`, and `release-rust.yml` takes `sbom-python-version`. Dependency resolution depends on the interpreter, so an inventory built on the runner's Python could list versions, or pre-releases, that the application's image never installs. With it set, `sbom.yml` installs uv, which fetches that Python.
@@ -554,6 +556,7 @@ Everything here is exercised by a real release: `EdgeFirstAI/ara2-rs` v0.18.0 wa
   precedence over `ci:hardware`. PyPI publish requires the reusable release
   job to succeed.
 
+[4.0.0]: https://github.com/EdgeFirstAI/.github/compare/v3.1.0...v4.0.0
 [3.1.0]: https://github.com/EdgeFirstAI/.github/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/EdgeFirstAI/.github/compare/v2.3.1...v3.0.0
 [2.3.1]: https://github.com/EdgeFirstAI/.github/compare/v2.3.0...v2.3.1
