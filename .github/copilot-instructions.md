@@ -237,7 +237,7 @@ A Studio app (an image AWS Batch runs for EdgeFirst Studio) adds a fourth workfl
 
 ## License policy (zero tolerance)
 
-Pre-approved: MIT, Apache-2.0, BSD-2/3-Clause, ISC, Unlicense, CC0-1.0, MPL-2.0 and the additional SPDX ids in `.github/scripts/check_license_policy.py`. LGPL is forbidden in Rust (static linking). GPL/AGPL/SSPL are blocked. NXP proprietary is allowed only when documented in NOTICE. Do not wrap license checks in `|| true` or `continue-on-error`.
+Pre-approved: MIT, Apache-2.0, BSD-2/3-Clause, ISC, Unlicense, CC0-1.0, MPL-2.0 and the additional SPDX ids in `.github/scripts/check_license_policy.py`. LGPL is forbidden in Rust (static linking). GPL/AGPL/SSPL are blocked. Proprietary licences, NXP's included, are never accepted organisation-wide: a repository that genuinely needs one records each exact `name@version` in its own `.github/license-approvals.json` (`license`, `approved-by`, `date`, `justification`), where review scrutinises whether it is required, and NOTICE must name it. Never add a proprietary licence to the shared allowed list or overrides. Do not wrap license checks in `|| true` or `continue-on-error`.
 
 Use the shared `sbom-tools` action; do not keep a private copy of `generate_sbom.sh` / `check_license_policy.py` / `validate_notice.py`.
 

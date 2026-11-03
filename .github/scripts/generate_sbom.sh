@@ -20,6 +20,8 @@
 #   OUTPUT_DIR            default: sbom
 #   NOTICE_FILE           default: NOTICE
 #   SCRIPT_DIR            directory containing the sibling Python policy scripts
+#   LICENSE_APPROVALS_FILE  proprietary component approvals (default:
+#                         .github/license-approvals.json when present)
 #
 # Policy version: 2.2 (2026-11-03)
 

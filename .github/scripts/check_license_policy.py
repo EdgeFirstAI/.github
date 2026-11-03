@@ -3,8 +3,9 @@
 
 Policy version: 2.2 (2026-11-03). This is the single org-wide copy.
 
-Exit 0 when every component is allowed or an approved override.
-Exit 1 on blocked licenses, LGPL in Rust, or undocumented proprietary.
+Exit 0 when every component is allowed, an approved override, or a
+proprietary component this repository has approved.
+Exit 1 on blocked licenses, LGPL in Rust, or unapproved proprietary.
 """
 
 from __future__ import annotations
@@ -177,6 +178,44 @@ def load_overrides(path: Optional[str]) -> Dict[str, str]:
     return merged
 
 
+# Proprietary licences are never accepted organisation-wide (SPS-01 Category
+# C, approval required). A repository that genuinely needs one records the
+# approval of each exact name@version here, where its reviewers see it.
+APPROVALS_FILE = ".github/license-approvals.json"
+APPROVAL_FIELDS = ("license", "approved-by", "date", "justification")
+
+
+def parse_approvals(data: object, source: str) -> Dict[str, dict]:
+    """Validated approvals: name@version -> the signed record of one
+    proprietary component. Anything malformed stops the check."""
+    if not isinstance(data, dict):
+        raise SystemExit(f"{source}: approvals must be a JSON object")
+    approvals: Dict[str, dict] = {}
+    for key, record in data.items():
+        name, _, version = str(key).partition("@")
+        if not name or not version:
+            raise SystemExit(f"{source}: {key!r} must be name@version")
+        if not isinstance(record, dict):
+            raise SystemExit(f"{source}: {key} must be an object of {', '.join(APPROVAL_FIELDS)}")
+        for field in APPROVAL_FIELDS:
+            value = record.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise SystemExit(f"{source}: {key} needs a non-empty {field!r}")
+        approvals[str(key)] = record
+    return approvals
+
+
+def load_approvals(path: Optional[str]) -> Dict[str, dict]:
+    """The repository's approvals: `path` when given (and then required),
+    otherwise APPROVALS_FILE when it exists."""
+    if not path:
+        if not os.path.exists(APPROVALS_FILE):
+            return {}
+        path = APPROVALS_FILE
+    with open(path, encoding="utf-8") as handle:
+        return parse_approvals(json.load(handle), path)
+
+
 # Outcome ranks, best to worst. AND takes the worst operand because every term
 # binds; OR takes the best because we may rely on a single branch.
 RANK_ALLOWED = 0
@@ -335,6 +374,7 @@ def evaluate_component(
     overrides: Dict[str, str],
     rust: bool,
     dynamic: Set[str],
+    approvals: Optional[Dict[str, dict]] = None,
 ) -> Tuple[str, str, str]:
     """Return (status, license, detail) status in {ok, warn, fail}."""
     key = component_key(component)
@@ -359,8 +399,20 @@ def evaluate_component(
     if best_rank == RANK_ALLOWED:
         return "ok", best_license, f"{key}: {best_license}"
     if best_rank == RANK_PROPRIETARY:
+        approval = (approvals or {}).get(key)
+        if not approval:
+            return "fail", best_license, (
+                f"{key}: proprietary {best_license} is not approved for this "
+                f"repository ({APPROVALS_FILE})"
+            )
+        if approval["license"].strip().lower() != best_license.lower():
+            return "fail", best_license, (
+                f"{key}: approved as {approval['license']}, but the SBOM "
+                f"declares {best_license}"
+            )
         return "warn", best_license, (
-            f"{key}: proprietary {best_license} must be documented in NOTICE"
+            f"{key}: proprietary {best_license} approved by "
+            f"{approval['approved-by']} on {approval['date']}; NOTICE must name it"
         )
     if best_rank == RANK_REVIEW:
         if rust:
@@ -474,6 +526,40 @@ COMPONENT_CASES = [
     ("astunparse", "1.6.3", [_declared("BSD")], "ok"),
 ]
 
+_APPROVAL = {
+    "license": "NXP Proprietary",
+    "approved-by": "Approver Name",
+    "date": "2026-11-03",
+    "justification": "i.MX 95 runtime; no open alternative",
+}
+_NXP_DECLARED = [_declared("NXP Proprietary")]
+_NXP_ID = [{"license": {"id": "LA_OPT_NXP_SW"}}]
+
+# Proprietary components pass only with this repository's approval of that
+# exact name@version and licence, and are then still named in NOTICE (warn).
+APPROVAL_CASES = [
+    # (name, version, licenses, approvals, expected status)
+    ("vendor-sdk", "1.0.0", _NXP_DECLARED, {}, "fail"),
+    ("vendor-sdk", "1.0.0", _NXP_ID, {}, "fail"),
+    ("vendor-sdk", "1.0.0", [{"license": {"name": "Some Proprietary EULA"}}], {}, "fail"),
+    ("vendor-sdk", "1.0.0", _NXP_DECLARED, {"vendor-sdk@1.0.0": _APPROVAL}, "warn"),
+    ("vendor-sdk", "1.0.1", _NXP_DECLARED, {"vendor-sdk@1.0.0": _APPROVAL}, "fail"),
+    ("vendor-sdk", "1.0.0", _NXP_ID, {"vendor-sdk@1.0.0": _APPROVAL}, "fail"),
+    # An approval never rescues a licence outside the proprietary rank.
+    ("vendor-sdk", "1.0.0", [{"license": {"id": "GPL-3.0"}}],
+     {"vendor-sdk@1.0.0": dict(_APPROVAL, license="GPL-3.0")}, "fail"),
+]
+
+# Approval entries that must be refused: each field is the record a reviewer
+# signs, so none may be missing or empty.
+INVALID_APPROVALS = [
+    [],
+    {"vendor-sdk@1.0.0": "NXP Proprietary"},
+    {"vendor-sdk@1.0.0": {k: v for k, v in _APPROVAL.items() if k != "approved-by"}},
+    {"vendor-sdk@1.0.0": dict(_APPROVAL, justification=" ")},
+    {"vendor-sdk": _APPROVAL},
+]
+
 
 def run_self_test() -> int:
     failures = []
@@ -487,6 +573,23 @@ def run_self_test() -> int:
                 f"  {name}@{version} {licenses!r}: expected {expected}, got "
                 f"{status} [{license_id}] {detail}"
             )
+    for name, version, licenses, approvals, expected in APPROVAL_CASES:
+        component = {"name": name, "version": version, "licenses": licenses}
+        status, license_id, detail = evaluate_component(
+            component, dict(LICENSE_OVERRIDES), False, set(DEFAULT_DYNAMIC),
+            parse_approvals(approvals, "self-test"),
+        )
+        if status != expected:
+            failures.append(
+                f"  {name}@{version} approvals={sorted(approvals)}: expected "
+                f"{expected}, got {status} [{license_id}] {detail}"
+            )
+    for invalid in INVALID_APPROVALS:
+        try:
+            parse_approvals(invalid, "self-test")
+        except SystemExit:
+            continue
+        failures.append(f"  invalid approvals accepted: {invalid!r}")
     for expression, rust, expected in SELF_TEST_CASES:
         component = {"name": "probe", "version": "0.0.0"}
         if expression:
@@ -551,7 +654,8 @@ def run_self_test() -> int:
         print("\n".join(failures))
         return 1
     total = (
-        len(COMPONENT_CASES) + len(SELF_TEST_CASES) + 1
+        len(COMPONENT_CASES) + len(APPROVAL_CASES) + len(INVALID_APPROVALS)
+        + len(SELF_TEST_CASES) + 1
         + len(blocked_casings) + len(review_casings)
     )
     print(f"license policy self-test passed ({total} cases)")
@@ -571,6 +675,11 @@ def main() -> int:
         default=os.environ.get("LICENSE_OVERRIDES_FILE"),
         help="JSON object of name@version -> SPDX id",
     )
+    parser.add_argument(
+        "--approvals",
+        default=os.environ.get("LICENSE_APPROVALS_FILE"),
+        help=f"Proprietary component approvals (default: {APPROVALS_FILE} if present)",
+    )
     args = parser.parse_args()
 
     if args.self_test:
@@ -584,12 +693,15 @@ def main() -> int:
     rust = is_rust_project()
     dynamic = dynamic_libraries()
     overrides = load_overrides(args.overrides)
+    approvals = load_approvals(args.approvals)
 
     failures: List[str] = []
     warnings: List[str] = []
     ok_count = 0
     for component in iter_components(sbom):
-        status, _license, detail = evaluate_component(component, overrides, rust, dynamic)
+        status, _license, detail = evaluate_component(
+            component, overrides, rust, dynamic, approvals
+        )
         if status == "ok":
             ok_count += 1
         elif status == "warn":
