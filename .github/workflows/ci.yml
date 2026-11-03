@@ -125,6 +125,12 @@ jobs:
       - name: license policy evaluator
         run: python3 .github/scripts/check_license_policy.py --self-test
 
+      - name: NOTICE validator
+        run: python3 .github/scripts/validate_notice.py --self-test
+
+      - name: licence detection
+        run: python3 .github/scripts/detect_licenses.py --self-test
+
       - name: lane resolver
         run: python3 .github/scripts/resolve_lanes.py --self-test
 

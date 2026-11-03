@@ -37,6 +37,10 @@ on:
         description: Space-separated requirements files for a Python application without a pyproject.toml
         type: string
         default: ''
+      python-version:
+        description: Python the Python dependency environment is built on, the one the code runs on; empty keeps the runner's
+        type: string
+        default: ''
       upload-name:
         type: string
         default: sbom
@@ -66,6 +70,13 @@ jobs:
           tools: cargo-cyclonedx
           cache-key: sbom-${{ inputs.mode }}
 
+      - name: Setup Python
+        if: inputs.python-version != ''
+        uses: $/.github/actions/setup-python-uv
+        with:
+          python-version: ${{ inputs.python-version }}
+          sync: "false"
+
       - name: SBOM + license policy
         uses: $/.github/actions/sbom-tools
         with:
@@ -77,5 +88,6 @@ jobs:
           targets: ${{ inputs.targets }}
           extra-manifests: ${{ inputs.extra-manifests }}
           python-requirements: ${{ inputs.python-requirements }}
+          python-version: ${{ inputs.python-version }}
           upload-name: ${{ inputs.upload-name }}
           retention-days: ${{ inputs.retention-days }}

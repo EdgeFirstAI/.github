@@ -12,13 +12,18 @@
 #   SOURCE_DIRS           directories for scancode (default: src tests)
 #   PYTHON_REQUIREMENTS   space-separated requirements files, for a Python
 #                         application without a pyproject.toml
+#   PYTHON_VERSION        Python the dependency environment is built on, the
+#                         one the package or application runs on (default:
+#                         uv's choice, or python3)
 #   MANIFEST_FILES        unused except documentation
 #   SBOM_MODE             dependency | full (default: dependency)
 #   OUTPUT_DIR            default: sbom
 #   NOTICE_FILE           default: NOTICE
 #   SCRIPT_DIR            directory containing the sibling Python policy scripts
+#   LICENSE_APPROVALS_FILE  proprietary component approvals (default:
+#                         .github/license-approvals.json when present)
 #
-# Policy version: 2.1 (2026-09-21)
+# Policy version: 2.2 (2026-11-03)
 
 set -euo pipefail
 
@@ -99,6 +104,64 @@ DEP_SBOM="${OUTPUT_DIR}/sbom-dependencies.json"
 SRC_SBOM="${OUTPUT_DIR}/sbom-source.json"
 MERGED_SBOM="${OUTPUT_DIR}/sbom.json"
 
+# A fresh environment at $1 for a Python package's dependencies, on
+# PYTHON_VERSION when it is set: environment markers and wheel availability
+# depend on the interpreter, so the inventory matches the one the code runs on
+# only when the versions match. uv fetches a missing interpreter.
+new_python_env() {
+  local env="$1"
+  if command -v uv >/dev/null 2>&1; then
+    if [[ -n "${PYTHON_VERSION:-}" ]]; then
+      uv venv --quiet --python "$PYTHON_VERSION" "$env"
+    else
+      uv venv --quiet "$env"
+    fi
+    return
+  fi
+  local python=python3
+  if [[ -n "${PYTHON_VERSION:-}" ]]; then
+    python="python${PYTHON_VERSION}"
+  fi
+  if ! command -v "$python" >/dev/null 2>&1; then
+    echo "error: PYTHON_VERSION=${PYTHON_VERSION} needs uv or $python on PATH" >&2
+    exit 1
+  fi
+  "$python" -m venv "$env"
+}
+
+# scancode in venv/, installed on first use at the version sbom-tools caches.
+ensure_scancode() {
+  # A venv restored from another machine or Python cannot start; rebuild it.
+  if [[ -x venv/bin/scancode ]] && ! venv/bin/scancode --version >/dev/null 2>&1; then
+    echo "venv/bin/scancode does not run here; reinstalling" >&2
+    rm -rf venv
+  fi
+  if [[ ! -x venv/bin/scancode ]]; then
+    echo "installing scancode-toolkit 32.4.1 into venv/" >&2
+    python3 -m venv venv >&2
+    venv/bin/pip install --quiet --upgrade pip >&2
+    venv/bin/pip install --quiet 'scancode-toolkit==32.4.1' 'pluggy==1.6.0' 'click>=8.2,<8.3' >&2
+  fi
+  echo venv/bin/scancode
+}
+
+# Components whose metadata declares no licence the policy can classify get
+# the licence scancode detects in their own licence texts, so the policy
+# decides on the licence itself, never on a named package. $1 is the Python
+# environment the SBOM describes, if any.
+detect_licenses() {
+  local detect="$SCRIPT_DIR/detect_licenses.py" scancode
+  if ! python3 "$detect" "$DEP_SBOM" --has-gaps; then
+    return
+  fi
+  if command -v scancode >/dev/null 2>&1 && [[ ! -x venv/bin/scancode ]]; then
+    scancode="$(command -v scancode)"
+  else
+    scancode="$(ensure_scancode)"
+  fi
+  python3 "$detect" "$DEP_SBOM" --scancode "$scancode" ${1:+--python "$1"}
+}
+
 generate_dependency_sbom() {
   if [[ -f Cargo.toml ]]; then
     if ! cargo cyclonedx -h >/dev/null 2>&1; then
@@ -176,6 +239,7 @@ with out.open("w", encoding="utf-8") as handle:
 print(f"merged {len(components)} components into {out}")
 PY
     find . -name "${scan_prefix}*" -delete
+    detect_licenses
   elif [[ -f pyproject.toml ]]; then
     # What the package depends on, not what CI happens to have installed: the
     # project goes into a fresh environment with its required dependencies
@@ -183,7 +247,7 @@ PY
     # stay out of the license check. With uv.lock, the locked versions.
     py_env="$(mktemp -d)/env"
     if command -v uv >/dev/null 2>&1; then
-      uv venv --quiet "$py_env"
+      new_python_env "$py_env"
       if [[ -f uv.lock ]]; then
         uv export --frozen --no-default-groups --no-emit-project --no-hashes \
           --format requirements-txt -o "${py_env}.requirements.txt"
@@ -192,18 +256,19 @@ PY
       else
         uv pip install --quiet --python "$py_env/bin/python" .
       fi
-      uvx --from 'cyclonedx-bom==7.3.0' cyclonedx-py environment \
+      uvx --from 'cyclonedx-bom==7.3.0' cyclonedx-py environment --gather-license-texts \
         --spec-version 1.5 --output-format JSON -o "$DEP_SBOM" --pyproject pyproject.toml \
         "$py_env/bin/python"
     elif command -v cyclonedx-py >/dev/null 2>&1; then
-      python3 -m venv "$py_env"
+      new_python_env "$py_env"
       "$py_env/bin/pip" install --quiet .
-      cyclonedx-py environment --spec-version 1.5 --output-format JSON \
+      cyclonedx-py environment --gather-license-texts --spec-version 1.5 --output-format JSON \
         -o "$DEP_SBOM" --pyproject pyproject.toml "$py_env/bin/python"
     else
       echo "error: cyclonedx-py or uv is required when pyproject.toml exists" >&2
       exit 1
     fi
+    detect_licenses "$py_env/bin/python"
     rm -rf "$(dirname "$py_env")"
   elif [[ -n "${PYTHON_REQUIREMENTS:-}" ]]; then
     # An application that pins its dependencies in requirements files (what
@@ -222,19 +287,20 @@ PY
     done
     py_env="$(mktemp -d)/env"
     if command -v uv >/dev/null 2>&1; then
-      uv venv --quiet "$py_env"
+      new_python_env "$py_env"
       uv pip install --quiet --python "$py_env/bin/python" "${req_args[@]}"
-      uvx --from 'cyclonedx-bom==7.3.0' cyclonedx-py environment \
+      uvx --from 'cyclonedx-bom==7.3.0' cyclonedx-py environment --gather-license-texts \
         --spec-version 1.5 --output-format JSON -o "$DEP_SBOM" "$py_env/bin/python"
     elif command -v cyclonedx-py >/dev/null 2>&1; then
-      python3 -m venv "$py_env"
+      new_python_env "$py_env"
       "$py_env/bin/pip" install --quiet "${req_args[@]}"
-      cyclonedx-py environment --spec-version 1.5 --output-format JSON \
+      cyclonedx-py environment --gather-license-texts --spec-version 1.5 --output-format JSON \
         -o "$DEP_SBOM" "$py_env/bin/python"
     else
       echo "error: cyclonedx-py or uv is required for PYTHON_REQUIREMENTS" >&2
       exit 1
     fi
+    detect_licenses "$py_env/bin/python"
     rm -rf "$(dirname "$py_env")"
   else
     echo '{"bomFormat":"CycloneDX","specVersion":"1.5","components":[]}' > "$DEP_SBOM"
@@ -243,13 +309,10 @@ PY
 
 generate_source_sbom() {
   local scancode_bin=""
-  if [[ -x venv/bin/scancode ]]; then
-    scancode_bin=venv/bin/scancode
-  elif command -v scancode >/dev/null 2>&1; then
+  if [[ ! -x venv/bin/scancode ]] && command -v scancode >/dev/null 2>&1; then
     scancode_bin="$(command -v scancode)"
   else
-    echo "error: scancode is required for SBOM_MODE=full" >&2
-    exit 1
+    scancode_bin="$(ensure_scancode)"
   fi
 
   local paths=()

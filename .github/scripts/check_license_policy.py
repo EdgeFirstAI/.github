@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Check CycloneDX SBOM license policy (Au-Zone SPS).
 
-Policy version: 2.1 (2026-09-21). This is the single org-wide copy.
+Policy version: 2.2 (2026-11-03). This is the single org-wide copy.
 
-Exit 0 when every component is allowed or an approved override.
-Exit 1 on blocked licenses, LGPL in Rust, or undocumented proprietary.
+Exit 0 when every component is allowed, or proprietary and approved for
+this repository.
+Exit 1 on blocked licenses, LGPL in Rust, or unapproved proprietary.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
@@ -42,6 +44,8 @@ ALLOWED_LICENSES: Set[str] = {
     "IJG",
     "IJG-short",
     "WTFPL",
+    "PSF-2.0",
+    "Python-2.0",
 }
 
 # Composite expressions ("MIT OR Apache-2.0", "(MIT OR Apache-2.0) AND IJG")
@@ -77,13 +81,9 @@ CONDITIONAL_PROPRIETARY_LICENSES: Set[str] = {
     "LA_OPT_NXP_Software_License",
 }
 
-# Known-bad or missing metadata. Org-wide facts, not per-repo taste.
-LICENSE_OVERRIDES: Dict[str, str] = {
-    "sublime_fuzzy@0.7.0": "Apache-2.0",
-    "dma-buf@0.4.0": "MIT",
-    "dma-buf@0.5.0": "MIT",
-    "dma-heap@0.4.1": "MIT",
-}
+# Licences are approved by SPDX identifier, never per package or version. A
+# component whose metadata hides its licence is resolved from its own licence
+# texts by detect_licenses.py before this check runs.
 
 DEFAULT_DYNAMIC: Set[str] = {"gstreamer", "glib", "libglib"}
 
@@ -114,8 +114,25 @@ def normalize_license(raw: str) -> str:
         "The MIT License": "MIT",
         "MIT License": "MIT",
         "BSD-3-Clause-Clear": "BSD-3-Clause",
+        "3-Clause BSD License": "BSD-3-Clause",
+        "BSD 3-Clause": "BSD-3-Clause",
     }
     return aliases.get(text, text)
+
+
+# cyclonedx-py names a Python package's free-text `License:` metadata field
+# "declared license of '<package>'" and carries the field in its text.
+DECLARED_LICENSE_PREFIX = "declared license of "
+
+
+def declared_license(license_obj: dict) -> Optional[str]:
+    """The identifier in a declared-licence entry's text, or None when the
+    text is a whole licence rather than an identifier."""
+    text = (license_obj.get("text") or {}).get("content") or ""
+    text = text.strip()
+    if not text or "\n" in text or len(text) > 64:
+        return None
+    return text
 
 
 def licenses_from_component(component: dict) -> List[str]:
@@ -124,6 +141,10 @@ def licenses_from_component(component: dict) -> List[str]:
         license_obj = entry.get("license") or {}
         if "id" in license_obj:
             found.append(normalize_license(license_obj["id"]))
+        elif str(license_obj.get("name", "")).startswith(DECLARED_LICENSE_PREFIX):
+            declared = declared_license(license_obj)
+            if declared:
+                found.append(normalize_license(declared))
         elif "name" in license_obj:
             found.append(normalize_license(license_obj["name"]))
         elif "expression" in entry:
@@ -137,16 +158,51 @@ def component_key(component: dict) -> str:
     return f"{name}@{version}" if version else name
 
 
-def load_overrides(path: Optional[str]) -> Dict[str, str]:
-    merged = dict(LICENSE_OVERRIDES)
+# Proprietary licences are never accepted organisation-wide (SPS-01 Category
+# C, approval required). A repository that genuinely needs one records the
+# approval of each package here, where its reviewers see it. An approval
+# covers the package at any version, for the licence it names.
+APPROVALS_FILE = ".github/license-approvals.json"
+APPROVAL_FIELDS = ("license", "approved-by", "date", "justification")
+
+
+def package_key(name: str) -> str:
+    """A package name as its registry compares it: case and the -, _ and .
+    separators do not distinguish Python distributions or crates."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def parse_approvals(data: object, source: str) -> Dict[str, dict]:
+    """Validated approvals: package name -> the signed record of one
+    proprietary dependency. Anything malformed stops the check."""
+    if not isinstance(data, dict):
+        raise SystemExit(f"{source}: approvals must be a JSON object")
+    approvals: Dict[str, dict] = {}
+    for key, record in data.items():
+        if not str(key).strip() or "@" in str(key):
+            raise SystemExit(
+                f"{source}: {key!r} must be a package name; approvals are per "
+                "package, not per version"
+            )
+        if not isinstance(record, dict):
+            raise SystemExit(f"{source}: {key} must be an object of {', '.join(APPROVAL_FIELDS)}")
+        for field in APPROVAL_FIELDS:
+            value = record.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise SystemExit(f"{source}: {key} needs a non-empty {field!r}")
+        approvals[package_key(str(key))] = record
+    return approvals
+
+
+def load_approvals(path: Optional[str]) -> Dict[str, dict]:
+    """The repository's approvals: `path` when given (and then required),
+    otherwise APPROVALS_FILE when it exists."""
     if not path:
-        return merged
+        if not os.path.exists(APPROVALS_FILE):
+            return {}
+        path = APPROVALS_FILE
     with open(path, encoding="utf-8") as handle:
-        extra = json.load(handle)
-    if not isinstance(extra, dict):
-        raise SystemExit(f"overrides file {path} must be a JSON object")
-    merged.update({str(key): str(value) for key, value in extra.items()})
-    return merged
+        return parse_approvals(json.load(handle), path)
 
 
 # Outcome ranks, best to worst. AND takes the worst operand because every term
@@ -302,18 +358,21 @@ def evaluate_expression(expression: str) -> Tuple[int, str]:
     return rank, license_id
 
 
+def _same_expression(a: str, b: str) -> bool:
+    """Equal licence declarations, ignoring case and spacing."""
+    return " ".join(a.split()).lower() == " ".join(b.split()).lower()
+
+
 def evaluate_component(
     component: dict,
-    overrides: Dict[str, str],
     rust: bool,
     dynamic: Set[str],
+    approvals: Optional[Dict[str, dict]] = None,
 ) -> Tuple[str, str, str]:
     """Return (status, license, detail) status in {ok, warn, fail}."""
     key = component_key(component)
     name = (component.get("name") or "").lower()
     licenses = licenses_from_component(component)
-    if key in overrides:
-        licenses = [overrides[key]]
     if not licenses:
         return "fail", "UNKNOWN", f"{key}: missing license metadata"
 
@@ -321,18 +380,35 @@ def evaluate_component(
     # outcome wins, matching OR. Seed from the first entry rather than a
     # constant, so the reported id is always the leaf that decided the verdict.
     best_rank, best_license = evaluate_expression(licenses[0])
+    best_expression = licenses[0]
     for expression in licenses[1:]:
         if best_rank == RANK_ALLOWED:
             break
         rank, license_id = evaluate_expression(expression)
         if rank < best_rank:
             best_rank, best_license = rank, license_id
+            best_expression = expression
 
     if best_rank == RANK_ALLOWED:
         return "ok", best_license, f"{key}: {best_license}"
     if best_rank == RANK_PROPRIETARY:
+        approval = (approvals or {}).get(package_key(component.get("name") or ""))
+        if not approval:
+            return "fail", best_license, (
+                f"{key}: proprietary {best_license} is not approved for this "
+                f"repository ({APPROVALS_FILE})"
+            )
+        # The approval names the whole declaration that decided the verdict,
+        # so a further licence ANDed into it is never covered by an approval
+        # of one of its terms.
+        if not _same_expression(approval["license"], best_expression):
+            return "fail", best_license, (
+                f"{key}: approved as {approval['license']}, but the SBOM "
+                f"declares {best_expression}"
+            )
         return "warn", best_license, (
-            f"{key}: proprietary {best_license} must be documented in NOTICE"
+            f"{key}: proprietary {best_license} approved by "
+            f"{approval['approved-by']} on {approval['date']}; NOTICE must name it"
         )
     if best_rank == RANK_REVIEW:
         if rust:
@@ -413,17 +489,122 @@ SELF_TEST_CASES = [
     ("", True, "fail"),
     ("MIT AND", True, "fail"),
     ("(MIT OR Apache-2.0", True, "ok"),
+    # typing_extensions and anything carrying CPython code.
+    ("PSF-2.0", False, "ok"),
+    ("BSD-3-Clause AND PSF-2.0", False, "ok"),
+    ("Python-2.0", False, "ok"),
+]
+
+
+def _declared(text: str) -> dict:
+    """A licence entry as cyclonedx-py --gather-license-texts writes a
+    package's free-text `License:` metadata field."""
+    return {"license": {"name": "declared license of 'probe'", "text": {"content": text}}}
+
+
+_CLASSIFIER = {"license": {"name": "License :: OSI Approved :: Apache Software License"}}
+
+# Whole components, for what the expression cases cannot reach: which licence
+# entries are read.
+COMPONENT_CASES = [
+    # (name, version, licenses, expected status)
+    ("probe", "0.0.0", [_declared("Apache License 2.0")], "ok"),
+    ("probe", "0.0.0", [_declared("3-Clause BSD License")], "ok"),
+    ("probe", "0.0.0", [_declared("BSD 3-Clause")], "ok"),
+    ("probe", "0.0.0", [_CLASSIFIER, _declared("Apache 2.0")], "ok"),
+    # Declared text is classified like any identifier, never trusted.
+    ("probe", "0.0.0", [_declared("GPL-3.0")], "fail"),
+    ("probe", "0.0.0", [_declared("BSD")], "fail"),
+    # A whole licence pasted into the field is not an identifier.
+    ("probe", "0.0.0", [_declared("MIT\n\nPermission is hereby granted...")], "fail"),
+    ("probe", "0.0.0", [_CLASSIFIER], "fail"),
+    # What detect_licenses.py adds from a component's licence texts.
+    ("probe", "0.0.0", [_CLASSIFIER, {"expression": "Apache-2.0"}], "ok"),
+    ("probe", "0.0.0", [_declared("BSD"), {"expression": "BSD-3-Clause AND Python-2.0"}], "ok"),
+]
+
+_APPROVAL = {
+    "license": "NXP Proprietary",
+    "approved-by": "Approver Name",
+    "date": "2026-11-03",
+    "justification": "i.MX 95 runtime; no open alternative",
+}
+_NXP_DECLARED = [_declared("NXP Proprietary")]
+_NXP_ID = [{"license": {"id": "LA_OPT_NXP_SW"}}]
+
+# Proprietary components pass only with this repository's approval of that
+# package and licence, at any version, and are then still named in NOTICE
+# (warn).
+APPROVAL_CASES = [
+    # (name, version, licenses, approvals, expected status)
+    ("vendor-sdk", "1.0.0", _NXP_DECLARED, {}, "fail"),
+    ("vendor-sdk", "1.0.0", _NXP_ID, {}, "fail"),
+    ("vendor-sdk", "1.0.0", [{"license": {"name": "Some Proprietary EULA"}}], {}, "fail"),
+    ("vendor-sdk", "1.0.0", _NXP_DECLARED, {"vendor-sdk": _APPROVAL}, "warn"),
+    ("vendor-sdk", "2.3.1", _NXP_DECLARED, {"vendor-sdk": _APPROVAL}, "warn"),
+    # Python and crate names compare like their registries do.
+    ("Vendor_SDK", "1.0.0", _NXP_DECLARED, {"vendor-sdk": _APPROVAL}, "warn"),
+    ("other-sdk", "1.0.0", _NXP_DECLARED, {"vendor-sdk": _APPROVAL}, "fail"),
+    # A licence other than the one approved needs its own approval.
+    ("vendor-sdk", "1.0.0", _NXP_ID, {"vendor-sdk": _APPROVAL}, "fail"),
+    # An approval covers the whole declaration, never one leaf of it: a second
+    # proprietary licence ANDed in needs the approval to name both.
+    ("vendor-sdk", "1.0.0", [{"expression": "NXP Proprietary AND Vendor Proprietary EULA"}],
+     {"vendor-sdk": _APPROVAL}, "fail"),
+    ("vendor-sdk", "1.0.0", [{"expression": "NXP Proprietary AND Vendor Proprietary EULA"}],
+     {"vendor-sdk": dict(_APPROVAL, license="NXP Proprietary AND Vendor Proprietary EULA")}, "warn"),
+    # An approval never rescues a licence outside the proprietary rank.
+    ("vendor-sdk", "1.0.0", [{"license": {"id": "GPL-3.0"}}],
+     {"vendor-sdk": dict(_APPROVAL, license="GPL-3.0")}, "fail"),
+]
+
+# Approval entries that must be refused: each field is the record a reviewer
+# signs, so none may be missing or empty.
+INVALID_APPROVALS = [
+    [],
+    {"vendor-sdk@1.0.0": "NXP Proprietary"},
+    {"vendor-sdk@1.0.0": {k: v for k, v in _APPROVAL.items() if k != "approved-by"}},
+    {"vendor-sdk@1.0.0": dict(_APPROVAL, justification=" ")},
+    # Approvals are per package, never per version.
+    {"vendor-sdk@1.0.0": _APPROVAL},
 ]
 
 
 def run_self_test() -> int:
     failures = []
+    for name, version, licenses, expected in COMPONENT_CASES:
+        component = {"name": name, "version": version, "licenses": licenses}
+        status, license_id, detail = evaluate_component(
+            component, False, set(DEFAULT_DYNAMIC)
+        )
+        if status != expected:
+            failures.append(
+                f"  {name}@{version} {licenses!r}: expected {expected}, got "
+                f"{status} [{license_id}] {detail}"
+            )
+    for name, version, licenses, approvals, expected in APPROVAL_CASES:
+        component = {"name": name, "version": version, "licenses": licenses}
+        status, license_id, detail = evaluate_component(
+            component, False, set(DEFAULT_DYNAMIC),
+            parse_approvals(approvals, "self-test"),
+        )
+        if status != expected:
+            failures.append(
+                f"  {name}@{version} approvals={sorted(approvals)}: expected "
+                f"{expected}, got {status} [{license_id}] {detail}"
+            )
+    for invalid in INVALID_APPROVALS:
+        try:
+            parse_approvals(invalid, "self-test")
+        except SystemExit:
+            continue
+        failures.append(f"  invalid approvals accepted: {invalid!r}")
     for expression, rust, expected in SELF_TEST_CASES:
         component = {"name": "probe", "version": "0.0.0"}
         if expression:
             component["licenses"] = [{"expression": expression}]
         status, license_id, detail = evaluate_component(
-            component, dict(LICENSE_OVERRIDES), rust, set(DEFAULT_DYNAMIC)
+            component, rust, set(DEFAULT_DYNAMIC)
         )
         if status != expected:
             failures.append(
@@ -481,7 +662,11 @@ def run_self_test() -> int:
         print("license policy self-test FAILED:")
         print("\n".join(failures))
         return 1
-    total = len(SELF_TEST_CASES) + 1 + len(blocked_casings) + len(review_casings)
+    total = (
+        len(COMPONENT_CASES) + len(APPROVAL_CASES) + len(INVALID_APPROVALS)
+        + len(SELF_TEST_CASES) + 1
+        + len(blocked_casings) + len(review_casings)
+    )
     print(f"license policy self-test passed ({total} cases)")
     return 0
 
@@ -495,9 +680,9 @@ def main() -> int:
     )
     parser.add_argument("sbom", nargs="?", help="CycloneDX JSON SBOM path")
     parser.add_argument(
-        "--overrides",
-        default=os.environ.get("LICENSE_OVERRIDES_FILE"),
-        help="JSON object of name@version -> SPDX id",
+        "--approvals",
+        default=os.environ.get("LICENSE_APPROVALS_FILE"),
+        help=f"Proprietary component approvals (default: {APPROVALS_FILE} if present)",
     )
     args = parser.parse_args()
 
@@ -511,13 +696,15 @@ def main() -> int:
 
     rust = is_rust_project()
     dynamic = dynamic_libraries()
-    overrides = load_overrides(args.overrides)
+    approvals = load_approvals(args.approvals)
 
     failures: List[str] = []
     warnings: List[str] = []
     ok_count = 0
     for component in iter_components(sbom):
-        status, _license, detail = evaluate_component(component, overrides, rust, dynamic)
+        status, _license, detail = evaluate_component(
+            component, rust, dynamic, approvals
+        )
         if status == "ok":
             ok_count += 1
         elif status == "warn":

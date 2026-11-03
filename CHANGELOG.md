@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The SBOM's Python environment can be built on a chosen Python.** `sbom-tools` and `sbom.yml` take `python-version`, and `release-rust.yml` takes `sbom-python-version`. Dependency resolution depends on the interpreter, so an inventory built on the runner's Python could list versions, or pre-releases, that the application's image never installs. With it set, `sbom.yml` installs uv, which fetches that Python.
+
+### Changed
+
+- **Breaking: proprietary licences fail the license check unless the repository approves them.** They were accepted organisation-wide with a warning once NOTICE named them, which SPS-01 does not allow: proprietary is Category C, approval required. A repository that genuinely needs one approves the package by name in `.github/license-approvals.json` with `license`, `approved-by`, `date` and `justification`; the approval covers the package at any version for the licence declaration it names in full, so a second proprietary licence added to it needs a new approval, and NOTICE must still name it.
+- **Breaking: the license check takes no per-package overrides.** The built-in `name@version` overrides (`sublime_fuzzy`, `dma-buf`, `dma-heap`) and the `--overrides` / `LICENSE_OVERRIDES_FILE` input are removed: licences are approved organisation-wide by SPDX identifier, and those crates now resolve from their licence files.
+- **License policy 2.2: PSF-2.0 and Python-2.0 are allowed.** Both are permissive and OSI-approved: PSF-2.0 is the Python Software Foundation licence (`typing_extensions`, which nearly every Python application depends on), Python-2.0 the CPython licence that code derived from CPython carries.
+- **The license check reads the license a Python package declares in its `License:` metadata field.** `cyclonedx-py` now runs with `--gather-license-texts`, and the check classifies that field like any identifier, so packages that declare `Apache 2.0` or `3-Clause BSD License` but carry only an ambiguous classifier, or no classifier, pass. A field holding a whole license text is not read as an identifier.
+- **A component whose metadata declares no licence the check can classify gets the licence detected in its own licence texts.** A Python package may carry only an ambiguous classifier (`BSD License`), a bare word (`BSD`) or nothing but a LICENSE file; a crate may name a `license-file` instead of an SPDX licence. For those components alone, scancode scans the licence texts the SBOM embeds (cargo-cyclonedx includes a crate's license-file) and the licence files an installed Python distribution ships, and the detected SPDX expression becomes the component's licence, judged like any other; the licence metadata the package declared is kept as the component's `evidence`. `generate_sbom.sh` installs scancode into `venv/` only when a component needs it or in full mode; `sbom-tools` caches it. Without scancode nothing is filled in and the component fails.
+
+### Fixed
+
+- **The NOTICE check sees a proprietary licence a Python package declares in its `License:` field.** It reads licences the way the license check does, so the declaration requires NOTICE to name the component.
+
 ## [3.1.0] - 2026-11-03
 
 ### Added

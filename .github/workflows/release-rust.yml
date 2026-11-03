@@ -57,6 +57,12 @@ on:
           so its dependencies and their licenses are in the release SBOM.
         type: string
         default: ""
+      sbom-python-version:
+        description: >-
+          Python the release SBOM resolves Python dependencies on: the one the
+          application runs on, such as its image's. Empty keeps the runner's.
+        type: string
+        default: ""
       package-runner:
         description: >-
           Runner for the packaging job. Defaults to the `larger` class because
@@ -339,6 +345,7 @@ jobs:
       extra-manifests: ${{ inputs.sbom-extra-manifests }}
       source-dirs: ${{ inputs.sbom-source-dirs || 'src tests crates' }}
       python-requirements: ${{ inputs.sbom-python-requirements }}
+      python-version: ${{ inputs.sbom-python-version }}
       upload-name: sbom
       # publish.yml requires this SBOM after the release PR merges, which is
       # human-paced. The 7-day CI default would expire a release held a week.
