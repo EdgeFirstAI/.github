@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The Python test jobs take their permissions from the call site.** `python-quick`'s `quick` job and `python-full`'s `test` jobs no longer declare `permissions: contents: read`, because declaring `id-token: write` beside it would fail every caller that does not grant it. Grant `contents: read` at the call site, as `templates/ci-python.yml` now does, plus `id-token: write` with CodeArtifact.
 - **The `sbom.yml` job takes its permissions from the call site,** for the same reason. `release-rust.yml`'s SBOM job passes on what its caller grants; the release templates now grant `contents: read` on `verify`. `rust-full.yml` grants its scancode SBOM `contents: read`, as before.
 
+### Security
+
+- **Runs that read CodeArtifact never use the GitHub Actions cache for uv.** `setup-python-uv` takes `enable-cache` (default `true`, as before), and `python-quick.yml`, `python-full.yml` and `sbom.yml` set it to `false` when a CodeArtifact input is set. A cache saved on a public repository's base branch can be restored by a fork pull request, which gets no OIDC token, so caching would hand it the private packages that CodeArtifact refuses it.
+
 ### Fixed
 
 - **With CodeArtifact configured, the dependency licence check installs packages from the index `uv.lock` names.** It exports the lock to a requirements file, which drops each package's index, so a package pinned to the `codeartifact` index through `[tool.uv.sources]` was looked up on PyPI. When the CodeArtifact credentials are set for the run (`codeartifact-login` exported `UV_INDEX_CODEARTIFACT_PASSWORD`), `generate_sbom.sh` syncs the fresh environment from the lock instead. Without them it runs the same export and install as before.

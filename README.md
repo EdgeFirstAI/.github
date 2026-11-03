@@ -75,7 +75,7 @@ The call site grants `contents: read` and `id-token: write` (plus `pull-requests
 
 The role lives in terraform (DE-3119). Its trust policy names each repository that may assume it, explicitly and never by wildcard: most EdgeFirstAI repositories are public, and a wildcard would let any of them read the private packages. Its subject conditions cover the events the workflows run on: pull requests, `main`, and `release/*` branches for the release SBOM and the image build. It needs `codeartifact:GetAuthorizationToken`, `sts:GetServiceBearerToken`, `codeartifact:GetRepositoryEndpoint` and `codeartifact:ReadFromRepository`. A pull request from a fork gets no OIDC token, so it cannot read CodeArtifact and fails at the login step with that reason.
 
-The `codeartifact-login` action assumes the role, requests a token, masks it and clears the role's AWS credentials from the environment. Later steps hold only the token.
+The `codeartifact-login` action assumes the role, requests a token, masks it and clears the role's AWS credentials from the environment. Later steps hold only the token. A run with CodeArtifact configured never saves uv's cache to the GitHub Actions cache (`setup-python-uv` with `enable-cache: false`). A cache saved on a public repository's `main` can be restored by a fork pull request, which has no OIDC token, so a cache holding the private packages would hand them to it.
 
 **Tests (`python-quick`, `python-full`).** A 15-minute token is exported as `UV_INDEX_CODEARTIFACT_USERNAME` and `UV_INDEX_CODEARTIFACT_PASSWORD` before `uv sync`. uv applies them to the index named `codeartifact`, so `pyproject.toml` declares that index and routes only the private packages to it; everything else still comes from PyPI:
 

@@ -206,6 +206,8 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           extra-args: ${{ inputs.extra-sync-args }}
+          # Never cache private packages; see the README's "Private Python packages".
+          enable-cache: ${{ inputs.codeartifact-role == '' && inputs.codeartifact-domain == '' && inputs.codeartifact-repository == '' }}
 
       # pytest-cov is layered on for this run rather than required of the
       # caller's dependencies. The report's <source> paths are absolute; the

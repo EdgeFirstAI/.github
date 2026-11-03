@@ -109,6 +109,8 @@ jobs:
         with:
           python-version: ${{ inputs.python-version }}
           sync: "false"
+          # Never cache private packages; see the README's "Private Python packages".
+          enable-cache: ${{ inputs.codeartifact-role == '' && inputs.codeartifact-domain == '' && inputs.codeartifact-repository == '' }}
 
       # 30 minutes: the tool installs and the scancode cache restore in
       # sbom-tools come before the dependency environment is built.

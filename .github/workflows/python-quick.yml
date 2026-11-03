@@ -101,6 +101,8 @@ jobs:
         with:
           python-version: ${{ inputs.python-version }}
           extra-args: ${{ inputs.extra-sync-args }}
+          # Never cache private packages; see the README's "Private Python packages".
+          enable-cache: ${{ inputs.codeartifact-role == '' && inputs.codeartifact-domain == '' && inputs.codeartifact-repository == '' }}
 
       - name: ruff
         env:
