@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Fill licence gaps in a Python dependency SBOM from the packages' own
-licence files (Au-Zone SPS).
+"""Fill licence gaps in a dependency SBOM from the components' own licence
+texts (Au-Zone SPS).
 
-Some packages declare no licence the policy can classify: only an ambiguous
-classifier ("License :: OSI Approved :: BSD License"), a bare word ("BSD"), or
-nothing but a LICENSE file. For those components alone, the licence files the
-installed distribution ships are scanned with scancode and the detected SPDX
-expression is added to the component. The policy then decides on that licence
-like any other; no package or version is named anywhere.
+Some packages declare no licence the policy can classify: a Python package
+with only an ambiguous classifier ("License :: OSI Approved :: BSD License"),
+a bare word ("BSD") or nothing but a LICENSE file; a crate with a
+`license-file` instead of an SPDX `license`. For those components alone, their
+licence texts are scanned with scancode and the detected SPDX expression is
+added to the component: the texts the SBOM already carries (cargo-cyclonedx
+embeds a crate's license-file) and, for a Python environment, the licence
+files each installed distribution ships. The policy then decides on that
+licence like any other; no package or version is named anywhere.
 
 Without scancode the SBOM is left unchanged, so the gaps still fail the check.
 """
@@ -15,6 +18,7 @@ Without scancode the SBOM is left unchanged, so the gaps still fail the check.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import re
@@ -22,7 +26,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from check_license_policy import (
     RANK_UNKNOWN,
@@ -91,6 +95,24 @@ json.dump(out, sys.stdout)
 """
 
 
+def embedded_texts(component: dict) -> List[str]:
+    """Whole licence texts the SBOM carries for the component, such as the
+    license-file cargo-cyclonedx embeds for a crate without an SPDX licence.
+    A short declared identifier ("BSD") is not a licence text."""
+    texts: List[str] = []
+    for entry in component.get("licenses") or []:
+        attached = (entry.get("license") or {}).get("text") or {}
+        content = attached.get("content") or ""
+        if attached.get("encoding") == "base64":
+            try:
+                content = base64.b64decode(content).decode("utf-8", errors="replace")
+            except (ValueError, TypeError):
+                continue
+        if "\n" in content.strip() or len(content.strip()) > 64:
+            texts.append(content)
+    return texts
+
+
 def combine(expressions: List[str]) -> str:
     """Every licence file of a package applies, so their terms are ANDed."""
     unique = list(dict.fromkeys(expressions))
@@ -99,25 +121,45 @@ def combine(expressions: List[str]) -> str:
     return " AND ".join(f"({e})" if " " in e else e for e in unique)
 
 
-def detect(python: str, scancode: str, gaps: Dict[Tuple[str, str], str]) -> Dict[Tuple[str, str], str]:
-    """Scan the licence files of the gap distributions installed in the
-    environment of `python`; return (normalised name, version) -> SPDX."""
-    inventory = json.loads(
-        subprocess.run([python, "-c", _INVENTORY], check=True, capture_output=True, text=True).stdout
-    )
-    stage = tempfile.mkdtemp(prefix="python-licenses-")
+def _stage(stage: str, key: Tuple[str, str], relative: str) -> str:
+    target = os.path.join(stage, f"{key[0]}@{key[1]}", relative)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    return target
+
+
+def detect(
+    sbom: dict,
+    scancode: str,
+    python: Optional[str] = None,
+) -> Dict[Tuple[str, str], str]:
+    """Scan the licence texts of the SBOM's gap components; return
+    (normalised name, version) -> detected SPDX expression."""
+    gaps = {
+        (normalize_name(c.get("name") or ""), c.get("version") or ""): c
+        for c in sbom.get("components") or []
+        if needs_detection(c)
+    }
+    stage = tempfile.mkdtemp(prefix="licence-texts-")
     try:
         staged = 0
-        for dist in inventory:
-            key = (normalize_name(dist["name"] or ""), dist["version"])
-            if key not in gaps:
-                continue
-            for rel, path in dist["files"]:
-                if is_license_file(rel) and os.path.isfile(path):
-                    target = os.path.join(stage, f"{key[0]}@{key[1]}", rel)
-                    os.makedirs(os.path.dirname(target), exist_ok=True)
-                    shutil.copyfile(path, target)
-                    staged += 1
+        for key, component in gaps.items():
+            for index, text in enumerate(embedded_texts(component)):
+                with open(_stage(stage, key, f"sbom-licence-{index}.txt"), "w", encoding="utf-8") as handle:
+                    handle.write(text)
+                staged += 1
+        if python:
+            inventory = json.loads(
+                subprocess.run([python, "-c", _INVENTORY], check=True,
+                               capture_output=True, text=True).stdout
+            )
+            for dist in inventory:
+                key = (normalize_name(dist["name"] or ""), dist["version"])
+                if key not in gaps:
+                    continue
+                for rel, path in dist["files"]:
+                    if is_license_file(rel) and os.path.isfile(path):
+                        shutil.copyfile(path, _stage(stage, key, rel))
+                        staged += 1
         if not staged:
             return {}
         scan = os.path.join(stage, "scan.json")
@@ -206,44 +248,62 @@ def run_self_test() -> int:
     if sorted(changed) != ["Safe_Tensors@0.8.0: Apache-2.0", "namex@0.1.0: Apache-2.0"]:
         failures.append(f"  changed lines: {changed}")
 
+    mit = "MIT License\n\nPermission is hereby granted, free of charge, to any person obtaining a copy"
+    cargo_unknown = {"license": {"name": "Unknown", "text": {
+        "encoding": "base64", "content": base64.b64encode(mit.encode()).decode()}}}
+    if not needs_detection({"licenses": [cargo_unknown]}):
+        failures.append("  cargo 'Unknown' licence with embedded text is not a gap")
+    if embedded_texts({"licenses": [cargo_unknown]}) != [mit]:
+        failures.append(f"  embedded_texts(base64): {embedded_texts({'licenses': [cargo_unknown]})!r}")
+    plain = {"license": {"name": "Unknown", "text": {"content": mit}}}
+    if embedded_texts({"licenses": [plain]}) != [mit]:
+        failures.append("  embedded_texts(plain) did not return the text")
+    # A declared identifier is not a licence text to scan.
+    if embedded_texts({"licenses": [declared_bsd]}):
+        failures.append("  embedded_texts took a declared identifier as a licence text")
+    if embedded_texts({"licenses": [{"license": {"id": "MIT"}}]}):
+        failures.append("  embedded_texts returned text for an id entry")
+
     if failures:
-        print("detect_python_licenses self-test FAILED:")
+        print("detect_licenses self-test FAILED:")
         print("\n".join(failures))
         return 1
-    print(f"detect_python_licenses self-test passed ({len(cases) + len(files) + 5} cases)")
+    print(f"detect_licenses self-test passed ({len(cases) + len(files) + 11} cases)")
     return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--self-test", action="store_true", help="Run the self-test and exit")
-    parser.add_argument("sbom", nargs="?", help="CycloneDX JSON SBOM of the environment, updated in place")
-    parser.add_argument("--python", help="Interpreter of the environment the SBOM describes")
+    parser.add_argument("sbom", nargs="?", help="CycloneDX JSON SBOM, updated in place")
+    parser.add_argument("--python", help="Interpreter of the Python environment the SBOM describes")
     parser.add_argument("--scancode", help="scancode executable; without it the SBOM is unchanged")
+    parser.add_argument(
+        "--has-gaps", action="store_true",
+        help="Exit 0 when some component needs detection, 1 when none does",
+    )
     args = parser.parse_args()
     if args.self_test:
         return run_self_test()
-    if not args.sbom or not args.python:
-        parser.error("sbom and --python are required unless --self-test is given")
+    if not args.sbom:
+        parser.error("sbom is required unless --self-test is given")
 
     with open(args.sbom, encoding="utf-8") as handle:
         sbom = json.load(handle)
-    gaps = {
-        (normalize_name(c.get("name") or ""), c.get("version") or ""): c.get("name") or ""
-        for c in sbom.get("components") or []
-        if needs_detection(c)
-    }
+    gaps = [c for c in sbom.get("components") or [] if needs_detection(c)]
+    if args.has_gaps:
+        return 0 if gaps else 1
     if not gaps:
         return 0
     if not args.scancode:
-        print(f"licence files not scanned (no scancode): {len(gaps)} component(s) without a readable licence")
+        print(f"licence texts not scanned (no scancode): {len(gaps)} component(s) without a readable licence")
         return 0
-    changed = apply_detections(sbom, detect(args.python, args.scancode, gaps))
+    changed = apply_detections(sbom, detect(sbom, args.scancode, args.python))
     with open(args.sbom, "w", encoding="utf-8") as handle:
         json.dump(sbom, handle, indent=2)
         handle.write("\n")
     for line in changed:
-        print(f"licence detected from its licence files: {line}")
+        print(f"licence detected from its licence texts: {line}")
     return 0
 
 

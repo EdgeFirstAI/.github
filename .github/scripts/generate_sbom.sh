@@ -129,23 +129,32 @@ new_python_env() {
   "$python" -m venv "$env"
 }
 
-# scancode, when installed: the release SBOM's full mode installs it.
-find_scancode() {
-  if [[ -x venv/bin/scancode ]]; then
-    echo venv/bin/scancode
-  elif command -v scancode >/dev/null 2>&1; then
-    command -v scancode
+# scancode in venv/, installed on first use at the version sbom-tools caches.
+ensure_scancode() {
+  if [[ ! -x venv/bin/scancode ]]; then
+    echo "installing scancode-toolkit 32.4.1 into venv/" >&2
+    python3 -m venv venv >&2
+    venv/bin/pip install --quiet --upgrade pip >&2
+    venv/bin/pip install --quiet 'scancode-toolkit==32.4.1' 'pluggy==1.6.0' 'click>=8.2,<8.3' >&2
   fi
+  echo venv/bin/scancode
 }
 
-# Packages whose metadata declares no licence the policy can classify get the
-# licence scancode detects in the licence files they install, so the policy
-# decides on the licence itself rather than on a per-package exception.
-detect_python_licenses() {
-  local python="$1" scancode
-  scancode="$(find_scancode)"
-  python3 "$SCRIPT_DIR/detect_python_licenses.py" "$DEP_SBOM" --python "$python" \
-    ${scancode:+--scancode "$scancode"}
+# Components whose metadata declares no licence the policy can classify get
+# the licence scancode detects in their own licence texts, so the policy
+# decides on the licence itself, never on a named package. $1 is the Python
+# environment the SBOM describes, if any.
+detect_licenses() {
+  local detect="$SCRIPT_DIR/detect_licenses.py" scancode
+  if ! python3 "$detect" "$DEP_SBOM" --has-gaps; then
+    return
+  fi
+  if command -v scancode >/dev/null 2>&1 && [[ ! -x venv/bin/scancode ]]; then
+    scancode="$(command -v scancode)"
+  else
+    scancode="$(ensure_scancode)"
+  fi
+  python3 "$detect" "$DEP_SBOM" --scancode "$scancode" ${1:+--python "$1"}
 }
 
 generate_dependency_sbom() {
@@ -225,6 +234,7 @@ with out.open("w", encoding="utf-8") as handle:
 print(f"merged {len(components)} components into {out}")
 PY
     find . -name "${scan_prefix}*" -delete
+    detect_licenses
   elif [[ -f pyproject.toml ]]; then
     # What the package depends on, not what CI happens to have installed: the
     # project goes into a fresh environment with its required dependencies
@@ -253,7 +263,7 @@ PY
       echo "error: cyclonedx-py or uv is required when pyproject.toml exists" >&2
       exit 1
     fi
-    detect_python_licenses "$py_env/bin/python"
+    detect_licenses "$py_env/bin/python"
     rm -rf "$(dirname "$py_env")"
   elif [[ -n "${PYTHON_REQUIREMENTS:-}" ]]; then
     # An application that pins its dependencies in requirements files (what
@@ -285,7 +295,7 @@ PY
       echo "error: cyclonedx-py or uv is required for PYTHON_REQUIREMENTS" >&2
       exit 1
     fi
-    detect_python_licenses "$py_env/bin/python"
+    detect_licenses "$py_env/bin/python"
     rm -rf "$(dirname "$py_env")"
   else
     echo '{"bomFormat":"CycloneDX","specVersion":"1.5","components":[]}' > "$DEP_SBOM"
@@ -294,13 +304,10 @@ PY
 
 generate_source_sbom() {
   local scancode_bin=""
-  if [[ -x venv/bin/scancode ]]; then
-    scancode_bin=venv/bin/scancode
-  elif command -v scancode >/dev/null 2>&1; then
+  if [[ ! -x venv/bin/scancode ]] && command -v scancode >/dev/null 2>&1; then
     scancode_bin="$(command -v scancode)"
   else
-    echo "error: scancode is required for SBOM_MODE=full" >&2
-    exit 1
+    scancode_bin="$(ensure_scancode)"
   fi
 
   local paths=()
