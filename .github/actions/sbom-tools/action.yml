@@ -42,6 +42,14 @@ inputs:
       so omitting them understates what the SBOM describes.
     required: false
     default: ''
+  python-requirements:
+    description: >-
+      Space-separated requirements files for a Python application without a
+      pyproject.toml, such as the one its image installs with `pip install
+      -r`. They are installed into a fresh environment and inventoried with
+      their licenses. Empty keeps the manifest detection.
+    required: false
+    default: ''
   upload-name:
     description: Artifact name; empty skips upload
     required: false
@@ -64,7 +72,7 @@ runs:
         tool: cargo-cyclonedx
 
     - name: Install cyclonedx-py
-      if: hashFiles('pyproject.toml') != ''
+      if: hashFiles('pyproject.toml') != '' || inputs.python-requirements != ''
       shell: bash
       run: |
         python3 -m venv "${RUNNER_TEMP}/cyclonedx"
@@ -101,6 +109,7 @@ runs:
         NOTICE_FILE: ${{ inputs.notice-file }}
         SBOM_TARGETS: ${{ inputs.targets }}
         SBOM_EXTRA_MANIFESTS: ${{ inputs.extra-manifests }}
+        PYTHON_REQUIREMENTS: ${{ inputs.python-requirements }}
         SCRIPT_DIR: ${{ github.action_path }}/../../scripts
       run: |
         chmod +x "$SCRIPT_DIR/generate_sbom.sh"
