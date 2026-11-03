@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-11-02
+
 ### Changed
 
 - **Breaking: ECR logins assume the repository's own build role.** `registry-login`, `publish-container.yml` and the container templates read the repository variable `AWS_STUDIO_BUILD_ROLE_ARN` instead of the organisation variable `AWS_ECR_ROLE_ARN`. That organisation variable reached every repository but its role trusted the profiler alone, so any other repository mirroring to ECR failed to assume it. Each app's build role trusts only that app's repository and can push only to that app's ECR repository.
@@ -529,6 +531,7 @@ Everything here is exercised by a real release: `EdgeFirstAI/ara2-rs` v0.18.0 wa
   precedence over `ci:hardware`. PyPI publish requires the reusable release
   job to succeed.
 
+[3.0.0]: https://github.com/EdgeFirstAI/.github/compare/v2.3.1...v3.0.0
 [2.3.1]: https://github.com/EdgeFirstAI/.github/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/EdgeFirstAI/.github/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/EdgeFirstAI/.github/compare/v2.1.0...v2.2.0
