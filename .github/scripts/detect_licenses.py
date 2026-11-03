@@ -72,9 +72,19 @@ def apply_detections(sbom: dict, detections: Dict[Tuple[str, str], str]) -> List
         expression = detections.get((normalize_name(name), version))
         if not expression or not needs_detection(component):
             continue
-        component["licenses"] = list(component.get("licenses") or []) + [
-            {"expression": expression}
+        # CycloneDX 1.5 `licenses` holds licence objects or exactly one
+        # expression, never both. The detected expression becomes the
+        # component's licence; what the metadata declared is kept as evidence,
+        # as licence objects so that list stays valid too.
+        original = [
+            entry if "license" in entry else {"license": {"name": entry["expression"]}}
+            for entry in component.get("licenses") or []
+            if "license" in entry or "expression" in entry
         ]
+        if original:
+            evidence = component.setdefault("evidence", {})
+            evidence["licenses"] = list(evidence.get("licenses") or []) + original
+        component["licenses"] = [{"expression": expression}]
         changed.append(f"{name}@{version}: {expression}")
     return changed
 
@@ -237,10 +247,16 @@ def run_self_test() -> int:
         },
     )
     by_name = {c["name"]: c for c in sbom["components"]}
-    if {"expression": "Apache-2.0"} not in (by_name["namex"].get("licenses") or []):
-        failures.append("  namex: detected expression not added")
-    if {"expression": "Apache-2.0"} not in by_name["Safe_Tensors"]["licenses"]:
-        failures.append("  Safe_Tensors: name normalisation did not match")
+    # CycloneDX 1.5 allows licence objects or exactly one expression, never
+    # both: the detected expression replaces them, which move to evidence.
+    if by_name["namex"].get("licenses") != [{"expression": "Apache-2.0"}]:
+        failures.append(f"  namex: licenses {by_name['namex'].get('licenses')!r}")
+    if by_name["Safe_Tensors"]["licenses"] != [{"expression": "Apache-2.0"}]:
+        failures.append(f"  Safe_Tensors: licenses {by_name['Safe_Tensors']['licenses']!r}")
+    if (by_name["Safe_Tensors"].get("evidence") or {}).get("licenses") != [classifier]:
+        failures.append("  Safe_Tensors: original licence metadata not kept as evidence")
+    if "evidence" in by_name["namex"]:
+        failures.append("  namex: evidence added with no original licence metadata")
     if len(by_name["keras"]["licenses"]) != 1:
         failures.append("  keras: a component with a known licence was changed")
     if by_name["orphan"].get("licenses"):
@@ -268,7 +284,7 @@ def run_self_test() -> int:
         print("detect_licenses self-test FAILED:")
         print("\n".join(failures))
         return 1
-    print(f"detect_licenses self-test passed ({len(cases) + len(files) + 11} cases)")
+    print(f"detect_licenses self-test passed ({len(cases) + len(files) + 13} cases)")
     return 0
 
 

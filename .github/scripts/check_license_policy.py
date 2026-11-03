@@ -358,6 +358,11 @@ def evaluate_expression(expression: str) -> Tuple[int, str]:
     return rank, license_id
 
 
+def _same_expression(a: str, b: str) -> bool:
+    """Equal licence declarations, ignoring case and spacing."""
+    return " ".join(a.split()).lower() == " ".join(b.split()).lower()
+
+
 def evaluate_component(
     component: dict,
     rust: bool,
@@ -375,12 +380,14 @@ def evaluate_component(
     # outcome wins, matching OR. Seed from the first entry rather than a
     # constant, so the reported id is always the leaf that decided the verdict.
     best_rank, best_license = evaluate_expression(licenses[0])
+    best_expression = licenses[0]
     for expression in licenses[1:]:
         if best_rank == RANK_ALLOWED:
             break
         rank, license_id = evaluate_expression(expression)
         if rank < best_rank:
             best_rank, best_license = rank, license_id
+            best_expression = expression
 
     if best_rank == RANK_ALLOWED:
         return "ok", best_license, f"{key}: {best_license}"
@@ -391,10 +398,13 @@ def evaluate_component(
                 f"{key}: proprietary {best_license} is not approved for this "
                 f"repository ({APPROVALS_FILE})"
             )
-        if approval["license"].strip().lower() != best_license.lower():
+        # The approval names the whole declaration that decided the verdict,
+        # so a further licence ANDed into it is never covered by an approval
+        # of one of its terms.
+        if not _same_expression(approval["license"], best_expression):
             return "fail", best_license, (
                 f"{key}: approved as {approval['license']}, but the SBOM "
-                f"declares {best_license}"
+                f"declares {best_expression}"
             )
         return "warn", best_license, (
             f"{key}: proprietary {best_license} approved by "
@@ -537,6 +547,12 @@ APPROVAL_CASES = [
     ("other-sdk", "1.0.0", _NXP_DECLARED, {"vendor-sdk": _APPROVAL}, "fail"),
     # A licence other than the one approved needs its own approval.
     ("vendor-sdk", "1.0.0", _NXP_ID, {"vendor-sdk": _APPROVAL}, "fail"),
+    # An approval covers the whole declaration, never one leaf of it: a second
+    # proprietary licence ANDed in needs the approval to name both.
+    ("vendor-sdk", "1.0.0", [{"expression": "NXP Proprietary AND Vendor Proprietary EULA"}],
+     {"vendor-sdk": _APPROVAL}, "fail"),
+    ("vendor-sdk", "1.0.0", [{"expression": "NXP Proprietary AND Vendor Proprietary EULA"}],
+     {"vendor-sdk": dict(_APPROVAL, license="NXP Proprietary AND Vendor Proprietary EULA")}, "warn"),
     # An approval never rescues a licence outside the proprietary rank.
     ("vendor-sdk", "1.0.0", [{"license": {"id": "GPL-3.0"}}],
      {"vendor-sdk": dict(_APPROVAL, license="GPL-3.0")}, "fail"),
