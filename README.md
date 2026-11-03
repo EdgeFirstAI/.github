@@ -89,7 +89,7 @@ explicit = true
 edgefirst-model-sdk = { index = "codeartifact" }
 ```
 
-`explicit = true` keeps uv from looking for any other package there, and the source pins the private package to it, so a same-named package on PyPI is never used. The dependency licence check builds its environment from `uv.lock` the same way.
+`explicit = true` keeps uv from looking for any other package there, and the source pins the private package to it, so a same-named package on PyPI is never used. When the token is set, the dependency licence check syncs its environment from `uv.lock`, which keeps each package's index; without it, the check runs as before.
 
 **Release SBOM (`release-rust`, `sbom.yml`).** The same four inputs on `release-rust.yml` pass through to its SBOM job, which exports a 30-minute token for the `codeartifact` index before building the dependency environment from `uv.lock`, and installs uv for it. The calling `verify` job grants `id-token: write`. A Python application that lists its dependencies in requirements files instead of a `pyproject.toml` is not covered.
 

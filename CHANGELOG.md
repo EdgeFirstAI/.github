@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **The dependency licence check installs packages from the index `uv.lock` names.** It exported the lock to a requirements file, which drops each package's index, so a package pinned to a private index through `[tool.uv.sources]` was looked up on PyPI. It now syncs the fresh environment from the lock. The inventory of a project on PyPI alone is unchanged.
+- **With CodeArtifact configured, the dependency licence check installs packages from the index `uv.lock` names.** It exports the lock to a requirements file, which drops each package's index, so a package pinned to the `codeartifact` index through `[tool.uv.sources]` was looked up on PyPI. When the CodeArtifact credentials are set for the run (`codeartifact-login` exported `UV_INDEX_CODEARTIFACT_PASSWORD`), `generate_sbom.sh` syncs the fresh environment from the lock instead. Without them it runs the same export and install as before.
 
 ## [4.0.0] - 2026-11-03
 
