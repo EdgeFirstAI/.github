@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-11-03
+
 ### Added
 
 - **The SBOM covers Python applications that pin their dependencies in requirements files.** `sbom-tools` and `sbom.yml` take `python-requirements`, and `release-rust.yml` takes `sbom-python-requirements`. The files are installed into a fresh environment and every package is inventoried with the license its metadata declares, as a `pyproject.toml` project already is. Before, a repository with neither `Cargo.toml` nor `pyproject.toml` produced an empty dependency inventory, and the license check passed it.
@@ -536,6 +538,7 @@ Everything here is exercised by a real release: `EdgeFirstAI/ara2-rs` v0.18.0 wa
   precedence over `ci:hardware`. PyPI publish requires the reusable release
   job to succeed.
 
+[3.1.0]: https://github.com/EdgeFirstAI/.github/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/EdgeFirstAI/.github/compare/v2.3.1...v3.0.0
 [2.3.1]: https://github.com/EdgeFirstAI/.github/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/EdgeFirstAI/.github/compare/v2.2.0...v2.3.0
