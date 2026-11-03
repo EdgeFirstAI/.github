@@ -33,6 +33,10 @@ on:
         description: Space-separated Cargo.toml paths outside the workspace
         type: string
         default: ''
+      python-requirements:
+        description: Space-separated requirements files for a Python application without a pyproject.toml
+        type: string
+        default: ''
       upload-name:
         type: string
         default: sbom
@@ -72,5 +76,6 @@ jobs:
           source-dirs: ${{ inputs.source-dirs }}
           targets: ${{ inputs.targets }}
           extra-manifests: ${{ inputs.extra-manifests }}
+          python-requirements: ${{ inputs.python-requirements }}
           upload-name: ${{ inputs.upload-name }}
           retention-days: ${{ inputs.retention-days }}

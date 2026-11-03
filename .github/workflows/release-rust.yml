@@ -44,6 +44,19 @@ on:
       sbom-extra-manifests:
         type: string
         default: ""
+      sbom-source-dirs:
+        description: >-
+          Directories the release SBOM's source scan covers. Empty scans src,
+          tests and crates; a repository whose code lives elsewhere, such as a
+          Python application under app/, names its directories here.
+        type: string
+        default: ""
+      sbom-python-requirements:
+        description: >-
+          Requirements files for a Python application without a pyproject.toml,
+          so its dependencies and their licenses are in the release SBOM.
+        type: string
+        default: ""
       package-runner:
         description: >-
           Runner for the packaging job. Defaults to the `larger` class because
@@ -324,6 +337,8 @@ jobs:
       timeout-minutes: ${{ inputs.timeout-minutes }}
       targets: ${{ inputs.sbom-targets }}
       extra-manifests: ${{ inputs.sbom-extra-manifests }}
+      source-dirs: ${{ inputs.sbom-source-dirs || 'src tests crates' }}
+      python-requirements: ${{ inputs.sbom-python-requirements }}
       upload-name: sbom
       # publish.yml requires this SBOM after the release PR merges, which is
       # human-paced. The 7-day CI default would expire a release held a week.

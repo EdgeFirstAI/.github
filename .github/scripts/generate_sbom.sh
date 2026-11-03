@@ -10,6 +10,8 @@
 #   PROJECT_TYPE          library | application | framework (default: library)
 #   VERSION_FILE          file to read version from (default: Cargo.toml)
 #   SOURCE_DIRS           directories for scancode (default: src tests)
+#   PYTHON_REQUIREMENTS   space-separated requirements files, for a Python
+#                         application without a pyproject.toml
 #   MANIFEST_FILES        unused except documentation
 #   SBOM_MODE             dependency | full (default: dependency)
 #   OUTPUT_DIR            default: sbom
@@ -200,6 +202,37 @@ PY
         -o "$DEP_SBOM" --pyproject pyproject.toml "$py_env/bin/python"
     else
       echo "error: cyclonedx-py or uv is required when pyproject.toml exists" >&2
+      exit 1
+    fi
+    rm -rf "$(dirname "$py_env")"
+  elif [[ -n "${PYTHON_REQUIREMENTS:-}" ]]; then
+    # An application that pins its dependencies in requirements files (what
+    # its image runs `pip install -r` on) rather than a pyproject.toml. As
+    # above, they go into a fresh environment, so the inventory is exactly
+    # what the application installs and every component's license is read
+    # from its installed metadata.
+    local req_args=() req
+    # shellcheck disable=SC2086
+    for req in $PYTHON_REQUIREMENTS; do
+      if [[ ! -f "$req" ]]; then
+        echo "error: PYTHON_REQUIREMENTS names $req, which does not exist" >&2
+        exit 1
+      fi
+      req_args+=(-r "$req")
+    done
+    py_env="$(mktemp -d)/env"
+    if command -v uv >/dev/null 2>&1; then
+      uv venv --quiet "$py_env"
+      uv pip install --quiet --python "$py_env/bin/python" "${req_args[@]}"
+      uvx --from 'cyclonedx-bom==7.3.0' cyclonedx-py environment \
+        --spec-version 1.5 --output-format JSON -o "$DEP_SBOM" "$py_env/bin/python"
+    elif command -v cyclonedx-py >/dev/null 2>&1; then
+      python3 -m venv "$py_env"
+      "$py_env/bin/pip" install --quiet "${req_args[@]}"
+      cyclonedx-py environment --spec-version 1.5 --output-format JSON \
+        -o "$DEP_SBOM" "$py_env/bin/python"
+    else
+      echo "error: cyclonedx-py or uv is required for PYTHON_REQUIREMENTS" >&2
       exit 1
     fi
     rm -rf "$(dirname "$py_env")"

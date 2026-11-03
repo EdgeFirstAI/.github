@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The SBOM covers Python applications that pin their dependencies in requirements files.** `sbom-tools` and `sbom.yml` take `python-requirements`, and `release-rust.yml` takes `sbom-python-requirements`. The files are installed into a fresh environment and every package is inventoried with the license its metadata declares, as a `pyproject.toml` project already is. Before, a repository with neither `Cargo.toml` nor `pyproject.toml` produced an empty dependency inventory, and the license check passed it.
+- **`release-rust.yml` input `sbom-source-dirs`** sets the directories the release SBOM's source scan covers. It was fixed at `src tests crates`, so code elsewhere, such as a Python application under `app/`, was never scanned.
+
 ## [3.0.0] - 2026-11-02
 
 ### Changed
