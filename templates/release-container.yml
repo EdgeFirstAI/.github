@@ -66,12 +66,24 @@ jobs:
   # publish.yml will need, and the full SBOM. Fails the release PR, not the tag.
   verify:
     uses: EdgeFirstAI/.github/.github/workflows/release-rust.yml@0000000000000000000000000000000000000000
+    # The shared jobs take at most what is granted here.
+    permissions:
+      contents: read
+      # id-token: write     # with codeartifact-role
     with:
       sbom: true
       # A repository that publishes no crate -- which is every container
       # repository -- skips packaging entirely. publish.yml sets
       # publish-crates: false to match.
       package-crates: false
+      # A Python project whose uv.lock pins private packages to the
+      # `codeartifact` index: the release SBOM reads them through this role,
+      # whose trust policy must name this repository and allow release
+      # branches.
+      # codeartifact-role: ${{ vars.CODEARTIFACT_READ_ROLE_ARN }}
+      # codeartifact-domain: edgefirst
+      # codeartifact-repository: dve
+      # aws-region: us-west-2
     secrets: inherit
 
   images:

@@ -1,3 +1,11 @@
+# Dependency or full SBOM with the license policy, for any repository.
+#
+# A Python project whose uv.lock pins private packages to the index named
+# `codeartifact` sets `codeartifact-role`: the job assumes it through GitHub
+# OIDC and exports a token for that index before the dependency environment
+# is built, as python-quick.yml does. The call site then grants
+# `contents: read` and `id-token: write`. Empty `codeartifact-role` changes
+# nothing.
 name: sbom
 
 on:
@@ -48,14 +56,37 @@ on:
         description: Artifact retention; empty keeps the per-mode default (full 7, dependency 1)
         type: string
         default: ''
+      codeartifact-role:
+        description: >-
+          IAM role ARN that can read the CodeArtifact repository, assumed
+          through OIDC, so the Python dependency environment can install
+          packages that uv.lock pins to the index named `codeartifact`. Its
+          trust policy must name this repository. Empty skips CodeArtifact.
+        type: string
+        default: ""
+      codeartifact-domain:
+        description: CodeArtifact domain, e.g. `edgefirst`. Required with codeartifact-role.
+        type: string
+        default: ""
+      codeartifact-repository:
+        description: CodeArtifact repository, e.g. `dve`. Required with codeartifact-role.
+        type: string
+        default: ""
+      aws-region:
+        description: >-
+          Region of the CodeArtifact domain. Empty uses the organisation
+          variable AWS_REGION.
+        type: string
+        default: ""
 
 jobs:
   sbom:
     name: SBOM (${{ inputs.mode }})
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
-    permissions:
-      contents: read
+    # No `permissions:` block, for the reason given in python-quick.yml: the
+    # job takes what the call site grants, `id-token: write` included when
+    # codeartifact-role is set.
     steps:
       - name: Checkout caller
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -70,12 +101,27 @@ jobs:
           tools: cargo-cyclonedx
           cache-key: sbom-${{ inputs.mode }}
 
+      # uv is what reads the CodeArtifact credentials, so a CodeArtifact
+      # project gets it even without python-version.
       - name: Setup Python
-        if: inputs.python-version != ''
+        if: inputs.python-version != '' || inputs.codeartifact-role != ''
         uses: $/.github/actions/setup-python-uv
         with:
           python-version: ${{ inputs.python-version }}
           sync: "false"
+
+      # 30 minutes: the tool installs and the scancode cache restore in
+      # sbom-tools come before the dependency environment is built.
+      - name: CodeArtifact login
+        if: ${{ inputs.codeartifact-role != '' || inputs.codeartifact-domain != '' || inputs.codeartifact-repository != '' }}
+        uses: $/.github/actions/codeartifact-login
+        with:
+          role-arn: ${{ inputs.codeartifact-role }}
+          domain: ${{ inputs.codeartifact-domain }}
+          repository: ${{ inputs.codeartifact-repository }}
+          aws-region: ${{ inputs.aws-region || vars.AWS_REGION }}
+          format: uv
+          duration-seconds: "1800"
 
       - name: SBOM + license policy
         uses: $/.github/actions/sbom-tools

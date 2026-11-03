@@ -62,7 +62,7 @@ The billed larger runners currently sit in the `Default` group, so they are **no
 
 ## Private Python packages (CodeArtifact)
 
-`python-quick.yml`, `python-full.yml` and `release-image.yml` can read private Python packages, such as `edgefirst-model-sdk`, from AWS CodeArtifact. Four optional inputs turn it on; with `codeartifact-role` empty nothing changes.
+`python-quick.yml`, `python-full.yml`, `release-image.yml`, `release-rust.yml` (for its release SBOM) and `sbom.yml` can read private Python packages, such as `edgefirst-model-sdk`, from AWS CodeArtifact. Four optional inputs turn it on; with `codeartifact-role` empty nothing changes.
 
 | Input | Meaning |
 | --- | --- |
@@ -71,9 +71,9 @@ The billed larger runners currently sit in the `Default` group, so they are **no
 | `codeartifact-repository` | CodeArtifact repository, e.g. `dve` |
 | `aws-region` | Region of the domain, e.g. `us-west-2`; empty uses the organisation variable `AWS_REGION` |
 
-The call site grants `contents: read` and `id-token: write` (plus `pull-requests: read` for `python-full`'s SonarCloud job). The Python test jobs declare no permissions of their own, because a nested job may not ask for more than its caller holds: declaring `id-token: write` there would fail every caller that does not use CodeArtifact. They take exactly what the call site grants, so grant no more than that.
+The call site grants `contents: read` and `id-token: write` (plus `pull-requests: read` for `python-full`'s SonarCloud job). The Python test jobs and the `sbom.yml` job declare no permissions of their own, because a nested job may not ask for more than its caller holds: declaring `id-token: write` there would fail every caller that does not use CodeArtifact. They take exactly what the call site grants, so grant no more than that.
 
-The role lives in terraform (DE-3119). Its trust policy names each repository that may assume it, explicitly and never by wildcard: most EdgeFirstAI repositories are public, and a wildcard would let any of them read the private packages. It needs `codeartifact:GetAuthorizationToken`, `sts:GetServiceBearerToken`, `codeartifact:GetRepositoryEndpoint` and `codeartifact:ReadFromRepository`. A pull request from a fork gets no OIDC token, so it cannot read CodeArtifact and fails at the login step with that reason.
+The role lives in terraform (DE-3119). Its trust policy names each repository that may assume it, explicitly and never by wildcard: most EdgeFirstAI repositories are public, and a wildcard would let any of them read the private packages. Its subject conditions cover the events the workflows run on: pull requests, `main`, and `release/*` branches for the release SBOM and the image build. It needs `codeartifact:GetAuthorizationToken`, `sts:GetServiceBearerToken`, `codeartifact:GetRepositoryEndpoint` and `codeartifact:ReadFromRepository`. A pull request from a fork gets no OIDC token, so it cannot read CodeArtifact and fails at the login step with that reason.
 
 The `codeartifact-login` action assumes the role, requests a token, masks it and clears the role's AWS credentials from the environment. Later steps hold only the token.
 
@@ -90,6 +90,8 @@ edgefirst-model-sdk = { index = "codeartifact" }
 ```
 
 `explicit = true` keeps uv from looking for any other package there, and the source pins the private package to it, so a same-named package on PyPI is never used. The dependency licence check builds its environment from `uv.lock` the same way.
+
+**Release SBOM (`release-rust`, `sbom.yml`).** The same four inputs on `release-rust.yml` pass through to its SBOM job, which exports a 30-minute token for the `codeartifact` index before building the dependency environment from `uv.lock`, and installs uv for it. The calling `verify` job grants `id-token: write`. A Python application that lists its dependencies in requirements files instead of a `pyproject.toml` is not covered.
 
 **Images (`release-image`).** A one-hour token goes into a `pip.conf` (mode 0600, under `RUNNER_TEMP`, outside the build context) whose `index-url` points at the repository. The repository upstreams PyPI, so that one index serves every package. The build receives the file as the BuildKit secret `codeartifact`, and the file is deleted afterwards:
 

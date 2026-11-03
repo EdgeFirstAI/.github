@@ -10,10 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Private Python packages from AWS CodeArtifact.** `python-quick.yml`, `python-full.yml` and `release-image.yml` take `codeartifact-role`, `codeartifact-domain`, `codeartifact-repository` and `aws-region`. With a role set, the new `codeartifact-login` action assumes it through GitHub OIDC and requests a token. The test workflows export it for the uv index named `codeartifact` before `uv sync`; `release-image.yml` passes it to the build as a `pip.conf` in the BuildKit secret `codeartifact`. The call site grants `id-token: write`, and the role's trust policy names each repository that may assume it. With `codeartifact-role` empty nothing changes. See the README's "Private Python packages".
+- **The release SBOM reads private Python packages from CodeArtifact.** `release-rust.yml` and `sbom.yml` take the same four inputs, so a project whose `uv.lock` pins packages to the `codeartifact` index, such as an app depending on `edgefirst-model-sdk`, gets its dependency inventory. `sbom.yml` installs uv when a role is set. The calling `verify` job grants `id-token: write`.
 
 ### Changed
 
 - **The Python test jobs take their permissions from the call site.** `python-quick`'s `quick` job and `python-full`'s `test` jobs no longer declare `permissions: contents: read`, because declaring `id-token: write` beside it would fail every caller that does not grant it. Grant `contents: read` at the call site, as `templates/ci-python.yml` now does, plus `id-token: write` with CodeArtifact.
+- **The `sbom.yml` job takes its permissions from the call site,** for the same reason. `release-rust.yml`'s SBOM job passes on what its caller grants; the release templates now grant `contents: read` on `verify`. `rust-full.yml` grants its scancode SBOM `contents: read`, as before.
 
 ### Fixed
 

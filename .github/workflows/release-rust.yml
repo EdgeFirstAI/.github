@@ -63,6 +63,30 @@ on:
           application runs on, such as its image's. Empty keeps the runner's.
         type: string
         default: ""
+      codeartifact-role:
+        description: >-
+          IAM role ARN that can read the CodeArtifact repository, assumed
+          through OIDC by the release SBOM, so a Python project whose uv.lock
+          pins packages to the index named `codeartifact` gets its dependency
+          inventory. Its trust policy must name this repository and allow
+          release branches. The calling job then grants `id-token: write`.
+          Empty skips CodeArtifact.
+        type: string
+        default: ""
+      codeartifact-domain:
+        description: CodeArtifact domain, e.g. `edgefirst`. Required with codeartifact-role.
+        type: string
+        default: ""
+      codeartifact-repository:
+        description: CodeArtifact repository, e.g. `dve`. Required with codeartifact-role.
+        type: string
+        default: ""
+      aws-region:
+        description: >-
+          Region of the CodeArtifact domain. Empty uses the organisation
+          variable AWS_REGION.
+        type: string
+        default: ""
       package-runner:
         description: >-
           Runner for the packaging job. Defaults to the `larger` class because
@@ -346,6 +370,10 @@ jobs:
       source-dirs: ${{ inputs.sbom-source-dirs || 'src tests crates' }}
       python-requirements: ${{ inputs.sbom-python-requirements }}
       python-version: ${{ inputs.sbom-python-version }}
+      codeartifact-role: ${{ inputs.codeartifact-role }}
+      codeartifact-domain: ${{ inputs.codeartifact-domain }}
+      codeartifact-repository: ${{ inputs.codeartifact-repository }}
+      aws-region: ${{ inputs.aws-region }}
       upload-name: sbom
       # publish.yml requires this SBOM after the release PR merges, which is
       # human-paced. The 7-day CI default would expire a release held a week.
