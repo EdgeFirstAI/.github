@@ -1,3 +1,15 @@
+# FULL tier for a pure-Python repository: pytest with coverage across a
+# Python matrix, then SonarCloud.
+#
+# Private packages from AWS CodeArtifact work as in python-quick.yml: set
+# `codeartifact-role` and each test job assumes it through GitHub OIDC after
+# `pre-command`, requests a 15-minute token and exports it as
+# UV_INDEX_CODEARTIFACT_USERNAME / UV_INDEX_CODEARTIFACT_PASSWORD before
+# `uv sync`, for the index named `codeartifact` in the caller's
+# pyproject.toml. The call site grants `contents: read` and `id-token: write`,
+# plus `pull-requests: read` for the SonarCloud job. A pull request from a fork
+# gets no OIDC token and fails at the login step. Empty `codeartifact-role`
+# changes nothing.
 name: python-full
 
 on:
@@ -49,6 +61,27 @@ on:
       sonar:
         type: boolean
         default: true
+      codeartifact-role:
+        description: >-
+          IAM role ARN that can read the CodeArtifact repository, assumed
+          through OIDC; its trust policy must name this repository. Empty
+          skips CodeArtifact.
+        type: string
+        default: ""
+      codeartifact-domain:
+        description: CodeArtifact domain, e.g. `edgefirst`. Required with codeartifact-role.
+        type: string
+        default: ""
+      codeartifact-repository:
+        description: CodeArtifact repository, e.g. `dve`. Required with codeartifact-role.
+        type: string
+        default: ""
+      aws-region:
+        description: >-
+          Region of the CodeArtifact domain. Empty uses the organisation
+          variable AWS_REGION.
+        type: string
+        default: ""
     secrets:
       SONAR_TOKEN:
         required: false
@@ -109,8 +142,9 @@ jobs:
     needs: setup
     runs-on: ${{ needs.setup.outputs.runner }}
     timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
-    permissions:
-      contents: read
+    # No `permissions:` block, for the reason given in python-quick.yml: the
+    # job takes what the call site grants, `id-token: write` included when
+    # codeartifact-role is set.
     strategy:
       fail-fast: false
       matrix:
@@ -155,6 +189,17 @@ jobs:
         run: |
           set -euo pipefail
           bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
+
+      - name: CodeArtifact login
+        if: ${{ inputs.codeartifact-role != '' || inputs.codeartifact-domain != '' || inputs.codeartifact-repository != '' }}
+        uses: $/.github/actions/codeartifact-login
+        with:
+          role-arn: ${{ inputs.codeartifact-role }}
+          domain: ${{ inputs.codeartifact-domain }}
+          repository: ${{ inputs.codeartifact-repository }}
+          aws-region: ${{ inputs.aws-region || vars.AWS_REGION }}
+          format: uv
+          duration-seconds: "900"
 
       - name: Setup Python / uv
         uses: $/.github/actions/setup-python-uv

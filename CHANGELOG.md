@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Private Python packages from AWS CodeArtifact.** `python-quick.yml`, `python-full.yml` and `release-image.yml` take `codeartifact-role`, `codeartifact-domain`, `codeartifact-repository` and `aws-region`. With a role set, the new `codeartifact-login` action assumes it through GitHub OIDC and requests a token. The test workflows export it for the uv index named `codeartifact` before `uv sync`; `release-image.yml` passes it to the build as a `pip.conf` in the BuildKit secret `codeartifact`. The call site grants `id-token: write`, and the role's trust policy names each repository that may assume it. With `codeartifact-role` empty nothing changes. See the README's "Private Python packages".
+
+### Changed
+
+- **The Python test jobs take their permissions from the call site.** `python-quick`'s `quick` job and `python-full`'s `test` jobs no longer declare `permissions: contents: read`, because declaring `id-token: write` beside it would fail every caller that does not grant it. Grant `contents: read` at the call site, as `templates/ci-python.yml` now does, plus `id-token: write` with CodeArtifact.
+
+### Fixed
+
+- **The dependency licence check installs packages from the index `uv.lock` names.** It exported the lock to a requirements file, which drops each package's index, so a package pinned to a private index through `[tool.uv.sources]` was looked up on PyPI. It now syncs the fresh environment from the lock. The inventory of a project on PyPI alone is unchanged.
+
 ## [4.0.0] - 2026-11-03
 
 ### Added

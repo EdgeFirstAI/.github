@@ -26,7 +26,13 @@
 # never pushed.
 #
 # Needs the repository variable AWS_STUDIO_BUILD_ROLE_ARN (the app's build
-# role) and the organisation variable AWS_REGION.
+# role) and the organisation variable AWS_REGION. An image that installs
+# private packages from CodeArtifact also needs a read role, here in the
+# repository variable CODEARTIFACT_READ_ROLE_ARN, and mounts the token in its
+# Dockerfile:
+#
+#   RUN --mount=type=secret,id=codeartifact,target=/etc/pip.conf \
+#       pip install --no-cache-dir .
 
 name: Release Build
 
@@ -62,6 +68,13 @@ jobs:
       # role's AWS credentials are in the environment.
       # pre-build-command: aws s3 cp s3://<bucket>/ext/<sdk> ext/
       smoke-command: docker run --rm "$IMAGE" --help
+      # Private packages: a pip.conf passed to the build as the BuildKit
+      # secret `codeartifact`. The role's trust policy must name this
+      # repository.
+      # codeartifact-role: ${{ vars.CODEARTIFACT_READ_ROLE_ARN }}
+      # codeartifact-domain: edgefirst
+      # codeartifact-repository: dve
+      # aws-region: us-west-2
     permissions:
       contents: read
       id-token: write

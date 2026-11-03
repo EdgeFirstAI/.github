@@ -14,6 +14,20 @@
 # job's environment for `pre-build-command`, which is how a build stages vendor
 # SDKs: the build role can read exactly the SDKs that app lists and nothing
 # else.
+#
+# Private packages from AWS CodeArtifact. Set `codeartifact-role` and, before
+# the ECR login, the job assumes that role through OIDC, requests a one-hour
+# token and writes a pip.conf (mode 0600, under RUNNER_TEMP, outside the build
+# context) whose index-url carries it. The build receives the file as the
+# BuildKit secret `codeartifact`, and the file is deleted afterwards. The
+# repository upstreams PyPI, so the one index serves every package. In the
+# Dockerfile:
+#
+#   RUN --mount=type=secret,id=codeartifact,target=/etc/pip.conf \
+#       pip install --no-cache-dir .
+#
+# A secret mount is never written to a layer. Never pass the token as a build
+# argument or set it with ENV.
 name: release-image
 
 on:
@@ -52,6 +66,30 @@ on:
           Shell run after the push with IMAGE set to the candidate reference.
           An image that does not start is not a release artifact, and the
           release PR is the last cheap place to find out. Empty skips it.
+        type: string
+        default: ""
+      codeartifact-role:
+        description: >-
+          IAM role ARN that can read the CodeArtifact repository, assumed
+          through OIDC; its trust policy must name this repository. Empty
+          builds without the `codeartifact` secret.
+        type: string
+        default: ""
+      codeartifact-domain:
+        description: CodeArtifact domain, e.g. `edgefirst`. Required with codeartifact-role.
+        type: string
+        default: ""
+      codeartifact-repository:
+        description: >-
+          CodeArtifact repository, e.g. `dve`. Its PyPI upstream lets the one
+          index serve every package. Required with codeartifact-role.
+        type: string
+        default: ""
+      aws-region:
+        description: >-
+          Region of the CodeArtifact domain. Empty uses the organisation
+          variable AWS_REGION. The ECR login takes its region from the
+          registry host, not from this.
         type: string
         default: ""
       runner:
@@ -98,6 +136,20 @@ jobs:
 
       - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4.1.0
 
+      # Before the ECR login, so the build role's credentials are the last ones
+      # exported and pre-build-command and smoke-command run with them as before.
+      - name: CodeArtifact login
+        id: codeartifact
+        if: ${{ inputs.codeartifact-role != '' || inputs.codeartifact-domain != '' || inputs.codeartifact-repository != '' }}
+        uses: $/.github/actions/codeartifact-login
+        with:
+          role-arn: ${{ inputs.codeartifact-role }}
+          domain: ${{ inputs.codeartifact-domain }}
+          repository: ${{ inputs.codeartifact-repository }}
+          aws-region: ${{ inputs.aws-region || vars.AWS_REGION }}
+          format: pip-conf
+          duration-seconds: "3600"
+
       - name: Log in to the app's ECR repository
         uses: $/.github/actions/registry-login
         with:
@@ -121,16 +173,28 @@ jobs:
           VERSION: ${{ inputs.version }}
           CONTEXT: ${{ inputs.context }}
           FILE: ${{ inputs.file }}
+          PIP_CONF: ${{ steps.codeartifact.outputs.pip-conf }}
         run: |
           set -euo pipefail
+          secrets=()
+          if [[ -n "$PIP_CONF" ]]; then
+            secrets=(--secret "id=codeartifact,src=${PIP_CONF}")
+          fi
           # --provenance=false keeps the push a plain image manifest, so the
           # digest recorded below is the one AWS Batch pulls. See
           # templates/release-container.yml.
           docker buildx build --push \
             --provenance=false \
+            "${secrets[@]}" \
             --file "$FILE" \
             --tag "${REGISTRY}:candidate-${VERSION}" \
             "$CONTEXT"
+
+      - name: Delete the CodeArtifact pip.conf
+        if: ${{ always() && steps.codeartifact.outputs.pip-conf != '' }}
+        env:
+          PIP_CONF: ${{ steps.codeartifact.outputs.pip-conf }}
+        run: rm -f "$PIP_CONF"
 
       - name: Smoke test
         if: ${{ inputs.smoke-command != '' }}
