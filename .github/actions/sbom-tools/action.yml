@@ -91,11 +91,18 @@ runs:
     # mode scans sources, and any mode scans the licence texts of components
     # whose metadata declares no readable licence. Restoring is cheap; the
     # cache is saved only when the run created venv/.
+    # The venv holds compiled wheels and links to the interpreter that built
+    # it, so it is only reusable on the same architecture and Python.
+    - name: Python for the scancode venv
+      id: scancode-python
+      shell: bash
+      run: echo "version=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')" >> "$GITHUB_OUTPUT"
+
     - name: Cache scancode venv
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
       with:
         path: venv
-        key: scancode-${{ runner.os }}-32.4.1-click8.2
+        key: scancode-${{ runner.os }}-${{ runner.arch }}-py${{ steps.scancode-python.outputs.version }}-32.4.1-click8.2
 
     - name: Generate SBOM and check policy
       shell: bash

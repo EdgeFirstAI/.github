@@ -131,6 +131,11 @@ new_python_env() {
 
 # scancode in venv/, installed on first use at the version sbom-tools caches.
 ensure_scancode() {
+  # A venv restored from another machine or Python cannot start; rebuild it.
+  if [[ -x venv/bin/scancode ]] && ! venv/bin/scancode --version >/dev/null 2>&1; then
+    echo "venv/bin/scancode does not run here; reinstalling" >&2
+    rm -rf venv
+  fi
   if [[ ! -x venv/bin/scancode ]]; then
     echo "installing scancode-toolkit 32.4.1 into venv/" >&2
     python3 -m venv venv >&2
