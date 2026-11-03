@@ -68,18 +68,38 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     uses: EdgeFirstAI/.github/.github/workflows/python-quick.yml@0000000000000000000000000000000000000000
+    # The shared job takes exactly what is granted here.
+    permissions:
+      contents: read
+      # id-token: write     # with codeartifact-role
     with:
       python-version: "3.12"
       # extra-sync-args: --all-extras
+      # Private packages from CodeArtifact, through the role's OIDC trust
+      # policy, which must name this repository. pyproject.toml declares the
+      # index as `codeartifact`; see the header of python-quick.yml.
+      # codeartifact-role: ${{ vars.CODEARTIFACT_READ_ROLE_ARN }}
+      # codeartifact-domain: edgefirst
+      # codeartifact-repository: dve
+      # aws-region: us-west-2
 
   full:
     needs: changes
     if: needs.changes.outputs.full == 'true'
     uses: EdgeFirstAI/.github/.github/workflows/python-full.yml@0000000000000000000000000000000000000000
+    # The shared jobs take at most what is granted here.
+    permissions:
+      contents: read
+      pull-requests: read   # SonarCloud reads the pull request
+      # id-token: write     # with codeartifact-role
     with:
       python-versions: '["3.10", "3.11", "3.12", "3.13"]'
       # extra-sync-args: --all-extras
       # coverage-fail-under: "70"
+      # codeartifact-role: ${{ vars.CODEARTIFACT_READ_ROLE_ARN }}
+      # codeartifact-domain: edgefirst
+      # codeartifact-repository: dve
+      # aws-region: us-west-2
     secrets: inherit
 
   ci-gate:

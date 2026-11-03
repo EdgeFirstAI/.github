@@ -22,6 +22,9 @@
 #   SCRIPT_DIR            directory containing the sibling Python policy scripts
 #   LICENSE_APPROVALS_FILE  proprietary component approvals (default:
 #                         .github/license-approvals.json when present)
+#   UV_INDEX_CODEARTIFACT_PASSWORD  set by the codeartifact-login action; with
+#                         uv.lock, the dependency environment is synced from
+#                         the lock so packages pinned to that index resolve
 #
 # Policy version: 2.2 (2026-11-03)
 
@@ -248,7 +251,15 @@ PY
     py_env="$(mktemp -d)/env"
     if command -v uv >/dev/null 2>&1; then
       new_python_env "$py_env"
-      if [[ -f uv.lock ]]; then
+      if [[ -f uv.lock && -n "${UV_INDEX_CODEARTIFACT_PASSWORD:-}" ]]; then
+        # CodeArtifact is configured for this run. Synced from the lock rather
+        # than exported to a requirements file: an export drops each package's
+        # index, so a package pinned to the codeartifact index through
+        # [tool.uv.sources] would be looked up on PyPI instead.
+        UV_PROJECT_ENVIRONMENT="$py_env" uv sync --quiet --frozen \
+          --no-default-groups --no-install-project --python "$py_env/bin/python"
+        uv pip install --quiet --python "$py_env/bin/python" --no-deps .
+      elif [[ -f uv.lock ]]; then
         uv export --frozen --no-default-groups --no-emit-project --no-hashes \
           --format requirements-txt -o "${py_env}.requirements.txt"
         uv pip install --quiet --python "$py_env/bin/python" -r "${py_env}.requirements.txt"

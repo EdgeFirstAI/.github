@@ -919,6 +919,9 @@ jobs:
     name: Full SBOM
     needs: setup
     if: ${{ inputs.scancode && (needs.setup.outputs.do_host == 'true' || needs.setup.outputs.do_gpu == 'true') }}
+    # sbom.yml takes its permissions from here.
+    permissions:
+      contents: read
     uses: ./.github/workflows/sbom.yml
     with:
       mode: full

@@ -1,0 +1,198 @@
+name: CodeArtifact login
+description: >
+  Read private Python packages from AWS CodeArtifact through GitHub OIDC.
+
+  Assumes the caller's CodeArtifact role, requests a short-lived authorization
+  token and hands it to the installer in one of two forms:
+
+    uv          exports UV_INDEX_CODEARTIFACT_USERNAME and
+                UV_INDEX_CODEARTIFACT_PASSWORD for every later step. uv applies
+                them to the index named `codeartifact` in the project's
+                pyproject.toml, and only to it.
+    pip-conf    writes a pip.conf whose index-url carries the token, mode 0600
+                under RUNNER_TEMP, for a BuildKit secret mount. The caller
+                deletes it after the build.
+
+  The role ARN arrives as an input because neither `vars` nor `secrets` is
+  readable from inside a composite action. Its trust policy, which names the
+  repositories allowed to assume it, lives in terraform. The job must grant
+  `id-token: write`; a pull request from a fork never gets an OIDC token, so
+  it fails here with that reason rather than later with a 401.
+
+  The role needs codeartifact:GetAuthorizationToken, sts:GetServiceBearerToken,
+  codeartifact:GetRepositoryEndpoint and codeartifact:ReadFromRepository, and
+  nothing else. Its credentials are cleared from the environment once the
+  token exists. Later steps, which run the project's tests or build, hold only
+  the token: read access to the domain's repositories until it expires.
+
+inputs:
+  role-arn:
+    description: >-
+      The CodeArtifact read role to assume, `arn:aws:iam::<account>:role/<name>`.
+      Empty, with domain and repository empty too, does nothing; empty with
+      either of them set fails, since that is a role variable nobody set.
+    required: false
+    default: ""
+  domain:
+    description: CodeArtifact domain, e.g. `edgefirst`. Required with role-arn.
+    required: false
+    default: ""
+  repository:
+    description: CodeArtifact repository in that domain, e.g. `dve`. Required with role-arn.
+    required: false
+    default: ""
+  aws-region:
+    description: Region of the CodeArtifact domain, e.g. `us-west-2`. Required with role-arn.
+    required: false
+    default: ""
+  format:
+    description: "`uv` (environment variables for later steps) or `pip-conf` (a pip.conf file)."
+    required: false
+    default: uv
+  duration-seconds:
+    description: >-
+      Token lifetime, 900 to 43200. Long enough for the step that installs,
+      no longer: 900 for a test job, the build's length for an image.
+    required: false
+    default: "900"
+
+outputs:
+  pip-conf:
+    description: Path of the pip.conf written by the `pip-conf` format; empty for `uv`.
+    value: ${{ steps.token.outputs.pip-conf }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check the CodeArtifact inputs
+      id: check
+      shell: bash
+      env:
+        ROLE_ARN: ${{ inputs.role-arn }}
+        DOMAIN: ${{ inputs.domain }}
+        REPOSITORY: ${{ inputs.repository }}
+        REGION: ${{ inputs.aws-region }}
+        FORMAT: ${{ inputs.format }}
+        DURATION: ${{ inputs.duration-seconds }}
+      run: |
+        set -euo pipefail
+        if [[ -z "$ROLE_ARN$DOMAIN$REPOSITORY" ]]; then
+          echo "enabled=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        fail=0
+        if [[ -z "$ROLE_ARN" ]]; then
+          echo "::error::codeartifact-domain or codeartifact-repository is set but codeartifact-role is empty. Is the variable that holds the role ARN set for this repository?"
+          exit 1
+        fi
+        if [[ ! "$ROLE_ARN" =~ ^arn:aws[a-z-]*:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$ ]]; then
+          echo "::error::codeartifact-role must be an IAM role ARN, arn:aws:iam::<account>:role/<name>; got '$ROLE_ARN'"
+          fail=1
+        fi
+        if [[ ! "$DOMAIN" =~ ^[a-z][a-z0-9-]{1,49}$ ]]; then
+          echo "::error::codeartifact-domain must be a CodeArtifact domain name; got '$DOMAIN'"
+          fail=1
+        fi
+        if [[ ! "$REPOSITORY" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{1,99}$ ]]; then
+          echo "::error::codeartifact-repository must be a CodeArtifact repository name; got '$REPOSITORY'"
+          fail=1
+        fi
+        if [[ ! "$REGION" =~ ^[a-z]{2}(-[a-z]+)+-[0-9]+$ ]]; then
+          echo "::error::aws-region must be an AWS region such as us-west-2; got '$REGION'"
+          fail=1
+        fi
+        case "$FORMAT" in
+          uv|pip-conf) ;;
+          *) echo "::error::format must be uv or pip-conf; got '$FORMAT'"; fail=1 ;;
+        esac
+        if [[ ! "$DURATION" =~ ^[0-9]+$ ]] || (( DURATION < 900 || DURATION > 43200 )); then
+          echo "::error::duration-seconds must be 900 to 43200; got '$DURATION'"
+          fail=1
+        fi
+        # The runner sets these only when the job may request an OIDC token.
+        if [[ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" || -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]]; then
+          echo "::error::no OIDC token is available to this job. Grant 'id-token: write' at the call site. A pull request from a fork never gets one, so it cannot read CodeArtifact."
+          fail=1
+        fi
+        if ! command -v aws >/dev/null 2>&1; then
+          echo "::error::the AWS CLI is not on this runner's PATH"
+          fail=1
+        fi
+        [[ "$fail" == 0 ]] || exit 1
+        echo "enabled=true" >> "$GITHUB_OUTPUT"
+
+    - name: Assume the CodeArtifact role
+      if: steps.check.outputs.enabled == 'true'
+      uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd  # v6.3.0
+      with:
+        role-to-assume: ${{ inputs.role-arn }}
+        aws-region: ${{ inputs.aws-region }}
+        # The shortest session STS grants; it is used for two API calls.
+        role-duration-seconds: 900
+
+    - name: Request the CodeArtifact token
+      if: steps.check.outputs.enabled == 'true'
+      id: token
+      shell: bash
+      env:
+        DOMAIN: ${{ inputs.domain }}
+        REPOSITORY: ${{ inputs.repository }}
+        REGION: ${{ inputs.aws-region }}
+        FORMAT: ${{ inputs.format }}
+        DURATION: ${{ inputs.duration-seconds }}
+      run: |
+        set -euo pipefail
+        token="$(aws codeartifact get-authorization-token \
+          --domain "$DOMAIN" --region "$REGION" \
+          --duration-seconds "$DURATION" \
+          --query authorizationToken --output text)"
+        if [[ -z "$token" || "$token" == None ]]; then
+          echo "::error::CodeArtifact returned no authorization token for domain '$DOMAIN'"
+          exit 1
+        fi
+        echo "::add-mask::${token}"
+
+        endpoint="$(aws codeartifact get-repository-endpoint \
+          --domain "$DOMAIN" --repository "$REPOSITORY" --region "$REGION" \
+          --format pypi --query repositoryEndpoint --output text)"
+        if [[ ! "$endpoint" =~ ^https://[^/@]+/.*/$ ]]; then
+          echo "::error::unexpected CodeArtifact endpoint for ${DOMAIN}/${REPOSITORY}: '$endpoint'"
+          exit 1
+        fi
+
+        if [[ "$FORMAT" == uv ]]; then
+          {
+            echo "UV_INDEX_CODEARTIFACT_USERNAME=aws"
+            echo "UV_INDEX_CODEARTIFACT_PASSWORD=${token}"
+          } >> "$GITHUB_ENV"
+          echo "pip-conf=" >> "$GITHUB_OUTPUT"
+          echo "uv index 'codeartifact' authenticated for ${DURATION}s; its url is ${endpoint}simple/"
+          # uv applies the credentials by index name, so a differently named
+          # index gets none and fails later with a 401.
+          if [[ -f pyproject.toml ]] && ! grep -Eq '^[[:space:]]*name[[:space:]]*=[[:space:]]*"codeartifact"' pyproject.toml; then
+            echo "::warning file=pyproject.toml::no [[tool.uv.index]] named \"codeartifact\"; uv will not use the CodeArtifact token"
+          fi
+          exit 0
+        fi
+
+        conf="${RUNNER_TEMP}/codeartifact-pip.conf"
+        # Created private: the file holds the token, and only the build reads it.
+        (
+          umask 077
+          printf '[global]\nindex-url = https://aws:%s@%ssimple/\n' "$token" "${endpoint#https://}" > "$conf"
+        )
+        echo "pip-conf=$conf" >> "$GITHUB_OUTPUT"
+        echo "pip.conf for ${DOMAIN}/${REPOSITORY} written, valid for ${DURATION}s"
+
+    # Empty values, which the AWS CLI and SDKs treat as unset. The token is all
+    # that later steps need.
+    - name: Drop the role's AWS credentials
+      if: always() && steps.check.outputs.enabled == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        {
+          echo "AWS_ACCESS_KEY_ID="
+          echo "AWS_SECRET_ACCESS_KEY="
+          echo "AWS_SESSION_TOKEN="
+        } >> "$GITHUB_ENV"

@@ -41,6 +41,10 @@ jobs:
   # full SBOM. Fails the release PR rather than the tag.
   verify:
     uses: EdgeFirstAI/.github/.github/workflows/release-rust.yml@0000000000000000000000000000000000000000
+    # The shared jobs take at most what is granted here.
+    permissions:
+      contents: read
+      # id-token: write     # with codeartifact-role
     with:
       sbom: true
       # Package NAMES the release ships, in dependency order. The list is
@@ -50,6 +54,14 @@ jobs:
       # was exercised here. Set `package-crates: false` for a repository that
       # publishes no crate.
       crate-packages: ""
+      # A Python project whose uv.lock pins private packages to the
+      # `codeartifact` index: the release SBOM reads them through this role,
+      # whose trust policy must name this repository and allow release
+      # branches.
+      # codeartifact-role: ${{ vars.CODEARTIFACT_READ_ROLE_ARN }}
+      # codeartifact-domain: edgefirst
+      # codeartifact-repository: dve
+      # aws-region: us-west-2
     secrets: inherit
 
   # Wheels, for a repository shipping a PyO3/maturin binding. Delete this job

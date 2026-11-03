@@ -1,3 +1,23 @@
+# QUICK tier for a pure-Python repository: ruff, pytest and the dependency
+# license policy, on every non-draft pull request push.
+#
+# Private packages from AWS CodeArtifact. Set `codeartifact-role` and the job
+# assumes that role through GitHub OIDC, requests a 15-minute token and exports
+# it as UV_INDEX_CODEARTIFACT_USERNAME / UV_INDEX_CODEARTIFACT_PASSWORD before
+# `uv sync`. The caller's pyproject.toml declares the index and routes only its
+# private packages to it; everything else still comes from PyPI:
+#
+#   [[tool.uv.index]]
+#   name = "codeartifact"
+#   url = "https://<domain>-<account>.d.codeartifact.<region>.amazonaws.com/pypi/<repository>/simple/"
+#   explicit = true
+#
+#   [tool.uv.sources]
+#   edgefirst-model-sdk = { index = "codeartifact" }
+#
+# The call site grants `contents: read` and `id-token: write`. A pull request
+# from a fork gets no OIDC token and fails at the login step. Empty
+# `codeartifact-role` changes nothing.
 name: python-quick
 
 on:
@@ -27,25 +47,62 @@ on:
       project-name:
         type: string
         default: ${{ github.event.repository.name }}
+      codeartifact-role:
+        description: >-
+          IAM role ARN that can read the CodeArtifact repository, assumed
+          through OIDC; its trust policy must name this repository. Empty
+          skips CodeArtifact.
+        type: string
+        default: ""
+      codeartifact-domain:
+        description: CodeArtifact domain, e.g. `edgefirst`. Required with codeartifact-role.
+        type: string
+        default: ""
+      codeartifact-repository:
+        description: CodeArtifact repository, e.g. `dve`. Required with codeartifact-role.
+        type: string
+        default: ""
+      aws-region:
+        description: >-
+          Region of the CodeArtifact domain. Empty uses the organisation
+          variable AWS_REGION.
+        type: string
+        default: ""
 
 jobs:
   quick:
     name: Quick
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ fromJSON(inputs.timeout-minutes) }}
-    permissions:
-      contents: read
+    # No `permissions:` block: the job takes exactly what the call site
+    # grants. A nested job may not ask for more than its caller holds, so
+    # declaring `id-token: write` here would fail every caller that does not
+    # use CodeArtifact. Grant `contents: read` at the call site, and
+    # `id-token: write` with codeartifact-role.
     steps:
       - name: Checkout caller
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 1
 
+      - name: CodeArtifact login
+        if: ${{ inputs.codeartifact-role != '' || inputs.codeartifact-domain != '' || inputs.codeartifact-repository != '' }}
+        uses: $/.github/actions/codeartifact-login
+        with:
+          role-arn: ${{ inputs.codeartifact-role }}
+          domain: ${{ inputs.codeartifact-domain }}
+          repository: ${{ inputs.codeartifact-repository }}
+          aws-region: ${{ inputs.aws-region || vars.AWS_REGION }}
+          format: uv
+          duration-seconds: "900"
+
       - name: Setup Python / uv
         uses: $/.github/actions/setup-python-uv
         with:
           python-version: ${{ inputs.python-version }}
           extra-args: ${{ inputs.extra-sync-args }}
+          # Never cache private packages; see the README's "Private Python packages".
+          enable-cache: ${{ inputs.codeartifact-role == '' && inputs.codeartifact-domain == '' && inputs.codeartifact-repository == '' }}
 
       - name: ruff
         env:

@@ -13,6 +13,14 @@ inputs:
     description: Extra arguments for uv sync
     required: false
     default: ""
+  enable-cache:
+    description: >-
+      Save and restore uv's cache through the GitHub Actions cache. Set false
+      when the run installs private packages: a cache saved on a public
+      repository's base branch can be restored by a fork pull request, which
+      would hand it packages it has no credential to download.
+    required: false
+    default: "true"
 runs:
   using: composite
   steps:
@@ -20,7 +28,7 @@ runs:
       uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e  # v10.3.2
       with:
         python-version: ${{ inputs.python-version }}
-        enable-cache: true
+        enable-cache: ${{ inputs.enable-cache }}
 
     - name: uv sync
       if: inputs.sync == 'true'
