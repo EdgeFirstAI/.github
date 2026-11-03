@@ -129,6 +129,25 @@ new_python_env() {
   "$python" -m venv "$env"
 }
 
+# scancode, when installed: the release SBOM's full mode installs it.
+find_scancode() {
+  if [[ -x venv/bin/scancode ]]; then
+    echo venv/bin/scancode
+  elif command -v scancode >/dev/null 2>&1; then
+    command -v scancode
+  fi
+}
+
+# Packages whose metadata declares no licence the policy can classify get the
+# licence scancode detects in the licence files they install, so the policy
+# decides on the licence itself rather than on a per-package exception.
+detect_python_licenses() {
+  local python="$1" scancode
+  scancode="$(find_scancode)"
+  python3 "$SCRIPT_DIR/detect_python_licenses.py" "$DEP_SBOM" --python "$python" \
+    ${scancode:+--scancode "$scancode"}
+}
+
 generate_dependency_sbom() {
   if [[ -f Cargo.toml ]]; then
     if ! cargo cyclonedx -h >/dev/null 2>&1; then
@@ -234,6 +253,7 @@ PY
       echo "error: cyclonedx-py or uv is required when pyproject.toml exists" >&2
       exit 1
     fi
+    detect_python_licenses "$py_env/bin/python"
     rm -rf "$(dirname "$py_env")"
   elif [[ -n "${PYTHON_REQUIREMENTS:-}" ]]; then
     # An application that pins its dependencies in requirements files (what
@@ -265,6 +285,7 @@ PY
       echo "error: cyclonedx-py or uv is required for PYTHON_REQUIREMENTS" >&2
       exit 1
     fi
+    detect_python_licenses "$py_env/bin/python"
     rm -rf "$(dirname "$py_env")"
   else
     echo '{"bomFormat":"CycloneDX","specVersion":"1.5","components":[]}' > "$DEP_SBOM"

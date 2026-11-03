@@ -14,9 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Breaking: proprietary licences fail the license check unless the repository approves them.** They were accepted organisation-wide with a warning once NOTICE named them, which SPS-01 does not allow: proprietary is Category C, approval required. A repository that genuinely needs one records each exact `name@version` in `.github/license-approvals.json` with `license`, `approved-by`, `date` and `justification`, and NOTICE must still name it. An approval for another version or another licence does not apply.
-- **License policy 2.2: PSF-2.0 is allowed.** It is permissive and OSI-approved, and nearly every Python application depends on `typing_extensions`, which uses it.
+- **License policy 2.2: PSF-2.0 and Python-2.0 are allowed.** Both are permissive and OSI-approved: PSF-2.0 is the Python Software Foundation licence (`typing_extensions`, which nearly every Python application depends on), Python-2.0 the CPython licence that code derived from CPython carries.
 - **The license check reads the license a Python package declares in its `License:` metadata field.** `cyclonedx-py` now runs with `--gather-license-texts`, and the check classifies that field like any identifier, so packages that declare `Apache 2.0` or `3-Clause BSD License` but carry only an ambiguous classifier, or no classifier, pass. A field holding a whole license text is not read as an identifier.
-- **Built-in license overrides for `safetensors` 0.8.0, `namex` 0.1.0 and `astunparse` 1.6.3**, which publish no license the check can read. Each value comes from the package's LICENSE file.
+- **A Python package whose metadata declares no licence the check can classify gets the licence detected in its own licence files.** Some packages carry only an ambiguous classifier (`BSD License`), a bare word (`BSD`), or nothing but a LICENSE file. For those alone, scancode scans the licence files the installed distribution ships, and the detected SPDX expression is judged like any other: the policy approves licences, never named packages or versions. `sbom-tools` installs scancode whenever `python-requirements` is set. Without scancode nothing is filled in and the component fails as before.
 
 ### Fixed
 

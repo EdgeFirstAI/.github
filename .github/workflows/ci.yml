@@ -128,6 +128,9 @@ jobs:
       - name: NOTICE validator
         run: python3 .github/scripts/validate_notice.py --self-test
 
+      - name: Python licence detection
+        run: python3 .github/scripts/detect_python_licenses.py --self-test
+
       - name: lane resolver
         run: python3 .github/scripts/resolve_lanes.py --self-test
 

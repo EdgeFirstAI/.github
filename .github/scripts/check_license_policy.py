@@ -44,6 +44,7 @@ ALLOWED_LICENSES: Set[str] = {
     "IJG-short",
     "WTFPL",
     "PSF-2.0",
+    "Python-2.0",
 }
 
 # Composite expressions ("MIT OR Apache-2.0", "(MIT OR Apache-2.0) AND IJG")
@@ -85,12 +86,6 @@ LICENSE_OVERRIDES: Dict[str, str] = {
     "dma-buf@0.4.0": "MIT",
     "dma-buf@0.5.0": "MIT",
     "dma-heap@0.4.1": "MIT",
-    # Licence only in a classifier or a LICENSE file; read from the file.
-    "safetensors@0.8.0": "Apache-2.0",
-    "namex@0.1.0": "Apache-2.0",
-    # Declares "BSD"; the LICENSE file is BSD-3-Clause plus the PSF licence
-    # of the CPython code it carries.
-    "astunparse@1.6.3": "BSD-3-Clause AND PSF-2.0",
 }
 
 DEFAULT_DYNAMIC: Set[str] = {"gstreamer", "glib", "libglib"}
@@ -496,6 +491,7 @@ SELF_TEST_CASES = [
     # typing_extensions and anything carrying CPython code.
     ("PSF-2.0", False, "ok"),
     ("BSD-3-Clause AND PSF-2.0", False, "ok"),
+    ("Python-2.0", False, "ok"),
 ]
 
 
@@ -521,9 +517,9 @@ COMPONENT_CASES = [
     # A whole licence pasted into the field is not an identifier.
     ("probe", "0.0.0", [_declared("MIT\n\nPermission is hereby granted...")], "fail"),
     ("probe", "0.0.0", [_CLASSIFIER], "fail"),
-    ("safetensors", "0.8.0", [_CLASSIFIER], "ok"),
-    ("namex", "0.1.0", [], "ok"),
-    ("astunparse", "1.6.3", [_declared("BSD")], "ok"),
+    # What detect_python_licenses.py adds from a package's licence files.
+    ("probe", "0.0.0", [_CLASSIFIER, {"expression": "Apache-2.0"}], "ok"),
+    ("probe", "0.0.0", [_declared("BSD"), {"expression": "BSD-3-Clause AND Python-2.0"}], "ok"),
 ]
 
 _APPROVAL = {
