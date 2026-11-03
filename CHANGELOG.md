@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The SBOM's Python environment can be built on a chosen Python.** `sbom-tools` and `sbom.yml` take `python-version`, and `release-rust.yml` takes `sbom-python-version`. Dependency resolution depends on the interpreter, so an inventory built on the runner's Python could list versions, or pre-releases, that the application's image never installs. With it set, `sbom.yml` installs uv, which fetches that Python.
+
+### Changed
+
+- **License policy 2.2: PSF-2.0 is allowed.** It is permissive and OSI-approved, and nearly every Python application depends on `typing_extensions`, which uses it.
+- **The license check reads the license a Python package declares in its `License:` metadata field.** `cyclonedx-py` now runs with `--gather-license-texts`, and the check classifies that field like any identifier, so packages that declare `Apache 2.0` or `3-Clause BSD License` but carry only an ambiguous classifier, or no classifier, pass. A field holding a whole license text is not read as an identifier.
+- **Built-in license overrides for `safetensors` 0.8.0, `namex` 0.1.0 and `astunparse` 1.6.3**, which publish no license the check can read. Each value comes from the package's LICENSE file.
+
 ## [3.1.0] - 2026-11-03
 
 ### Added

@@ -12,13 +12,16 @@
 #   SOURCE_DIRS           directories for scancode (default: src tests)
 #   PYTHON_REQUIREMENTS   space-separated requirements files, for a Python
 #                         application without a pyproject.toml
+#   PYTHON_VERSION        Python the dependency environment is built on, the
+#                         one the package or application runs on (default:
+#                         uv's choice, or python3)
 #   MANIFEST_FILES        unused except documentation
 #   SBOM_MODE             dependency | full (default: dependency)
 #   OUTPUT_DIR            default: sbom
 #   NOTICE_FILE           default: NOTICE
 #   SCRIPT_DIR            directory containing the sibling Python policy scripts
 #
-# Policy version: 2.1 (2026-09-21)
+# Policy version: 2.2 (2026-11-03)
 
 set -euo pipefail
 
@@ -98,6 +101,31 @@ echo "=================================================="
 DEP_SBOM="${OUTPUT_DIR}/sbom-dependencies.json"
 SRC_SBOM="${OUTPUT_DIR}/sbom-source.json"
 MERGED_SBOM="${OUTPUT_DIR}/sbom.json"
+
+# A fresh environment at $1 for a Python package's dependencies, on
+# PYTHON_VERSION when it is set: environment markers and wheel availability
+# depend on the interpreter, so the inventory matches the one the code runs on
+# only when the versions match. uv fetches a missing interpreter.
+new_python_env() {
+  local env="$1"
+  if command -v uv >/dev/null 2>&1; then
+    if [[ -n "${PYTHON_VERSION:-}" ]]; then
+      uv venv --quiet --python "$PYTHON_VERSION" "$env"
+    else
+      uv venv --quiet "$env"
+    fi
+    return
+  fi
+  local python=python3
+  if [[ -n "${PYTHON_VERSION:-}" ]]; then
+    python="python${PYTHON_VERSION}"
+  fi
+  if ! command -v "$python" >/dev/null 2>&1; then
+    echo "error: PYTHON_VERSION=${PYTHON_VERSION} needs uv or $python on PATH" >&2
+    exit 1
+  fi
+  "$python" -m venv "$env"
+}
 
 generate_dependency_sbom() {
   if [[ -f Cargo.toml ]]; then
@@ -183,7 +211,7 @@ PY
     # stay out of the license check. With uv.lock, the locked versions.
     py_env="$(mktemp -d)/env"
     if command -v uv >/dev/null 2>&1; then
-      uv venv --quiet "$py_env"
+      new_python_env "$py_env"
       if [[ -f uv.lock ]]; then
         uv export --frozen --no-default-groups --no-emit-project --no-hashes \
           --format requirements-txt -o "${py_env}.requirements.txt"
@@ -192,13 +220,13 @@ PY
       else
         uv pip install --quiet --python "$py_env/bin/python" .
       fi
-      uvx --from 'cyclonedx-bom==7.3.0' cyclonedx-py environment \
+      uvx --from 'cyclonedx-bom==7.3.0' cyclonedx-py environment --gather-license-texts \
         --spec-version 1.5 --output-format JSON -o "$DEP_SBOM" --pyproject pyproject.toml \
         "$py_env/bin/python"
     elif command -v cyclonedx-py >/dev/null 2>&1; then
-      python3 -m venv "$py_env"
+      new_python_env "$py_env"
       "$py_env/bin/pip" install --quiet .
-      cyclonedx-py environment --spec-version 1.5 --output-format JSON \
+      cyclonedx-py environment --gather-license-texts --spec-version 1.5 --output-format JSON \
         -o "$DEP_SBOM" --pyproject pyproject.toml "$py_env/bin/python"
     else
       echo "error: cyclonedx-py or uv is required when pyproject.toml exists" >&2
@@ -222,14 +250,14 @@ PY
     done
     py_env="$(mktemp -d)/env"
     if command -v uv >/dev/null 2>&1; then
-      uv venv --quiet "$py_env"
+      new_python_env "$py_env"
       uv pip install --quiet --python "$py_env/bin/python" "${req_args[@]}"
-      uvx --from 'cyclonedx-bom==7.3.0' cyclonedx-py environment \
+      uvx --from 'cyclonedx-bom==7.3.0' cyclonedx-py environment --gather-license-texts \
         --spec-version 1.5 --output-format JSON -o "$DEP_SBOM" "$py_env/bin/python"
     elif command -v cyclonedx-py >/dev/null 2>&1; then
-      python3 -m venv "$py_env"
+      new_python_env "$py_env"
       "$py_env/bin/pip" install --quiet "${req_args[@]}"
-      cyclonedx-py environment --spec-version 1.5 --output-format JSON \
+      cyclonedx-py environment --gather-license-texts --spec-version 1.5 --output-format JSON \
         -o "$DEP_SBOM" "$py_env/bin/python"
     else
       echo "error: cyclonedx-py or uv is required for PYTHON_REQUIREMENTS" >&2

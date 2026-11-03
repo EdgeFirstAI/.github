@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check CycloneDX SBOM license policy (Au-Zone SPS).
 
-Policy version: 2.1 (2026-09-21). This is the single org-wide copy.
+Policy version: 2.2 (2026-11-03). This is the single org-wide copy.
 
 Exit 0 when every component is allowed or an approved override.
 Exit 1 on blocked licenses, LGPL in Rust, or undocumented proprietary.
@@ -42,6 +42,7 @@ ALLOWED_LICENSES: Set[str] = {
     "IJG",
     "IJG-short",
     "WTFPL",
+    "PSF-2.0",
 }
 
 # Composite expressions ("MIT OR Apache-2.0", "(MIT OR Apache-2.0) AND IJG")
@@ -83,6 +84,12 @@ LICENSE_OVERRIDES: Dict[str, str] = {
     "dma-buf@0.4.0": "MIT",
     "dma-buf@0.5.0": "MIT",
     "dma-heap@0.4.1": "MIT",
+    # Licence only in a classifier or a LICENSE file; read from the file.
+    "safetensors@0.8.0": "Apache-2.0",
+    "namex@0.1.0": "Apache-2.0",
+    # Declares "BSD"; the LICENSE file is BSD-3-Clause plus the PSF licence
+    # of the CPython code it carries.
+    "astunparse@1.6.3": "BSD-3-Clause AND PSF-2.0",
 }
 
 DEFAULT_DYNAMIC: Set[str] = {"gstreamer", "glib", "libglib"}
@@ -114,8 +121,25 @@ def normalize_license(raw: str) -> str:
         "The MIT License": "MIT",
         "MIT License": "MIT",
         "BSD-3-Clause-Clear": "BSD-3-Clause",
+        "3-Clause BSD License": "BSD-3-Clause",
+        "BSD 3-Clause": "BSD-3-Clause",
     }
     return aliases.get(text, text)
+
+
+# cyclonedx-py names a Python package's free-text `License:` metadata field
+# "declared license of '<package>'" and carries the field in its text.
+DECLARED_LICENSE_PREFIX = "declared license of "
+
+
+def declared_license(license_obj: dict) -> Optional[str]:
+    """The identifier in a declared-licence entry's text, or None when the
+    text is a whole licence rather than an identifier."""
+    text = (license_obj.get("text") or {}).get("content") or ""
+    text = text.strip()
+    if not text or "\n" in text or len(text) > 64:
+        return None
+    return text
 
 
 def licenses_from_component(component: dict) -> List[str]:
@@ -124,6 +148,10 @@ def licenses_from_component(component: dict) -> List[str]:
         license_obj = entry.get("license") or {}
         if "id" in license_obj:
             found.append(normalize_license(license_obj["id"]))
+        elif str(license_obj.get("name", "")).startswith(DECLARED_LICENSE_PREFIX):
+            declared = declared_license(license_obj)
+            if declared:
+                found.append(normalize_license(declared))
         elif "name" in license_obj:
             found.append(normalize_license(license_obj["name"]))
         elif "expression" in entry:
@@ -413,11 +441,52 @@ SELF_TEST_CASES = [
     ("", True, "fail"),
     ("MIT AND", True, "fail"),
     ("(MIT OR Apache-2.0", True, "ok"),
+    # typing_extensions and anything carrying CPython code.
+    ("PSF-2.0", False, "ok"),
+    ("BSD-3-Clause AND PSF-2.0", False, "ok"),
+]
+
+
+def _declared(text: str) -> dict:
+    """A licence entry as cyclonedx-py --gather-license-texts writes a
+    package's free-text `License:` metadata field."""
+    return {"license": {"name": "declared license of 'probe'", "text": {"content": text}}}
+
+
+_CLASSIFIER = {"license": {"name": "License :: OSI Approved :: Apache Software License"}}
+
+# Whole components, for what the expression cases cannot reach: which licence
+# entries are read and the built-in overrides.
+COMPONENT_CASES = [
+    # (name, version, licenses, expected status)
+    ("probe", "0.0.0", [_declared("Apache License 2.0")], "ok"),
+    ("probe", "0.0.0", [_declared("3-Clause BSD License")], "ok"),
+    ("probe", "0.0.0", [_declared("BSD 3-Clause")], "ok"),
+    ("probe", "0.0.0", [_CLASSIFIER, _declared("Apache 2.0")], "ok"),
+    # Declared text is classified like any identifier, never trusted.
+    ("probe", "0.0.0", [_declared("GPL-3.0")], "fail"),
+    ("probe", "0.0.0", [_declared("BSD")], "fail"),
+    # A whole licence pasted into the field is not an identifier.
+    ("probe", "0.0.0", [_declared("MIT\n\nPermission is hereby granted...")], "fail"),
+    ("probe", "0.0.0", [_CLASSIFIER], "fail"),
+    ("safetensors", "0.8.0", [_CLASSIFIER], "ok"),
+    ("namex", "0.1.0", [], "ok"),
+    ("astunparse", "1.6.3", [_declared("BSD")], "ok"),
 ]
 
 
 def run_self_test() -> int:
     failures = []
+    for name, version, licenses, expected in COMPONENT_CASES:
+        component = {"name": name, "version": version, "licenses": licenses}
+        status, license_id, detail = evaluate_component(
+            component, dict(LICENSE_OVERRIDES), False, set(DEFAULT_DYNAMIC)
+        )
+        if status != expected:
+            failures.append(
+                f"  {name}@{version} {licenses!r}: expected {expected}, got "
+                f"{status} [{license_id}] {detail}"
+            )
     for expression, rust, expected in SELF_TEST_CASES:
         component = {"name": "probe", "version": "0.0.0"}
         if expression:
@@ -481,7 +550,10 @@ def run_self_test() -> int:
         print("license policy self-test FAILED:")
         print("\n".join(failures))
         return 1
-    total = len(SELF_TEST_CASES) + 1 + len(blocked_casings) + len(review_casings)
+    total = (
+        len(COMPONENT_CASES) + len(SELF_TEST_CASES) + 1
+        + len(blocked_casings) + len(review_casings)
+    )
     print(f"license policy self-test passed ({total} cases)")
     return 0
 

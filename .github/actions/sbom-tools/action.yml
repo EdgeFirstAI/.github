@@ -50,6 +50,14 @@ inputs:
       their licenses. Empty keeps the manifest detection.
     required: false
     default: ''
+  python-version:
+    description: >-
+      Python the dependency environment of a pyproject.toml or
+      python-requirements is built on: the one the code runs on, such as its
+      image's. Dependency resolution depends on it. Needs uv or that
+      interpreter on PATH. Empty keeps uv's choice, or python3.
+    required: false
+    default: ''
   upload-name:
     description: Artifact name; empty skips upload
     required: false
@@ -110,6 +118,7 @@ runs:
         SBOM_TARGETS: ${{ inputs.targets }}
         SBOM_EXTRA_MANIFESTS: ${{ inputs.extra-manifests }}
         PYTHON_REQUIREMENTS: ${{ inputs.python-requirements }}
+        PYTHON_VERSION: ${{ inputs.python-version }}
         SCRIPT_DIR: ${{ github.action_path }}/../../scripts
       run: |
         chmod +x "$SCRIPT_DIR/generate_sbom.sh"
