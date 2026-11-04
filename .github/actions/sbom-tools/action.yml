@@ -131,3 +131,14 @@ runs:
         path: ${{ inputs.output-dir }}/sbom.json
         if-no-files-found: error
         retention-days: ${{ inputs.retention-days != '' && inputs.retention-days || (inputs.mode == 'full' && 7 || 1) }}
+
+    # generate_sbom.sh writes the NOTICE the SBOM calls for before its checks;
+    # when a check fails, it is the file to review and commit.
+    - name: Upload the NOTICE this SBOM calls for
+      if: failure() && inputs.upload-name != ''
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+      with:
+        name: ${{ inputs.upload-name }}-notice
+        path: ${{ inputs.output-dir }}/NOTICE
+        if-no-files-found: ignore
+        retention-days: 7

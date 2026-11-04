@@ -466,7 +466,17 @@ with open(path, "w", encoding="utf-8") as handle:
     handle.write("\n")
 PY
 
+# The NOTICE this SBOM calls for, written before the checks so it exists when
+# one fails: the repository's header kept, every component listed. Commit it
+# as NOTICE when the NOTICE check reports names missing.
+PROPOSED_NOTICE="${OUTPUT_DIR}/NOTICE"
+python3 "$SCRIPT_DIR/generate_notice.py" "$MERGED_SBOM" --notice "$NOTICE_FILE" --output "$PROPOSED_NOTICE"
+
 python3 "$SCRIPT_DIR/check_license_policy.py" "$MERGED_SBOM"
-python3 "$SCRIPT_DIR/validate_notice.py" "$MERGED_SBOM" --notice "$NOTICE_FILE"
+if ! python3 "$SCRIPT_DIR/validate_notice.py" "$MERGED_SBOM" --notice "$NOTICE_FILE"; then
+  echo "A NOTICE naming every component is at ${PROPOSED_NOTICE} (in CI, the" \
+       "<upload-name>-notice artifact); review it and commit it as ${NOTICE_FILE}." >&2
+  exit 1
+fi
 
 echo "Wrote $MERGED_SBOM"
