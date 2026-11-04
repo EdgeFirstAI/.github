@@ -11,6 +11,7 @@ Exit 1 on blocked licenses, LGPL in Rust, or unapproved proprietary.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -134,19 +135,49 @@ def normalize_license(raw: str) -> str:
 DECLARED_LICENSE_PREFIX = "declared license of "
 
 
-def declared_license(license_obj: dict) -> Optional[str]:
-    """The identifier in a declared-licence entry's text. A whole licence
-    text is read by its title line ("BSD 3-Clause License", then the text),
-    and only when that line names a licence the policy knows; otherwise None,
-    and the licence is left to detection."""
+def licence_document_digest(text: str) -> str:
+    """SHA-256 of a licence text with its whitespace collapsed, so the same
+    text reflowed or re-indented by packaging tools has one digest."""
+    return hashlib.sha256(" ".join(text.split()).encode("utf-8")).hexdigest()
+
+
+# Whole licence texts the organisation has reviewed, by
+# licence_document_digest: what each document is, and the SPDX licences of
+# its parts, which the policy then judges like any declared expression. A
+# package that pastes a combined licence into its `License:` field (its own
+# terms followed by those of the code it bundles) is read through here and
+# nowhere else; a text not listed is left to detection. Any change to the text
+# is a new document needing its own review.
+KNOWN_LICENCE_DOCUMENTS: Dict[str, dict] = {
+    "6b0048fbb0e250e1ab550b67fdb5ef98c942d1deeb6ed85dc5894777d913b2f7": {
+        "document": (
+            "pandas LICENSE: pandas BSD-3-Clause, with bottleneck (BSD-2-Clause), "
+            "dateutil (Apache-2.0, BSD-3-Clause), klib (MIT), musl (MIT), the Python "
+            "licence stack (Python-2.0), ujson/MODP (BSD-3-Clause), a 0BSD notice and "
+            "the TCL numeric decoder (TCL). Its Python licence footnotes mention the "
+            "GPL only to compare licences."
+        ),
+        "expression": "BSD-3-Clause AND BSD-2-Clause AND Apache-2.0 AND MIT AND Python-2.0 AND 0BSD AND TCL",
+        "approved-by": "Sébastien Taylor",
+        "date": "2026-11-04",
+    },
+}
+
+
+def declared_license(
+    license_obj: dict,
+    documents: Optional[Dict[str, dict]] = None,
+) -> Optional[str]:
+    """The identifier in a declared-licence entry's text, or the expression of
+    a reviewed licence document (KNOWN_LICENCE_DOCUMENTS); None for any other
+    whole licence text, which is left to detection."""
     text = (license_obj.get("text") or {}).get("content") or ""
     text = text.strip()
-    if "\n" in text:
-        title = text.splitlines()[0].strip()
-        if len(title) <= 64 and evaluate_expression(normalize_license(title))[0] != RANK_UNKNOWN:
-            return title
-        return None
-    if not text or len(text) > 64:
+    if "\n" in text or len(text) > 64:
+        known = (KNOWN_LICENCE_DOCUMENTS if documents is None else documents).get(
+            licence_document_digest(text))
+        return known["expression"] if known else None
+    if not text:
         return None
     return text
 
@@ -593,14 +624,13 @@ COMPONENT_CASES = [
     # Declared text is classified like any identifier, never trusted.
     ("probe", "0.0.0", [_declared("GPL-3.0")], "fail"),
     ("probe", "0.0.0", [_declared("BSD")], "fail"),
-    # A whole licence pasted into the field is read by its title line, and
-    # only when that line names a licence the policy knows (pandas pastes its
-    # LICENSE, which opens "BSD 3-Clause License").
-    ("probe", "0.0.0", [_declared("MIT\n\nPermission is hereby granted...")], "ok"),
-    ("probe", "0.0.0", [_declared("BSD 3-Clause License\n\nCopyright (c) 2008-2011, AQR")], "ok"),
-    ("probe", "0.0.0", [_declared("GPL-3.0\n\nThis program is free software")], "fail"),
+    # A whole licence pasted into the field is not an identifier, title line
+    # included: the text can carry further terms after it, as pandas' carries
+    # the licences of the code it bundles. Only a licence document the
+    # organisation has reviewed is read (see the KNOWN_LICENCE_DOCUMENTS cases).
+    ("probe", "0.0.0", [_declared("MIT\n\nPermission is hereby granted...")], "fail"),
+    ("probe", "0.0.0", [_declared("BSD 3-Clause License\n\nCopyright (c) 2008-2011, AQR")], "fail"),
     ("probe", "0.0.0", [_declared("Copyright (c) 2005-2023, NumPy Developers.\nAll rights reserved.")], "fail"),
-    ("probe", "0.0.0", [_declared("\n\nMIT\n\nPermission is hereby granted...")], "ok"),
     ("probe", "0.0.0", [_CLASSIFIER], "fail"),
     # What detect_licenses.py adds from a component's licence texts.
     ("probe", "0.0.0", [_CLASSIFIER, {"expression": "Apache-2.0"}], "ok"),
@@ -773,6 +803,27 @@ def run_self_test() -> int:
                 f"got rank {rank} -- case folding is not reaching the "
                 f"review list"
             )
+
+    # A reviewed licence document is read as the licences of its parts, each
+    # still judged against the allowed list. Whitespace does not matter; any
+    # other change to the text is a new document that needs its own review.
+    document = "Combined LICENSE\n\nPart one, MIT.\n----\nPart two, BSD-3-Clause.\n"
+    documents = {licence_document_digest(document): {
+        "document": "probe", "expression": "MIT AND BSD-3-Clause",
+        "approved-by": "Approver Name", "date": "2026-11-04"}}
+    document_cases = [
+        (document, "MIT AND BSD-3-Clause"),
+        ("  Combined   LICENSE\nPart one, MIT.\n----\n\nPart two, BSD-3-Clause.", "MIT AND BSD-3-Clause"),
+        (document.replace("BSD-3-Clause", "GPL-3.0"), None),
+    ]
+    for text, expected in document_cases:
+        got = declared_license(_declared(text)["license"], documents)
+        if got != expected:
+            failures.append(f"  declared document {text[:30]!r}: expected {expected!r}, got {got!r}")
+    for digest, entry in KNOWN_LICENCE_DOCUMENTS.items():
+        missing = [f for f in ("document", "expression", "approved-by", "date") if not entry.get(f)]
+        if missing or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            failures.append(f"  KNOWN_LICENCE_DOCUMENTS {digest[:12]}: missing {missing} or bad digest")
 
     # A library a package bundles, as detect_licenses.py records one it found
     # installed as a separate shared library. LGPL and GPL with a GCC runtime
