@@ -197,11 +197,14 @@ _EXTENSION_MODULE = re.compile(r"\.(cpython-|pypy|abi3\.)|\.pyd$")
 
 
 def is_shared_library(path: str) -> bool:
-    """A native library installed as its own file, such as one auditwheel or
-    delocate vendors into `<package>.libs/`; not a Python extension module,
-    which is the package's own compiled code."""
-    name = path.replace("\\", "/").rsplit("/", 1)[-1]
-    return bool(_SHARED_LIBRARY.search(name)) and not _EXTENSION_MODULE.search(name)
+    """A native library vendored as its own file: in the directory auditwheel
+    or delvewheel creates (`<package>.libs/`) or delocate's (`.dylibs/`).
+    Elsewhere a `.so` may be a Python extension module, the package's own
+    compiled code, so it is not taken for a separate library."""
+    parts = path.replace("\\", "/").split("/")
+    vendored = any(part.endswith(".libs") or part == ".dylibs" for part in parts[:-1])
+    name = parts[-1]
+    return vendored and bool(_SHARED_LIBRARY.search(name)) and not _EXTENSION_MODULE.search(name)
 
 
 _FIELD = re.compile(r"^([A-Za-z][A-Za-z-]*):\s*(.*)$")
@@ -289,11 +292,12 @@ def split_bundled(text: str, installed: List[str]) -> Tuple[str, List[dict]]:
         patterns = fields.get("files", "").replace(",", " ").split()
         if not licence or not patterns:
             continue
-        files: List[str] = []
-        for pattern in patterns:
-            files.extend(_installed_as(pattern, installed))
-        if not files or not all(is_shared_library(path) for path in files):
+        # Every pattern must name installed shared libraries and nothing else:
+        # one naming a source file may describe code compiled in.
+        matches = [_installed_as(pattern, installed) for pattern in patterns]
+        if not all(found and all(is_shared_library(path) for path in found) for found in matches):
             continue
+        files = [path for found in matches for path in found]
         dynamic_starts.add(start)
         libraries.append({
             "type": "library",
@@ -609,6 +613,13 @@ def run_self_test() -> int:
     checks += 1
     if split_bundled(bundle, ["numpy/__init__.py"]) != (bundle, []):
         failures.append("  split_bundled: moved a section with no installed shared library")
+    # A section that also names files not installed as shared libraries, such
+    # as a source file compiled into an extension, is not shown to be dynamic.
+    checks += 1
+    mixed = bundle.replace("Files: numpy.libs/libquadmath*.so", "Files: numpy.libs/libquadmath*.so numpy/_quad.c")
+    _, mixed_libraries = split_bundled(mixed, installed)
+    if "libquadmath" in [c["name"] for c in mixed_libraries]:
+        failures.append("  split_bundled: moved a section that also names a compiled-in source file")
 
     shared = [
         ("numpy.libs/libgfortran-040039e1.so.5.0.0", True),
@@ -619,6 +630,10 @@ def run_self_test() -> int:
         ("foo/_ext.abi3.so", False),
         ("foo/_ext.pyd", False),
         ("foo/module.py", False),
+        # An untagged .so can be an extension module; only a vendoring
+        # directory shows a library was installed as its own file.
+        ("pkg/_helper.so", False),
+        ("pkg/libfoo.so.1", False),
     ]
     for path, expected in shared:
         checks += 1

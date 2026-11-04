@@ -14,11 +14,13 @@ import json
 import os
 import re
 import sys
-from typing import Iterable, List, Set, Tuple
+from typing import List, Set, Tuple
 
 # The licence check's reading of a component's licences, declared licence text
 # included, so a proprietary declaration is seen by both checks.
-from check_license_policy import licenses_from_component
+# Components are walked as the licence check walks them, nested ones (the
+# libraries a package bundles) included.
+from check_license_policy import iter_components, licenses_from_component
 
 PROPRIETARY_MARKERS = (
     "proprietary",
@@ -26,11 +28,6 @@ PROPRIETARY_MARKERS = (
     "NXP Proprietary",
     "NXP-Proprietary",
 )
-
-
-def iter_components(sbom: dict) -> Iterable[dict]:
-    for component in sbom.get("components") or []:
-        yield component
 
 
 def is_proprietary(component: dict) -> bool:
@@ -76,11 +73,20 @@ def run_self_test() -> int:
         required, _optional = notice_gaps(sbom, text)
         if bool(required) != expected:
             failures.append(f"  {licenses!r} / {text!r}: required gap expected {expected}, got {required}")
+    # A proprietary library nested in a permissive package, as
+    # detect_licenses.py records a bundled one, must be named too.
+    nested = {"components": [{
+        "name": "host-package", "version": "1.0.0", "licenses": [_declared("Apache License 2.0")],
+        "components": [{"name": "vendor-blob", "licenses": [{"license": {"name": "Vendor Proprietary EULA"}}]}],
+    }]}
+    required, _optional = notice_gaps(nested, "Copyright 2026 Au-Zone\nhost-package")
+    if required != ["vendor-blob"]:
+        failures.append(f"  nested proprietary library: required gap expected ['vendor-blob'], got {required}")
     if failures:
         print("validate_notice self-test FAILED:")
         print("\n".join(failures))
         return 1
-    print(f"validate_notice self-test passed ({len(SELF_TEST_CASES)} cases)")
+    print(f"validate_notice self-test passed ({len(SELF_TEST_CASES) + 1} cases)")
     return 0
 
 
