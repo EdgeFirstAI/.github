@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.0] - 2026-11-04
+
 ### Added
 
 - **`generate_notice.py` writes NOTICE from the SBOM.** It keeps the repository's own text above the `Third-Party Components` heading as written (a NOTICE without the heading keeps all of it) and generates everything from that heading down: every component of the SBOM, nested ones under their package, with the licence the licence check applies to it and whether it is a dynamically loaded bundled library or an approved proprietary one. `generate_sbom.sh` writes this NOTICE to `<output-dir>/NOTICE` on every run, before its checks, and `sbom-tools` uploads it as the `<upload-name>-notice` artifact when the step fails, so a release PR that fails the NOTICE check carries the file to review and commit. Locally, `python3 generate_notice.py sbom/sbom.json` rewrites `./NOTICE`.
@@ -586,6 +588,7 @@ Everything here is exercised by a real release: `EdgeFirstAI/ara2-rs` v0.18.0 wa
   precedence over `ci:hardware`. PyPI publish requires the reusable release
   job to succeed.
 
+[5.0.0]: https://github.com/EdgeFirstAI/.github/compare/v4.0.0...v5.0.0
 [4.0.0]: https://github.com/EdgeFirstAI/.github/compare/v3.1.0...v4.0.0
 [3.1.0]: https://github.com/EdgeFirstAI/.github/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/EdgeFirstAI/.github/compare/v2.3.1...v3.0.0
