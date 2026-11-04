@@ -53,14 +53,31 @@ on:
         default: ""
       sbom-python-requirements:
         description: >-
-          Requirements files for a Python application without a pyproject.toml,
-          so its dependencies and their licenses are in the release SBOM.
+          Requirements files a Python application's image installs, so its
+          dependencies and their licenses are in the release SBOM. They are
+          the inventory even when the repository has a pyproject.toml.
         type: string
         default: ""
       sbom-python-version:
         description: >-
           Python the release SBOM resolves Python dependencies on: the one the
           application runs on, such as its image's. Empty keeps the runner's.
+        type: string
+        default: ""
+      sbom-pre-command:
+        description: >-
+          Shell run from the repository root before the release SBOM is
+          built, to stage vendor packages its requirements install but the
+          tree does not hold, as release-image.yml's pre-build-command does
+          for the image. Empty skips it.
+        type: string
+        default: ""
+      sbom-pre-command-role:
+        description: >-
+          IAM role ARN assumed through OIDC for sbom-pre-command alone; a
+          Studio app passes vars.AWS_STUDIO_BUILD_ROLE_ARN. The calling job
+          then grants `id-token: write`. Empty runs it without AWS
+          credentials.
         type: string
         default: ""
       codeartifact-role:
@@ -374,6 +391,8 @@ jobs:
       codeartifact-domain: ${{ inputs.codeartifact-domain }}
       codeartifact-repository: ${{ inputs.codeartifact-repository }}
       aws-region: ${{ inputs.aws-region }}
+      pre-command: ${{ inputs.sbom-pre-command }}
+      pre-command-role: ${{ inputs.sbom-pre-command-role }}
       upload-name: sbom
       # publish.yml requires this SBOM after the release PR merges, which is
       # human-paced. The 7-day CI default would expire a release held a week.

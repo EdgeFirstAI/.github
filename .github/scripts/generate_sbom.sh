@@ -10,8 +10,8 @@
 #   PROJECT_TYPE          library | application | framework (default: library)
 #   VERSION_FILE          file to read version from (default: Cargo.toml)
 #   SOURCE_DIRS           directories for scancode (default: src tests)
-#   PYTHON_REQUIREMENTS   space-separated requirements files, for a Python
-#                         application without a pyproject.toml
+#   PYTHON_REQUIREMENTS   space-separated requirements files an application's
+#                         image installs; the inventory even with a pyproject.toml
 #   PYTHON_VERSION        Python the dependency environment is built on, the
 #                         one the package or application runs on (default:
 #                         uv's choice, or python3)
@@ -26,7 +26,7 @@
 #                         uv.lock, the dependency environment is synced from
 #                         the lock so packages pinned to that index resolve
 #
-# Policy version: 2.2 (2026-11-03)
+# Policy version: 2.3 (2026-11-04)
 
 set -euo pipefail
 
@@ -243,6 +243,49 @@ print(f"merged {len(components)} components into {out}")
 PY
     find . -name "${scan_prefix}*" -delete
     detect_licenses
+  elif [[ -n "${PYTHON_REQUIREMENTS:-}" ]]; then
+    # An application whose image runs `pip install -r` on pinned requirements
+    # files. They are the inventory even when the application also has a
+    # pyproject.toml, since the image installs from them, not from uv.lock.
+    # As below, they go into a fresh environment, so the inventory is exactly
+    # what the application installs and every component's license is read
+    # from its installed metadata. Paths are relative to the repository root.
+    local req_args=() req project_args=()
+    # shellcheck disable=SC2086
+    for req in $PYTHON_REQUIREMENTS; do
+      if [[ ! -f "$req" ]]; then
+        echo "error: PYTHON_REQUIREMENTS names $req, which does not exist" >&2
+        exit 1
+      fi
+      req_args+=(-r "$req")
+    done
+    if [[ -f pyproject.toml ]]; then
+      project_args=(--pyproject pyproject.toml)
+    fi
+    py_env="$(mktemp -d)/env"
+    if command -v uv >/dev/null 2>&1; then
+      new_python_env "$py_env"
+      uv pip install --quiet --python "$py_env/bin/python" "${req_args[@]}"
+      if [[ -f pyproject.toml ]]; then
+        uv pip install --quiet --python "$py_env/bin/python" --no-deps .
+      fi
+      uvx --from 'cyclonedx-bom==7.3.0' cyclonedx-py environment --gather-license-texts \
+        --spec-version 1.5 --output-format JSON -o "$DEP_SBOM" "${project_args[@]}" \
+        "$py_env/bin/python"
+    elif command -v cyclonedx-py >/dev/null 2>&1; then
+      new_python_env "$py_env"
+      "$py_env/bin/pip" install --quiet "${req_args[@]}"
+      if [[ -f pyproject.toml ]]; then
+        "$py_env/bin/pip" install --quiet --no-deps .
+      fi
+      cyclonedx-py environment --gather-license-texts --spec-version 1.5 --output-format JSON \
+        -o "$DEP_SBOM" "${project_args[@]}" "$py_env/bin/python"
+    else
+      echo "error: cyclonedx-py or uv is required for PYTHON_REQUIREMENTS" >&2
+      exit 1
+    fi
+    detect_licenses "$py_env/bin/python"
+    rm -rf "$(dirname "$py_env")"
   elif [[ -f pyproject.toml ]]; then
     # What the package depends on, not what CI happens to have installed: the
     # project goes into a fresh environment with its required dependencies
@@ -277,38 +320,6 @@ PY
         -o "$DEP_SBOM" --pyproject pyproject.toml "$py_env/bin/python"
     else
       echo "error: cyclonedx-py or uv is required when pyproject.toml exists" >&2
-      exit 1
-    fi
-    detect_licenses "$py_env/bin/python"
-    rm -rf "$(dirname "$py_env")"
-  elif [[ -n "${PYTHON_REQUIREMENTS:-}" ]]; then
-    # An application that pins its dependencies in requirements files (what
-    # its image runs `pip install -r` on) rather than a pyproject.toml. As
-    # above, they go into a fresh environment, so the inventory is exactly
-    # what the application installs and every component's license is read
-    # from its installed metadata.
-    local req_args=() req
-    # shellcheck disable=SC2086
-    for req in $PYTHON_REQUIREMENTS; do
-      if [[ ! -f "$req" ]]; then
-        echo "error: PYTHON_REQUIREMENTS names $req, which does not exist" >&2
-        exit 1
-      fi
-      req_args+=(-r "$req")
-    done
-    py_env="$(mktemp -d)/env"
-    if command -v uv >/dev/null 2>&1; then
-      new_python_env "$py_env"
-      uv pip install --quiet --python "$py_env/bin/python" "${req_args[@]}"
-      uvx --from 'cyclonedx-bom==7.3.0' cyclonedx-py environment --gather-license-texts \
-        --spec-version 1.5 --output-format JSON -o "$DEP_SBOM" "$py_env/bin/python"
-    elif command -v cyclonedx-py >/dev/null 2>&1; then
-      new_python_env "$py_env"
-      "$py_env/bin/pip" install --quiet "${req_args[@]}"
-      cyclonedx-py environment --gather-license-texts --spec-version 1.5 --output-format JSON \
-        -o "$DEP_SBOM" "$py_env/bin/python"
-    else
-      echo "error: cyclonedx-py or uv is required for PYTHON_REQUIREMENTS" >&2
       exit 1
     fi
     detect_licenses "$py_env/bin/python"
