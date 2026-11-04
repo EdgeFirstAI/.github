@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check CycloneDX SBOM license policy (Au-Zone SPS).
 
-Policy version: 2.2 (2026-11-03). This is the single org-wide copy.
+Policy version: 2.3 (2026-11-04). This is the single org-wide copy.
 
 Exit 0 when every component is allowed, or proprietary and approved for
 this repository.
@@ -11,6 +11,7 @@ Exit 1 on blocked licenses, LGPL in Rust, or unapproved proprietary.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -46,6 +47,9 @@ ALLOWED_LICENSES: Set[str] = {
     "WTFPL",
     "PSF-2.0",
     "Python-2.0",
+    "MIT-CMU",
+    "BSD-3-Clause-Attribution",
+    "TCL",
 }
 
 # Composite expressions ("MIT OR Apache-2.0", "(MIT OR Apache-2.0) AND IJG")
@@ -87,6 +91,11 @@ CONDITIONAL_PROPRIETARY_LICENSES: Set[str] = {
 
 DEFAULT_DYNAMIC: Set[str] = {"gstreamer", "glib", "libglib"}
 
+# CycloneDX property detect_licenses.py sets to "dynamic" on a library a
+# package bundles as a separate shared library, loaded at run time rather than
+# linked into the package's own code.
+LINKAGE_PROPERTY = "au-zone:linkage"
+
 
 def _split_csv(value: str) -> Set[str]:
     return {item.strip() for item in value.split(",") if item.strip()}
@@ -116,6 +125,8 @@ def normalize_license(raw: str) -> str:
         "BSD-3-Clause-Clear": "BSD-3-Clause",
         "3-Clause BSD License": "BSD-3-Clause",
         "BSD 3-Clause": "BSD-3-Clause",
+        "BSD 3-Clause License": "BSD-3-Clause",
+        "BSD 2-Clause License": "BSD-2-Clause",
     }
     return aliases.get(text, text)
 
@@ -125,12 +136,49 @@ def normalize_license(raw: str) -> str:
 DECLARED_LICENSE_PREFIX = "declared license of "
 
 
-def declared_license(license_obj: dict) -> Optional[str]:
-    """The identifier in a declared-licence entry's text, or None when the
-    text is a whole licence rather than an identifier."""
+def licence_document_digest(text: str) -> str:
+    """SHA-256 of a licence text with its whitespace collapsed, so the same
+    text reflowed or re-indented by packaging tools has one digest."""
+    return hashlib.sha256(" ".join(text.split()).encode("utf-8")).hexdigest()
+
+
+# Whole licence texts the organisation has reviewed, by
+# licence_document_digest: what each document is, and the SPDX licences of
+# its parts, which the policy then judges like any declared expression. A
+# package that pastes a combined licence into its `License:` field (its own
+# terms followed by those of the code it bundles) is read through here and
+# nowhere else; a text not listed is left to detection. Any change to the text
+# is a new document needing its own review.
+KNOWN_LICENCE_DOCUMENTS: Dict[str, dict] = {
+    "6b0048fbb0e250e1ab550b67fdb5ef98c942d1deeb6ed85dc5894777d913b2f7": {
+        "document": (
+            "pandas LICENSE: pandas BSD-3-Clause, with bottleneck (BSD-2-Clause), "
+            "dateutil (Apache-2.0, BSD-3-Clause), klib (MIT), musl (MIT), the Python "
+            "licence stack (Python-2.0), ujson/MODP (BSD-3-Clause), a 0BSD notice and "
+            "the TCL numeric decoder (TCL). Its Python licence footnotes mention the "
+            "GPL only to compare licences."
+        ),
+        "expression": "BSD-3-Clause AND BSD-2-Clause AND Apache-2.0 AND MIT AND Python-2.0 AND 0BSD AND TCL",
+        "approved-by": "Sébastien Taylor",
+        "date": "2026-11-04",
+    },
+}
+
+
+def declared_license(
+    license_obj: dict,
+    documents: Optional[Dict[str, dict]] = None,
+) -> Optional[str]:
+    """The identifier in a declared-licence entry's text, or the expression of
+    a reviewed licence document (KNOWN_LICENCE_DOCUMENTS); None for any other
+    whole licence text, which is left to detection."""
     text = (license_obj.get("text") or {}).get("content") or ""
     text = text.strip()
-    if not text or "\n" in text or len(text) > 64:
+    if "\n" in text or len(text) > 64:
+        known = (KNOWN_LICENCE_DOCUMENTS if documents is None else documents).get(
+            licence_document_digest(text))
+        return known["expression"] if known else None
+    if not text:
         return None
     return text
 
@@ -235,14 +283,18 @@ def tokenize_expression(expression: str) -> List[str]:
             index += 1
             continue
         matched = False
-        # Operators are case-insensitive in SPDX and bind only on word
-        # boundaries, so "ORACLE" and "SAND" are never read as operators.
+        # Operators are case-insensitive in SPDX and stand apart from
+        # identifiers: whitespace or a parenthesis on each side. "-" and "."
+        # are identifier characters, so "GPL-3.0-or-later" is one leaf, and
+        # "ORACLE" and "SAND" are never read as operators.
         for operator in ("AND", "OR", "WITH"):
             end = index + len(operator)
             if (
                 expression[index:end].upper() == operator
-                and (index == 0 or not expression[index - 1].isalnum())
-                and (end >= len(expression) or not expression[end].isalnum())
+                and (index == 0 or expression[index - 1].isspace()
+                     or expression[index - 1] in "()")
+                and (end >= len(expression) or expression[end].isspace()
+                     or expression[end] in "()")
             ):
                 if operator == "WITH":
                     # WITH binds tighter than AND/OR: keep the exception with
@@ -279,11 +331,36 @@ _REVIEW_LOWER = _lower(REVIEW_REQUIRED_LICENSES)
 _PROPRIETARY_LOWER = _lower(CONDITIONAL_PROPRIETARY_LICENSES)
 
 
+# SPDX's deprecated single identifiers for GPL with the GCC runtime exception.
+_DEPRECATED_GCC_EXCEPTION = {
+    "gpl-2.0-with-gcc-exception": "GPL-2.0-only WITH GCC-exception-2.0",
+    "gpl-3.0-with-gcc-exception": "GPL-3.0-only WITH GCC-exception-3.1",
+}
+
+_WITH = re.compile(r"\s+with\s+", re.IGNORECASE)
+
+
+def is_gcc_runtime_exception(license_id: str) -> bool:
+    """GPL with the GCC runtime library exception: the licence of the GCC
+    runtime (libgcc, libgfortran, libstdc++), which lets independent code use
+    the library under its own terms."""
+    folded = _DEPRECATED_GCC_EXCEPTION.get(license_id.lower(), license_id).lower()
+    parts = _WITH.split(folded)
+    return (
+        len(parts) == 2
+        and parts[0].startswith("gpl-")
+        and parts[1].startswith("gcc-exception-")
+    )
+
+
 def classify_leaf(leaf: str) -> Tuple[int, str]:
     license_id = _normalize_leaf(leaf)
     if not license_id:
         return RANK_UNKNOWN, "UNKNOWN"
     folded = license_id.lower()
+    # Held to the LGPL rule: allowed only as a dynamically loaded library.
+    if is_gcc_runtime_exception(license_id):
+        return RANK_REVIEW, license_id
     if (
         folded in _BLOCKED_LOWER
         or folded.startswith("gpl")
@@ -411,17 +488,26 @@ def evaluate_component(
             f"{approval['approved-by']} on {approval['date']}; NOTICE must name it"
         )
     if best_rank == RANK_REVIEW:
+        # LGPL, and GPL with the GCC runtime exception, are allowed only for
+        # a library loaded dynamically: one the repository documents as such,
+        # or one detect_licenses.py found bundled as a separate shared library.
         if rust:
             return "fail", best_license, (
-                f"{key}: LGPL ({best_license}) is forbidden in Rust "
-                "(static linking cannot satisfy LGPL)"
+                f"{key}: {best_license} is forbidden in Rust "
+                "(static linking cannot satisfy it)"
             )
-        if name.split("-")[0] not in dynamic and name not in dynamic:
+        linkage = {
+            str(prop.get("value", "")).lower()
+            for prop in component.get("properties") or []
+            if prop.get("name") == LINKAGE_PROPERTY
+        }
+        documented = name.split("-")[0] in dynamic or name in dynamic
+        if not documented and linkage != {"dynamic"}:
             return "fail", best_license, (
-                f"{key}: LGPL ({best_license}) allowed only for documented "
-                "dynamically linked libraries"
+                f"{key}: {best_license} allowed only for dynamically linked "
+                "libraries"
             )
-        return "warn", best_license, f"{key}: LGPL permitted as dynamic {best_license}"
+        return "warn", best_license, f"{key}: permitted as dynamic {best_license}"
     if best_rank == RANK_BLOCKED:
         return "fail", best_license, f"{key}: blocked license {best_license}"
     return "fail", best_license, (
@@ -429,14 +515,20 @@ def evaluate_component(
     )
 
 
-def iter_components(sbom: dict) -> Iterable[dict]:
-    for component in sbom.get("components") or []:
+def _with_nested(components: Iterable[dict]) -> Iterable[dict]:
+    for component in components:
         yield component
+        yield from _with_nested(component.get("components") or [])
+
+
+def iter_components(sbom: dict) -> Iterable[dict]:
+    """Every component, including those nested in another: a library bundled
+    inside a package is checked under its own licence."""
+    yield from _with_nested(sbom.get("components") or [])
     metadata = sbom.get("metadata") or {}
     component = metadata.get("component")
     if component:
-        for nested in component.get("components") or []:
-            yield nested
+        yield from _with_nested(component.get("components") or [])
 
 
 # Cases that have actually broken the fleet, plus the operator semantics the
@@ -493,6 +585,23 @@ SELF_TEST_CASES = [
     ("PSF-2.0", False, "ok"),
     ("BSD-3-Clause AND PSF-2.0", False, "ok"),
     ("Python-2.0", False, "ok"),
+    # Pillow's declared licence.
+    ("MIT-CMU", False, "ok"),
+    # OpenBLAS and LAPACK, as numpy and scipy wheels bundle them.
+    ("BSD-3-Clause-Attribution", False, "ok"),
+    # The TCL licence of the numeric decoder pandas bundles.
+    ("TCL", False, "ok"),
+    # "or" inside an identifier is not the OR operator: GPL-3.0-or-later must
+    # stay one blocked leaf, never "GPL-3.0 OR later".
+    ("GPL-3.0-or-later", False, "fail"),
+    ("MIT AND LGPL-2.1-or-later", False, "fail"),
+    ("BSD-3-Clause AND MIT-CMU", False, "ok"),
+    # GPL with a GCC runtime exception is held to the LGPL rule: only as a
+    # dynamically loaded library, never in Rust, never in an undocumented
+    # component. Any other exception leaves plain GPL.
+    ("GPL-3.0-or-later WITH GCC-exception-3.1", False, "fail"),
+    ("GPL-3.0-or-later WITH GCC-exception-3.1", True, "fail"),
+    ("GPL-2.0-only WITH Classpath-exception-2.0", False, "fail"),
 ]
 
 
@@ -511,12 +620,20 @@ COMPONENT_CASES = [
     ("probe", "0.0.0", [_declared("Apache License 2.0")], "ok"),
     ("probe", "0.0.0", [_declared("3-Clause BSD License")], "ok"),
     ("probe", "0.0.0", [_declared("BSD 3-Clause")], "ok"),
+    # pandas declares this.
+    ("probe", "0.0.0", [_declared("BSD 3-Clause License")], "ok"),
+    ("probe", "0.0.0", [_declared("BSD 2-Clause License")], "ok"),
     ("probe", "0.0.0", [_CLASSIFIER, _declared("Apache 2.0")], "ok"),
     # Declared text is classified like any identifier, never trusted.
     ("probe", "0.0.0", [_declared("GPL-3.0")], "fail"),
     ("probe", "0.0.0", [_declared("BSD")], "fail"),
-    # A whole licence pasted into the field is not an identifier.
+    # A whole licence pasted into the field is not an identifier, title line
+    # included: the text can carry further terms after it, as pandas' carries
+    # the licences of the code it bundles. Only a licence document the
+    # organisation has reviewed is read (see the KNOWN_LICENCE_DOCUMENTS cases).
     ("probe", "0.0.0", [_declared("MIT\n\nPermission is hereby granted...")], "fail"),
+    ("probe", "0.0.0", [_declared("BSD 3-Clause License\n\nCopyright (c) 2008-2011, AQR")], "fail"),
+    ("probe", "0.0.0", [_declared("Copyright (c) 2005-2023, NumPy Developers.\nAll rights reserved.")], "fail"),
     ("probe", "0.0.0", [_CLASSIFIER], "fail"),
     # What detect_licenses.py adds from a component's licence texts.
     ("probe", "0.0.0", [_CLASSIFIER, {"expression": "Apache-2.0"}], "ok"),
@@ -553,9 +670,33 @@ APPROVAL_CASES = [
      {"vendor-sdk": _APPROVAL}, "fail"),
     ("vendor-sdk", "1.0.0", [{"expression": "NXP Proprietary AND Vendor Proprietary EULA"}],
      {"vendor-sdk": dict(_APPROVAL, license="NXP Proprietary AND Vendor Proprietary EULA")}, "warn"),
+    # A vendor EULA as detection reads it: the permissive licence of a part
+    # never makes the whole permissive, so the package still needs approval.
+    ("vendor-sdk", "1.0.0", [{"expression": "Apache-2.0 AND LicenseRef-scancode-proprietary-license"}],
+     {}, "fail"),
+    ("vendor-sdk", "1.0.0", [{"expression": "Apache-2.0 AND LicenseRef-scancode-proprietary-license"}],
+     {"vendor-sdk": dict(_APPROVAL, license="Apache-2.0 AND LicenseRef-scancode-proprietary-license")},
+     "warn"),
     # An approval never rescues a licence outside the proprietary rank.
     ("vendor-sdk", "1.0.0", [{"license": {"id": "GPL-3.0"}}],
      {"vendor-sdk": dict(_APPROVAL, license="GPL-3.0")}, "fail"),
+]
+
+# (expression, linkage property, rust project, expected status)
+BUNDLED_CASES = [
+    ("LGPL-2.1-or-later", "dynamic", False, "warn"),
+    ("GPL-3.0-or-later WITH GCC-exception-3.1", "dynamic", False, "warn"),
+    ("GPL-3.0-with-GCC-exception", "dynamic", False, "warn"),
+    ("BSD-3-Clause", "dynamic", False, "ok"),
+    # Static, or linkage not established: the copyleft terms reach the package.
+    ("LGPL-2.1-or-later", "static", False, "fail"),
+    ("LGPL-2.1-or-later", None, False, "fail"),
+    ("GPL-3.0-or-later WITH GCC-exception-3.1", None, False, "fail"),
+    # Only the GCC runtime exception: plain GPL stays blocked when dynamic.
+    ("GPL-3.0-or-later", "dynamic", False, "fail"),
+    ("GPL-2.0-only WITH Classpath-exception-2.0", "dynamic", False, "fail"),
+    # Rust links statically.
+    ("LGPL-2.1-or-later", "dynamic", True, "fail"),
 ]
 
 # Approval entries that must be refused: each field is the record a reviewer
@@ -628,8 +769,10 @@ def run_self_test() -> int:
     blocked_casings = (
         "GPL-3.0", "gpl-3.0", "GpL-3.0",
         "GPL-2.0-only", "gpl-2.0-only",
+        "GPL-3.0-or-later", "gpl-2.0-or-later",
         "AGPL-3.0", "agpl-3.0",
         "SSPL-1.0", "sspl-1.0",
+        "GPL-2.0-only WITH Classpath-exception-2.0",
     )
     for identifier in blocked_casings:
         rank, _name = evaluate_expression(identifier)
@@ -648,6 +791,12 @@ def run_self_test() -> int:
     review_casings = (
         "LGPL-2.1", "lgpl-2.1", "LgPl-2.1",
         "LGPL-3.0", "lgpl-3.0",
+        "LGPL-2.1-or-later", "lgpl-3.0-or-later",
+        "GPL-3.0-or-later WITH GCC-exception-3.1",
+        "GPL-3.0-only WITH GCC-exception-3.1",
+        "gpl-2.0-or-later with gcc-exception-2.0",
+        # SPDX's deprecated identifier for the same grant.
+        "GPL-3.0-with-GCC-exception",
     )
     for identifier in review_casings:
         rank, _name = evaluate_expression(identifier)
@@ -658,6 +807,47 @@ def run_self_test() -> int:
                 f"review list"
             )
 
+    # A reviewed licence document is read as the licences of its parts, each
+    # still judged against the allowed list. Whitespace does not matter; any
+    # other change to the text is a new document that needs its own review.
+    document = "Combined LICENSE\n\nPart one, MIT.\n----\nPart two, BSD-3-Clause.\n"
+    documents = {licence_document_digest(document): {
+        "document": "probe", "expression": "MIT AND BSD-3-Clause",
+        "approved-by": "Approver Name", "date": "2026-11-04"}}
+    document_cases = [
+        (document, "MIT AND BSD-3-Clause"),
+        ("  Combined   LICENSE\nPart one, MIT.\n----\n\nPart two, BSD-3-Clause.", "MIT AND BSD-3-Clause"),
+        (document.replace("BSD-3-Clause", "GPL-3.0"), None),
+    ]
+    for text, expected in document_cases:
+        got = declared_license(_declared(text)["license"], documents)
+        if got != expected:
+            failures.append(f"  declared document {text[:30]!r}: expected {expected!r}, got {got!r}")
+    for digest, entry in KNOWN_LICENCE_DOCUMENTS.items():
+        missing = [f for f in ("document", "expression", "approved-by", "date") if not entry.get(f)]
+        if missing or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            failures.append(f"  KNOWN_LICENCE_DOCUMENTS {digest[:12]}: missing {missing} or bad digest")
+
+    # A library a package bundles, as detect_licenses.py records one it found
+    # installed as a separate shared library. LGPL and GPL with a GCC runtime
+    # exception pass there because the library is loaded dynamically, and
+    # nowhere else.
+    for expression, linkage, rust, expected in BUNDLED_CASES:
+        bundled = {"name": "libquadmath", "licenses": [{"expression": expression}]}
+        if linkage:
+            bundled["properties"] = [{"name": LINKAGE_PROPERTY, "value": linkage}]
+        parent = {"name": "numpy", "version": "1.26.4",
+                  "licenses": [{"expression": "BSD-3-Clause"}], "components": [bundled]}
+        walked = [c.get("name") for c in iter_components({"components": [parent]})]
+        if walked != ["numpy", "libquadmath"]:
+            failures.append(f"  bundled library not checked: components walked {walked}")
+        status, license_id, detail = evaluate_component(bundled, rust, set(DEFAULT_DYNAMIC))
+        if status != expected:
+            failures.append(
+                f"  bundled {expression!r} linkage={linkage} (rust={rust}): expected "
+                f"{expected}, got {status} [{license_id}] {detail}"
+            )
+
     if failures:
         print("license policy self-test FAILED:")
         print("\n".join(failures))
@@ -665,7 +855,7 @@ def run_self_test() -> int:
     total = (
         len(COMPONENT_CASES) + len(APPROVAL_CASES) + len(INVALID_APPROVALS)
         + len(SELF_TEST_CASES) + 1
-        + len(blocked_casings) + len(review_casings)
+        + len(blocked_casings) + len(review_casings) + len(BUNDLED_CASES)
     )
     print(f"license policy self-test passed ({total} cases)")
     return 0

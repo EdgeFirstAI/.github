@@ -6,6 +6,13 @@
 # is built, as python-quick.yml does. The call site then grants
 # `contents: read` and `id-token: write`. Empty `codeartifact-role` changes
 # nothing.
+#
+# An application whose requirements install a vendor package the tree does not
+# hold (a wheel under the gitignored ext/) stages it with `pre-command`, as
+# release-image.yml's `pre-build-command` does for the image. With
+# `pre-command-role` the command runs with that role's AWS credentials, assumed
+# through OIDC, and they are cleared before the SBOM is built; the call site
+# then grants `id-token: write`.
 name: sbom
 
 on:
@@ -42,7 +49,7 @@ on:
         type: string
         default: ''
       python-requirements:
-        description: Space-separated requirements files for a Python application without a pyproject.toml
+        description: Space-separated requirements files an application's image installs; they are the Python inventory even when the repository has a pyproject.toml
         type: string
         default: ''
       python-version:
@@ -74,8 +81,23 @@ on:
         default: ""
       aws-region:
         description: >-
-          Region of the CodeArtifact domain. Empty uses the organisation
-          variable AWS_REGION.
+          Region of the CodeArtifact domain and of pre-command-role. Empty
+          uses the organisation variable AWS_REGION.
+        type: string
+        default: ""
+      pre-command:
+        description: >-
+          Shell run from the repository root before the SBOM is built. Stages
+          what the requirements install but the tree does not hold: vendor
+          packages. Receives no secrets. Empty skips it.
+        type: string
+        default: ""
+      pre-command-role:
+        description: >-
+          IAM role ARN assumed through OIDC for pre-command alone, such as a
+          Studio app's build role (vars.AWS_STUDIO_BUILD_ROLE_ARN), which can
+          read that app's vendor SDKs. Its trust policy must allow the calling
+          ref. Empty runs pre-command without AWS credentials.
         type: string
         default: ""
 
@@ -124,6 +146,33 @@ jobs:
           aws-region: ${{ inputs.aws-region || vars.AWS_REGION }}
           format: uv
           duration-seconds: "1800"
+
+      - name: Assume the pre-command role
+        if: ${{ inputs.pre-command-role != '' }}
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd  # v6.3.0
+        with:
+          role-to-assume: ${{ inputs.pre-command-role }}
+          aws-region: ${{ inputs.aws-region || vars.AWS_REGION }}
+          role-session-name: sbom-pre-command
+
+      - name: Caller pre-command
+        if: ${{ inputs.pre-command != '' }}
+        env:
+          PRE_COMMAND: ${{ inputs.pre-command }}
+        run: |
+          set -euo pipefail
+          bash --noprofile --norc -euo pipefail -c "$PRE_COMMAND"
+
+      # Empty values, which the AWS CLI and SDKs treat as unset, so nothing
+      # after pre-command runs with the role.
+      - name: Clear the pre-command role
+        if: ${{ always() && inputs.pre-command-role != '' }}
+        run: |
+          {
+            echo "AWS_ACCESS_KEY_ID="
+            echo "AWS_SECRET_ACCESS_KEY="
+            echo "AWS_SESSION_TOKEN="
+          } >> "$GITHUB_ENV"
 
       - name: SBOM + license policy
         uses: $/.github/actions/sbom-tools
