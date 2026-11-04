@@ -49,6 +49,7 @@ ALLOWED_LICENSES: Set[str] = {
     "Python-2.0",
     "MIT-CMU",
     "BSD-3-Clause-Attribution",
+    "TCL",
 }
 
 # Composite expressions ("MIT OR Apache-2.0", "(MIT OR Apache-2.0) AND IJG")
@@ -588,6 +589,8 @@ SELF_TEST_CASES = [
     ("MIT-CMU", False, "ok"),
     # OpenBLAS and LAPACK, as numpy and scipy wheels bundle them.
     ("BSD-3-Clause-Attribution", False, "ok"),
+    # The TCL licence of the numeric decoder pandas bundles.
+    ("TCL", False, "ok"),
     # "or" inside an identifier is not the OR operator: GPL-3.0-or-later must
     # stay one blocked leaf, never "GPL-3.0 OR later".
     ("GPL-3.0-or-later", False, "fail"),
