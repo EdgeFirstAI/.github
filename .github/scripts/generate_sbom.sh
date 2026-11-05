@@ -26,7 +26,7 @@
 #                         uv.lock, the dependency environment is synced from
 #                         the lock so packages pinned to that index resolve
 #
-# Policy version: 2.3 (2026-11-04)
+# Policy version: 2.4 (2026-11-05)
 
 set -euo pipefail
 
@@ -265,7 +265,13 @@ PY
     py_env="$(mktemp -d)/env"
     if command -v uv >/dev/null 2>&1; then
       new_python_env "$py_env"
-      uv pip install --quiet --python "$py_env/bin/python" "${req_args[@]}"
+      # The image installs these files with pip, which takes each package's
+      # best version from every index a file names (--extra-index-url). uv by
+      # default takes a package only from the first index that has it, so a
+      # file adding, say, the PyTorch wheel index would resolve differently,
+      # or not at all, from the image. Resolve as pip does.
+      uv pip install --quiet --python "$py_env/bin/python" \
+        --index-strategy unsafe-best-match "${req_args[@]}"
       if [[ -f pyproject.toml ]]; then
         uv pip install --quiet --python "$py_env/bin/python" --no-deps .
       fi
