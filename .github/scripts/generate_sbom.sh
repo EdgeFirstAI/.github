@@ -217,6 +217,24 @@ out = pathlib.Path(sys.argv[1])
 # Exactly the files this run wrote: --override-filename gave them a name nothing
 # else in the tree can have. Residue from an older graph is invisible here.
 prefix = sys.argv[2]
+
+# cargo-cyclonedx nests a component for each of a crate's build targets (its lib
+# and bins) under the crate, with the crate's bom-ref plus " bin-target-N". They
+# describe the crate itself, not a library it bundles, yet the licence and NOTICE
+# checks walk nested components as bundled libraries: "<crate> bundles <crate>".
+# Whether a target carries the crate's licence depends on the cargo-cyclonedx
+# release (0.5.9 omits it, failing every workspace crate), so they are dropped.
+def without_targets(component):
+    ref = component.get("bom-ref") or ""
+    nested = component.get("components")
+    if nested:
+        kept = [without_targets(c) for c in nested
+                if not (ref and (c.get("bom-ref") or "").startswith(ref + " "))]
+        component = {k: v for k, v in component.items() if k != "components"}
+        if kept:
+            component["components"] = kept
+    return component
+
 components = []
 seen = set()
 for path in sorted(pathlib.Path(".").rglob(f"{prefix}*")):
@@ -228,13 +246,13 @@ for path in sorted(pathlib.Path(".").rglob(f"{prefix}*")):
         if key in seen:
             continue
         seen.add(key)
-        components.append(component)
+        components.append(without_targets(component))
     meta = (doc.get("metadata") or {}).get("component")
     if meta:
         key = (meta.get("purl") or meta.get("name"), meta.get("version"))
         if key not in seen:
             seen.add(key)
-            components.append(meta)
+            components.append(without_targets(meta))
 out.parent.mkdir(parents=True, exist_ok=True)
 with out.open("w", encoding="utf-8") as handle:
     json.dump({"bomFormat": "CycloneDX", "specVersion": "1.5", "components": components}, handle, indent=2)
