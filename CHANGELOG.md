@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.1.0] - 2026-11-06
+
 ### Changed
 
 - **License policy 2.4: BSD-3-Clause-Open-MPI is allowed.** It is the BSD 3-Clause licence with a clause stating there is no obligation to provide fixes or upgrades and that improvements sent to the authors are licensed back to them: permissive. It is the licence scipy wheels declare for the LAPACK they bundle.
@@ -597,6 +599,7 @@ Everything here is exercised by a real release: `EdgeFirstAI/ara2-rs` v0.18.0 wa
   precedence over `ci:hardware`. PyPI publish requires the reusable release
   job to succeed.
 
+[5.1.0]: https://github.com/EdgeFirstAI/.github/compare/v5.0.0...v5.1.0
 [5.0.0]: https://github.com/EdgeFirstAI/.github/compare/v4.0.0...v5.0.0
 [4.0.0]: https://github.com/EdgeFirstAI/.github/compare/v3.1.0...v4.0.0
 [3.1.0]: https://github.com/EdgeFirstAI/.github/compare/v3.0.0...v3.1.0
