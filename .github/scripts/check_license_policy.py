@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check CycloneDX SBOM license policy (Au-Zone SPS).
 
-Policy version: 2.3 (2026-11-04). This is the single org-wide copy.
+Policy version: 2.4 (2026-11-05). This is the single org-wide copy.
 
 Exit 0 when every component is allowed, or proprietary and approved for
 this repository.
@@ -50,6 +50,7 @@ ALLOWED_LICENSES: Set[str] = {
     "MIT-CMU",
     "BSD-3-Clause-Attribution",
     "TCL",
+    "BSD-3-Clause-Open-MPI",
 }
 
 # Composite expressions ("MIT OR Apache-2.0", "(MIT OR Apache-2.0) AND IJG")
@@ -591,6 +592,8 @@ SELF_TEST_CASES = [
     ("BSD-3-Clause-Attribution", False, "ok"),
     # The TCL licence of the numeric decoder pandas bundles.
     ("TCL", False, "ok"),
+    # LAPACK as scipy wheels bundle it.
+    ("BSD-3-Clause-Open-MPI", False, "ok"),
     # "or" inside an identifier is not the OR operator: GPL-3.0-or-later must
     # stay one blocked leaf, never "GPL-3.0 OR later".
     ("GPL-3.0-or-later", False, "fail"),

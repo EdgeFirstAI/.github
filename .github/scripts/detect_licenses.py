@@ -139,8 +139,24 @@ def embedded_texts(component: dict) -> List[str]:
             except (ValueError, TypeError):
                 continue
         if "\n" in content.strip() or len(content.strip()) > 64:
-            texts.append(content)
+            texts.append(unfold_field(content))
     return texts
+
+
+def unfold_field(text: str) -> str:
+    """A metadata field's text with its continuation indentation removed.
+
+    A package that puts a whole licence file in its METADATA `License:` field
+    (scipy) gets every line after the first indented, and the SBOM keeps that
+    indentation, so `Name:` sections no longer start a line. When every
+    non-blank line after the first is indented, their common indentation is
+    removed; any other text is returned unchanged."""
+    first, *rest = text.splitlines(keepends=True)
+    filled = [line for line in rest if line.strip()]
+    if not filled or not all(line[0] in " \t" for line in filled):
+        return text
+    indent = min(len(line) - len(line.lstrip(" \t")) for line in filled)
+    return first + "".join(line[indent:] if line.strip() else line for line in rest)
 
 
 def combine(expressions: List[str]) -> str:
@@ -620,6 +636,22 @@ def run_self_test() -> int:
     _, mixed_libraries = split_bundled(mixed, installed)
     if "libquadmath" in [c["name"] for c in mixed_libraries]:
         failures.append("  split_bundled: moved a section that also names a compiled-in source file")
+    # scipy puts its whole licence file in METADATA's License: field, so the
+    # SBOM's copy carries the field's continuation indentation on every line
+    # after the first. Its sections split like the licence file's.
+    checks += 1
+    first, *rest = bundle.splitlines()
+    folded = "\n".join([first] + [" " + line if line else line for line in rest])
+    component = {"name": "numpy", "version": "1.26.4", "licenses": [
+        {"license": {"name": "declared license of 'numpy'", "text": {"content": folded}}}]}
+    inventory = [{"name": "numpy", "version": "1.26.4", "installed": installed, "files": []}]
+    folded_texts, folded_bundled = licence_texts({("numpy", "1.26.4"): component}, inventory)
+    folded_names = [c["name"] for c in folded_bundled.get(("numpy", "1.26.4"), [])]
+    if folded_names != ["GCC runtime library", "libquadmath"]:
+        failures.append(f"  licence_texts: folded declared text bundled {folded_names}")
+    for _relative, text in folded_texts.get(("numpy", "1.26.4"), []):
+        if "GPL FULL TEXT OF THE GCC RUNTIME" in text:
+            failures.append("  licence_texts: folded declared text kept the GCC runtime's texts")
 
     shared = [
         ("numpy.libs/libgfortran-040039e1.so.5.0.0", True),
