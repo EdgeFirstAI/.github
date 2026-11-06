@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.1.0] - 2026-11-06
+
 ### Changed
 
 - **License policy 2.4: BSD-3-Clause-Open-MPI is allowed.** It is the BSD 3-Clause licence with a clause stating there is no obligation to provide fixes or upgrades and that improvements sent to the authors are licensed back to them: permissive. It is the licence scipy wheels declare for the LAPACK they bundle.
@@ -15,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`sbom-python-requirements` resolves packages as the image's pip does.** A requirements file that adds an index with `--extra-index-url`, such as the PyTorch CPU wheel index, failed to resolve or resolved different versions: uv takes a package only from the first index that has it, so an old `requests` on the PyTorch index hid PyPI's. `generate_sbom.sh` installs the files with `--index-strategy unsafe-best-match`, pip's behaviour, which considers every index.
 - **A licence file pasted into a package's `License:` metadata field splits its bundled libraries like the file itself.** The field's copy carries continuation indentation on every line after the first, so `Name:` sections did not start a line and scipy's whole text, including the full GPL texts of the GCC runtime it loads dynamically, was judged as scipy's own licence. Licence detection removes that indentation first.
+- **Rust workspaces no longer fail the licence check on cargo-cyclonedx's per-target components**, which `generate_sbom.sh` now drops.
 
 ## [5.0.0] - 2026-11-04
 
@@ -597,6 +600,7 @@ Everything here is exercised by a real release: `EdgeFirstAI/ara2-rs` v0.18.0 wa
   precedence over `ci:hardware`. PyPI publish requires the reusable release
   job to succeed.
 
+[5.1.0]: https://github.com/EdgeFirstAI/.github/compare/v5.0.0...v5.1.0
 [5.0.0]: https://github.com/EdgeFirstAI/.github/compare/v4.0.0...v5.0.0
 [4.0.0]: https://github.com/EdgeFirstAI/.github/compare/v3.1.0...v4.0.0
 [3.1.0]: https://github.com/EdgeFirstAI/.github/compare/v3.0.0...v3.1.0
