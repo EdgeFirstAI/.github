@@ -211,12 +211,15 @@ generate_dependency_sbom() {
         cyclonedx_scan --manifest-path "$manifest" --target "$target" --target-in-filename
       done
     done
-    python3 - "$DEP_SBOM" "$scan_prefix" <<'PY'
-import json, pathlib, sys
+    python3 - "$DEP_SBOM" "$scan_prefix" "$PROJECT_NAME" "$SCRIPT_DIR" <<'PY'
+import json, os, pathlib, sys
 out = pathlib.Path(sys.argv[1])
 # Exactly the files this run wrote: --override-filename gave them a name nothing
 # else in the tree can have. Residue from an older graph is invisible here.
 prefix = sys.argv[2]
+project_name = sys.argv[3]
+sys.path.insert(0, sys.argv[4])
+from check_license_policy import FIRST_PARTY_PROPERTY, first_party_roots
 
 # cargo-cyclonedx nests a component for each of a crate's build targets (its lib
 # and bins) under the crate, with the crate's bom-ref plus " bin-target-N". They
@@ -235,24 +238,38 @@ def without_targets(component):
             component["components"] = kept
     return component
 
-components = []
-seen = set()
+docs = []
 for path in sorted(pathlib.Path(".").rglob(f"{prefix}*")):
     if any(part in {"target", "venv", ".venv", "node_modules", "sbom"} for part in path.parts):
         continue
-    doc = json.loads(path.read_text(encoding="utf-8"))
-    for component in doc.get("components") or []:
-        key = (component.get("purl") or component.get("name"), component.get("version"))
+    docs.append(json.loads(path.read_text(encoding="utf-8")))
+
+# The scan roots that are the repository's own packages (first_party_roots says
+# which) are marked first-party, which the licence policy and NOTICE's
+# third-party list leave out, wherever they appear, including as another
+# member's path dependency. Packages are matched on bom-ref, which for a local
+# one names its manifest's path; its purl's download_url is relative to the
+# scan and differs between appearances, which listed one crate once per scan.
+roots = [m for doc in docs for m in [(doc.get("metadata") or {}).get("component")] if m]
+first_party = first_party_roots(roots, project_name, os.getcwd())
+
+def mark(component):
+    if component.get("bom-ref") in first_party:
+        props = [p for p in component.get("properties") or [] if p.get("name") != FIRST_PARTY_PROPERTY]
+        component = {**component, "properties": props + [{"name": FIRST_PARTY_PROPERTY, "value": "true"}]}
+    return component
+
+components = []
+seen = set()
+for doc in docs:
+    meta = (doc.get("metadata") or {}).get("component")
+    for component in (doc.get("components") or []) + ([meta] if meta else []):
+        # bom-ref names one package; a local package's purl does not (see above).
+        key = component.get("bom-ref") or (component.get("purl") or component.get("name"), component.get("version"))
         if key in seen:
             continue
         seen.add(key)
-        components.append(without_targets(component))
-    meta = (doc.get("metadata") or {}).get("component")
-    if meta:
-        key = (meta.get("purl") or meta.get("name"), meta.get("version"))
-        if key not in seen:
-            seen.add(key)
-            components.append(without_targets(meta))
+        components.append(mark(without_targets(component)))
 out.parent.mkdir(parents=True, exist_ok=True)
 with out.open("w", encoding="utf-8") as handle:
     json.dump({"bomFormat": "CycloneDX", "specVersion": "1.5", "components": components}, handle, indent=2)

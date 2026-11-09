@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A repository's own Rust crates no longer fail the licence check.** `generate_sbom.sh` listed each crate it scanned, the workspace members and the `SBOM_EXTRA_MANIFESTS` packages, as a dependency, so a proprietary repository failed on its own code unless it approved itself in `.github/license-approvals.json`. A scanned crate that declares the same licence and author as the repository's root package (the one at the repository root, or `PROJECT_NAME` in a virtual workspace) is now marked `au-zone:first-party`, which the licence check and NOTICE's third-party list leave out; the libraries it bundles are still checked. A crate vendored into the workspace under its own licence or author is checked as before.
+- **The Rust SBOM lists each package once.** The merge matched packages on their purl, whose `download_url` for a local crate is relative to each scan, so a crate other members depend on by path was listed once per scan. It now matches on the bom-ref.
+
 ## [5.1.0] - 2026-11-06
 
 ### Changed

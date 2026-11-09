@@ -97,6 +97,12 @@ DEFAULT_DYNAMIC: Set[str] = {"gstreamer", "glib", "libglib"}
 # linked into the package's own code.
 LINKAGE_PROPERTY = "au-zone:linkage"
 
+# CycloneDX property generate_sbom.sh sets to "true" on the repository's own
+# packages (see first_party_roots). Their licence is the repository's own
+# decision, not a dependency's, so the licence policy and NOTICE's third-party
+# list do not apply to them. A library one of them bundles is still checked.
+FIRST_PARTY_PROPERTY = "au-zone:first-party"
+
 
 def _split_csv(value: str) -> Set[str]:
     return {item.strip() for item in value.split(",") if item.strip()}
@@ -532,6 +538,57 @@ def iter_components(sbom: dict) -> Iterable[dict]:
         yield from _with_nested(component.get("components") or [])
 
 
+def is_first_party(component: dict) -> bool:
+    """Whether the SBOM marks this component as the repository's own package."""
+    return any(
+        prop.get("name") == FIRST_PARTY_PROPERTY
+        and str(prop.get("value", "")).lower() == "true"
+        for prop in component.get("properties") or []
+    )
+
+
+def _manifest_dir(bom_ref: str) -> Optional[str]:
+    """The directory a cargo-cyclonedx bom-ref names for a local package
+    (`path+file:///repo/crates/x#x@1.0`), or None for a registry one."""
+    if not bom_ref.startswith("path+file://"):
+        return None
+    return os.path.realpath(bom_ref[len("path+file://"):].split("#", 1)[0])
+
+
+def _owner(component: dict) -> Tuple[Tuple[str, ...], str]:
+    """What a package declares about who owns it: its licence declarations and
+    its author. Cargo records no copyright holder, so these stand in for one."""
+    licences = tuple(sorted(" ".join(e.split()).lower() for e in licenses_from_component(component)))
+    return licences, " ".join(str(component.get("author") or "").split()).lower()
+
+
+def first_party_roots(roots: List[dict], project_name: str, repo_root: str) -> Set[str]:
+    """bom-refs of the scanned packages that are the repository's own.
+
+    Each scan's root is a package this repository builds: a workspace member
+    or a manifest SBOM_EXTRA_MANIFESTS names. Being built here is not enough,
+    since a third-party crate vendored into the workspace is built here too.
+    A root is first-party when it declares the same licence and author as the
+    repository's root package: the one whose manifest is at the repository
+    root, or in a virtual workspace the one named PROJECT_NAME. With neither,
+    nothing is first-party and every package is checked as before."""
+    root_dir = os.path.realpath(repo_root)
+    local = [r for r in roots if _manifest_dir(r.get("bom-ref") or "")]
+    reference = next((r for r in local if _manifest_dir(r["bom-ref"]) == root_dir), None)
+    if reference is None:
+        reference = next((r for r in local if r.get("name") == project_name), None)
+    if reference is None or not licenses_from_component(reference):
+        return set()
+    owner = _owner(reference)
+    return {r["bom-ref"] for r in local if _owner(r) == owner}
+
+
+def third_party_components(sbom: dict) -> Iterable[dict]:
+    """The components the licence policy and NOTICE cover: every component
+    but the repository's own packages. What those bundle is still included."""
+    return (c for c in iter_components(sbom) if not is_first_party(c))
+
+
 # Cases that have actually broken the fleet, plus the operator semantics the
 # evaluator has to preserve. Run by the shared CI lint job.
 SELF_TEST_CASES = [
@@ -704,6 +761,49 @@ BUNDLED_CASES = [
 
 # Approval entries that must be refused: each field is the record a reviewer
 # signs, so none may be missing or empty.
+# Scan roots for first_party_roots: (roots, PROJECT_NAME, first-party names).
+_PROPRIETARY = [{"expression": "LicenseRef-EdgeFirst-Proprietary"}]
+
+
+def _root(name: str, path: str, licenses: list, author: str = "") -> dict:
+    root = {"name": name, "bom-ref": f"path+file://{path}#{name}@1.0.0", "licenses": licenses}
+    if author:
+        root["author"] = author
+    return root
+
+
+FIRST_PARTY_ROOT_CASES = [
+    # Members declaring the root package's licence are the repository's own.
+    ([_root("app", "/repo", _PROPRIETARY), _root("app-core", "/repo/crates/core", _PROPRIETARY)],
+     "app", ["app", "app-core"]),
+    # A vendored member with its own licence, or its own author, is not.
+    ([_root("app", "/repo", _PROPRIETARY),
+      _root("vendor-sdk", "/repo/vendor/sdk", [{"expression": "LicenseRef-Vendor-EULA"}])],
+     "app", ["app"]),
+    ([_root("app", "/repo", _PROPRIETARY, "Au-Zone Technologies"),
+      _root("vendor-sdk", "/repo/vendor/sdk", _PROPRIETARY, "Vendor Inc.")],
+     "app", ["app"]),
+    # A virtual workspace takes PROJECT_NAME's package as the root.
+    ([_root("lib-a", "/repo/crates/a", _PROPRIETARY), _root("lib-b", "/repo/crates/b", _PROPRIETARY)],
+     "lib-a", ["lib-a", "lib-b"]),
+    # No root package, or one without a licence: nothing is exempt.
+    ([_root("lib-a", "/repo/crates/a", _PROPRIETARY)], "other", []),
+    ([_root("app", "/repo", [])], "app", []),
+    # A registry package is never a scan root of this repository.
+    ([_root("app", "/repo", _PROPRIETARY),
+      {"name": "dep", "bom-ref": "registry+https://index#dep@1.0.0", "licenses": _PROPRIETARY}],
+     "app", ["app"]),
+]
+
+# (au-zone:first-party value, or None for no property; the components the
+# policy then walks).
+FIRST_PARTY_CASES = [
+    ("true", ["libbundled"]),
+    ("TRUE", ["libbundled"]),
+    ("false", ["edgefirst-app", "libbundled"]),
+    (None, ["edgefirst-app", "libbundled"]),
+]
+
 INVALID_APPROVALS = [
     [],
     {"vendor-sdk@1.0.0": "NXP Proprietary"},
@@ -851,6 +951,31 @@ def run_self_test() -> int:
                 f"{expected}, got {status} [{license_id}] {detail}"
             )
 
+    # The repository's own packages are left out of the policy, and only
+    # those: a library one of them bundles, and a package marked anything but
+    # "true", are still checked.
+    for marker, expected_walk in FIRST_PARTY_CASES:
+        bundled = {"name": "libbundled", "licenses": [{"expression": "MIT"}]}
+        own = {"name": "edgefirst-app", "version": "1.0.0",
+               "licenses": [{"expression": "LicenseRef-EdgeFirst-Proprietary"}],
+               "components": [bundled]}
+        if marker is not None:
+            own["properties"] = [{"name": FIRST_PARTY_PROPERTY, "value": marker}]
+        walked = [c.get("name") for c in third_party_components({"components": [own]})]
+        if walked != expected_walk:
+            failures.append(
+                f"  first-party marker {marker!r}: expected {expected_walk}, got {walked}"
+            )
+
+    for roots, project, expected_names in FIRST_PARTY_ROOT_CASES:
+        refs = first_party_roots(roots, project, "/repo")
+        got = sorted(r["name"] for r in roots if r.get("bom-ref") in refs)
+        if got != sorted(expected_names):
+            failures.append(
+                f"  first-party roots of {[r['name'] for r in roots]} ({project}): "
+                f"expected {expected_names}, got {got}"
+            )
+
     if failures:
         print("license policy self-test FAILED:")
         print("\n".join(failures))
@@ -859,6 +984,7 @@ def run_self_test() -> int:
         len(COMPONENT_CASES) + len(APPROVAL_CASES) + len(INVALID_APPROVALS)
         + len(SELF_TEST_CASES) + 1
         + len(blocked_casings) + len(review_casings) + len(BUNDLED_CASES)
+        + len(FIRST_PARTY_CASES) + len(FIRST_PARTY_ROOT_CASES)
     )
     print(f"license policy self-test passed ({total} cases)")
     return 0
@@ -894,7 +1020,12 @@ def main() -> int:
     failures: List[str] = []
     warnings: List[str] = []
     ok_count = 0
-    for component in iter_components(sbom):
+    first_party = sorted({
+        component_key(c) for c in iter_components(sbom) if is_first_party(c)
+    })
+    if first_party:
+        print(f"First-party packages, not checked: {', '.join(first_party)}")
+    for component in third_party_components(sbom):
         status, _license, detail = evaluate_component(
             component, rust, dynamic, approvals
         )
