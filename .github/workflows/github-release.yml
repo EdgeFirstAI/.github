@@ -32,7 +32,7 @@ jobs:
           body = match.group(1).strip() if match else f"Shared CI workflows v{version}"
           pathlib.Path("RELEASE_NOTES.md").write_text(body + "\n", encoding="utf-8")
           PY
-      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
+      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3  # v3.0.4
         with:
           body_path: RELEASE_NOTES.md
           generate_release_notes: false
