@@ -17,14 +17,15 @@ from typing import List
 
 # Components are walked as the licence check walks them, nested ones (the
 # libraries a package bundles) included.
-from check_license_policy import iter_components
+from check_license_policy import FIRST_PARTY_PROPERTY, third_party_components
 
 
 def notice_gaps(sbom: dict, text: str) -> List[str]:
-    """Components NOTICE does not name, each once, in SBOM order."""
+    """Third-party components NOTICE does not name, each once, in SBOM order.
+    The repository's own packages are not third-party and need no entry."""
     notice_lower = text.lower()
     missing: List[str] = []
-    for component in iter_components(sbom):
+    for component in third_party_components(sbom):
         name = component.get("name") or ""
         if name and name.lower() not in notice_lower and name not in missing:
             missing.append(name)
@@ -67,11 +68,21 @@ def run_self_test() -> int:
     required = notice_gaps(nested, "Copyright 2026 Au-Zone\nhost-package")
     if required != ["vendor-blob", "libquadmath"]:
         failures.append(f"  nested libraries: required gaps expected ['vendor-blob', 'libquadmath'], got {required}")
+    # The repository's own package needs no entry; what it bundles still does.
+    own = {"components": [{
+        "name": "edgefirst-app", "version": "1.0.0",
+        "licenses": [{"expression": "LicenseRef-EdgeFirst-Proprietary"}],
+        "properties": [{"name": FIRST_PARTY_PROPERTY, "value": "true"}],
+        "components": [{"name": "libbundled", "licenses": [{"expression": "MIT"}]}],
+    }]}
+    required = notice_gaps(own, "Copyright 2026 Au-Zone")
+    if required != ["libbundled"]:
+        failures.append(f"  first-party package: required gaps expected ['libbundled'], got {required}")
     if failures:
         print("validate_notice self-test FAILED:")
         print("\n".join(failures))
         return 1
-    print(f"validate_notice self-test passed ({len(SELF_TEST_CASES) + 1} cases)")
+    print(f"validate_notice self-test passed ({len(SELF_TEST_CASES) + 2} cases)")
     return 0
 
 

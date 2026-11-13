@@ -23,7 +23,9 @@ import sys
 from typing import List, Optional, Tuple
 
 from check_license_policy import (
+    FIRST_PARTY_PROPERTY,
     LINKAGE_PROPERTY,
+    is_first_party,
     RANK_PROPRIETARY,
     evaluate_expression,
     licenses_from_component,
@@ -72,6 +74,11 @@ def _component_lines(components: List[dict], indent: str) -> List[str]:
     lines: List[str] = []
     for component in sorted(components, key=lambda c: (c.get("name") or "").lower()):
         name = component.get("name") or ""
+        if is_first_party(component):
+            # The repository's own package is not a third-party component; the
+            # libraries it bundles are, listed where it would have been.
+            lines.extend(_component_lines(component.get("components") or [], indent))
+            continue
         if not name:
             continue
         licence, rank = judged_licence(component)
@@ -116,6 +123,9 @@ def run_self_test() -> int:
              "components": [{"name": "libquadmath", "licenses": [{"license": {"name": "LGPL-2.1-or-later"}}],
                              "properties": [{"name": LINKAGE_PROPERTY, "value": "dynamic"}]}]},
             {"name": "Vendor-SDK", "licenses": [{"license": {"name": "Vendor Proprietary EULA"}}]},
+            {"name": "probe-app-core", "licenses": [{"expression": "LicenseRef-EdgeFirst-Proprietary"}],
+             "properties": [{"name": FIRST_PARTY_PROPERTY, "value": "true"}],
+             "components": [{"name": "libvendored", "licenses": [{"expression": "MIT"}]}]},
         ],
     }
     existing = (
@@ -137,6 +147,9 @@ def run_self_test() -> int:
         ("marks a proprietary component", "proprietary" in notice.split("Vendor-SDK")[1].splitlines()[0]),
         ("sorts by name, ignoring case", notice.index("numpy") < notice.index("Vendor-SDK") < notice.index("zlib-py")),
         ("is stable when run again", render_notice(sbom, notice, 2026) == notice),
+        ("leaves the repository's own package out", "probe-app-core" not in notice),
+        ("lists what the repository's own package bundles",
+         "\n    libvendored" in notice and "bundles libvendored" not in notice),
         ("keeps a NOTICE without the heading whole",
          render_notice(sbom, "Probe App\nCopyright (c) 2026 Au-Zone\n", 2026).startswith("Probe App\nCopyright (c) 2026 Au-Zone\n\n" + HEADING)),
     ]
