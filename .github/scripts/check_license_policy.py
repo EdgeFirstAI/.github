@@ -11,6 +11,7 @@ Exit 1 on blocked licenses, LGPL in Rust, or unapproved proprietary.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -555,11 +556,44 @@ def _manifest_dir(bom_ref: str) -> Optional[str]:
     return os.path.realpath(bom_ref[len("path+file://"):].split("#", 1)[0])
 
 
-def _owner(component: dict) -> Tuple[Tuple[str, ...], str]:
-    """What a package declares about who owns it: its licence declarations and
-    its author. Cargo records no copyright holder, so these stand in for one."""
-    licences = tuple(sorted(" ".join(e.split()).lower() for e in licenses_from_component(component)))
-    return licences, " ".join(str(component.get("author") or "").split()).lower()
+def _licence_text(license_obj: dict) -> Optional[str]:
+    """The licence text a CycloneDX licence carries, decoded, or None."""
+    text = license_obj.get("text") or {}
+    content = text.get("content")
+    if not isinstance(content, str) or not content.strip():
+        return None
+    if text.get("encoding") == "base64":
+        try:
+            return base64.b64decode(content).decode("utf-8", errors="replace")
+        except ValueError:
+            return None
+    return content
+
+
+def _owner(component: dict) -> Optional[Tuple[Tuple[str, ...], str]]:
+    """What a package declares about who owns it: its licences and its author.
+    Cargo records no copyright holder, so these stand in for one.
+
+    A licence counts only as an SPDX expression or as the text of a licence
+    file. cargo-cyclonedx names every `license-file` licence `Unknown`, so for
+    one of those the text is the licence and the name says nothing. A package
+    with a bare name (that placeholder without its text, or a non-SPDX string)
+    has no owner identity and is never first-party."""
+    licences: List[str] = []
+    for entry in component.get("licenses") or []:
+        license_obj = entry.get("license") or {}
+        text = _licence_text(license_obj)
+        if "expression" in entry:
+            licences.append(" ".join(normalize_license(entry["expression"]).split()).lower())
+        elif "id" in license_obj:
+            licences.append(normalize_license(license_obj["id"]).lower())
+        elif text is not None:
+            licences.append("text:" + licence_document_digest(text))
+        else:
+            return None
+    if not licences:
+        return None
+    return tuple(sorted(licences)), " ".join(str(component.get("author") or "").split()).lower()
 
 
 def first_party_roots(roots: List[dict], project_name: str, repo_root: str) -> Set[str]:
@@ -569,17 +603,18 @@ def first_party_roots(roots: List[dict], project_name: str, repo_root: str) -> S
     or a manifest SBOM_EXTRA_MANIFESTS names. Being built here is not enough,
     since a third-party crate vendored into the workspace is built here too.
     A root is first-party when it declares the same licence and author as the
-    repository's root package: the one whose manifest is at the repository
-    root, or in a virtual workspace the one named PROJECT_NAME. With neither,
-    nothing is first-party and every package is checked as before."""
+    repository's root package (see _owner): the one whose manifest is at the
+    repository root, or in a virtual workspace the one named PROJECT_NAME.
+    Without a root package that has an owner identity, nothing is first-party
+    and every package is checked as before."""
     root_dir = os.path.realpath(repo_root)
     local = [r for r in roots if _manifest_dir(r.get("bom-ref") or "")]
     reference = next((r for r in local if _manifest_dir(r["bom-ref"]) == root_dir), None)
     if reference is None:
         reference = next((r for r in local if r.get("name") == project_name), None)
-    if reference is None or not licenses_from_component(reference):
+    owner = _owner(reference) if reference is not None else None
+    if owner is None:
         return set()
-    owner = _owner(reference)
     return {r["bom-ref"] for r in local if _owner(r) == owner}
 
 
@@ -759,10 +794,14 @@ BUNDLED_CASES = [
     ("LGPL-2.1-or-later", "dynamic", True, "fail"),
 ]
 
-# Approval entries that must be refused: each field is the record a reviewer
-# signs, so none may be missing or empty.
-# Scan roots for first_party_roots: (roots, PROJECT_NAME, first-party names).
 _PROPRIETARY = [{"expression": "LicenseRef-EdgeFirst-Proprietary"}]
+_UNKNOWN = [{"license": {"name": "Unknown"}}]
+
+
+def _licence_file(text: str) -> list:
+    """A `license-file` licence as cargo-cyclonedx writes it."""
+    content = base64.b64encode(text.encode("utf-8")).decode("ascii")
+    return [{"license": {"name": "Unknown", "text": {"encoding": "base64", "content": content}}}]
 
 
 def _root(name: str, path: str, licenses: list, author: str = "") -> dict:
@@ -772,6 +811,7 @@ def _root(name: str, path: str, licenses: list, author: str = "") -> dict:
     return root
 
 
+# Scan roots for first_party_roots: (roots, PROJECT_NAME, first-party names).
 FIRST_PARTY_ROOT_CASES = [
     # Members declaring the root package's licence are the repository's own.
     ([_root("app", "/repo", _PROPRIETARY), _root("app-core", "/repo/crates/core", _PROPRIETARY)],
@@ -793,6 +833,21 @@ FIRST_PARTY_ROOT_CASES = [
     ([_root("app", "/repo", _PROPRIETARY),
       {"name": "dep", "bom-ref": "registry+https://index#dep@1.0.0", "licenses": _PROPRIETARY}],
      "app", ["app"]),
+    # license-file crates all carry the label "Unknown": the licence text
+    # decides. A member sharing the root's licence file is the repository's
+    # own; a vendored crate with a different file is not, author or no author.
+    ([_root("app", "/repo", _licence_file("Au-Zone proprietary terms")),
+      _root("app-core", "/repo/crates/core", _licence_file("Au-Zone  proprietary\nterms")),
+      _root("vendor-gpl", "/repo/vendor/gpl", _licence_file("GNU GENERAL PUBLIC LICENSE"))],
+     "app", ["app", "app-core"]),
+    # A bare label is no licence identity: the placeholder without its text,
+    # or a non-SPDX string, exempts nothing, as the root or as a member.
+    ([_root("app", "/repo", _UNKNOWN), _root("vendor-sdk", "/repo/vendor/sdk", _UNKNOWN)],
+     "app", []),
+    ([_root("app", "/repo", [{"license": {"name": "Proprietary"}}])], "app", []),
+    ([_root("app", "/repo", _PROPRIETARY),
+      _root("vendor-sdk", "/repo/vendor/sdk", _PROPRIETARY + _UNKNOWN)],
+     "app", ["app"]),
 ]
 
 # (au-zone:first-party value, or None for no property; the components the
@@ -804,6 +859,8 @@ FIRST_PARTY_CASES = [
     (None, ["edgefirst-app", "libbundled"]),
 ]
 
+# Approval entries that must be refused: each field is the record a reviewer
+# signs, so none may be missing or empty.
 INVALID_APPROVALS = [
     [],
     {"vendor-sdk@1.0.0": "NXP Proprietary"},

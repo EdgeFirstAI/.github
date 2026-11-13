@@ -139,6 +139,25 @@ def merge_identity(component: Mapping[str, Any]) -> Any:
     )
 
 
+def purl_package(purl: str) -> str:
+    """A purl without its qualifiers and subpath: the package it names.
+
+    cargo-cyclonedx qualifies a local crate's purl with a `download_url`, and
+    ScanCode names the same crate from its Cargo.toml without one."""
+    return purl.split("#", 1)[0].split("?", 1)[0]
+
+
+def source_only(dependency: Iterable[Mapping[str, Any]],
+                source: Iterable[Mapping[str, Any]]) -> List[Mapping[str, Any]]:
+    """The source-scan components the dependency scan does not already list.
+
+    The dependency scan's entry for a package is the one the licence policy
+    and NOTICE judge, with its first-party marking and detected licence, so a
+    source-scan copy of it would only be judged again without them."""
+    listed = {purl_package(c["purl"]) for c in dependency if c.get("purl")}
+    return [c for c in source if not (c.get("purl") and purl_package(c["purl"]) in listed)]
+
+
 def _self_test() -> None:
     package = {
         "name": "serde",
@@ -186,6 +205,18 @@ def _self_test() -> None:
     assert merge_identity(scancode) == merge_identity(
         {"name": "serde", "version": "1.0.0", "purl": "pkg:cargo/serde@1.0.0"}
     )
+
+    local = {"name": "app-core", "version": "1.0.0",
+             "purl": "pkg:cargo/app-core@1.0.0?download_url=file://crates/core"}
+    found = [
+        {"name": "app-core", "version": "1.0.0", "purl": "pkg:cargo/app-core@1.0.0"},
+        {"name": "app-core", "version": "2.0.0", "purl": "pkg:cargo/app-core@2.0.0"},
+        {"name": "vendored", "version": "0.1.0", "purl": "pkg:cargo/vendored@0.1.0"},
+        {"name": "unnamed", "version": "0.1.0"},
+    ]
+    assert [c.get("purl") or c["name"] for c in source_only([local], found)] == [
+        "pkg:cargo/app-core@2.0.0", "pkg:cargo/vendored@0.1.0", "unnamed"
+    ]
 
 
 def main() -> int:

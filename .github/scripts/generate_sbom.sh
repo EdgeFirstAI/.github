@@ -433,9 +433,11 @@ generate_source_sbom() {
 }
 
 merge_sboms() {
-  python3 - "$DEP_SBOM" "$SRC_SBOM" "$MERGED_SBOM" "$PROJECT_NAME" "$VERSION" "$PROJECT_TYPE" <<'PY'
+  python3 - "$DEP_SBOM" "$SRC_SBOM" "$MERGED_SBOM" "$PROJECT_NAME" "$VERSION" "$PROJECT_TYPE" "$SCRIPT_DIR" <<'PY'
 import json, sys
-dep_path, src_path, out_path, name, version, project_type = sys.argv[1:7]
+dep_path, src_path, out_path, name, version, project_type, script_dir = sys.argv[1:8]
+sys.path.insert(0, script_dir)
+from scancode_packages_to_cyclonedx import merge_identity, source_only
 
 def load(path):
     try:
@@ -446,15 +448,12 @@ def load(path):
 
 dep = load(dep_path)
 src = load(src_path)
+dep_components = dep.get("components") or []
 components = []
 seen = set()
-for bom in (dep, src):
-    for component in bom.get("components") or []:
-        key = (
-            component.get("purl")
-            or component.get("bom-ref")
-            or (component.get("name"), component.get("version"))
-        )
+for bom_components in (dep_components, source_only(dep_components, src.get("components") or [])):
+    for component in bom_components:
+        key = merge_identity(component)
         if key in seen:
             continue
         seen.add(key)
