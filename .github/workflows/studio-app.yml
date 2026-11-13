@@ -166,8 +166,9 @@ jobs:
             exit 1
           fi
 
-      # The version's own tag, whatever ref the run was dispatched from: the
-      # commands and the files they read (an app's schema, its list of
+      # The version's own tag, whatever ref the run was dispatched from. The
+      # commands come from the caller at the dispatch ref, but the scripts
+      # they run and the files those read (an app's schema, its list of
       # supported SDKs) must describe the image being deployed, not a later
       # main.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
