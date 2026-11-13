@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`studio-app.yml` deploys a version with the scripts and schema of its own tag.** It checked out the ref the run was dispatched from, so a deploy to dev, test or stage dispatched from `main` registered an older image with `main`'s commands and published `main`'s schema: an SDK added on `main` was offered for an image that does not contain it, and one removed on `main` was hidden though the image has it. The job now checks out `vX.Y.Z` and stops before touching a credential when that tag does not exist. A version whose tag predates the app's `studio.yml` can no longer be deployed through it.
+
 ## [5.1.0] - 2026-11-06
 
 ### Changed

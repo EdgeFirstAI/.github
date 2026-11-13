@@ -19,7 +19,9 @@
 # Promote to saas (or ocean) only a version tested on test or stage, and only
 # with another developer's agreement. studio-saas and studio-ocean accept runs
 # from v* tags only, so dispatch those from the release tag ("Use workflow
-# from" -> the tag); dev, test and stage also accept main.
+# from" -> the tag); dev, test and stage also accept main. Whatever the ref,
+# studio-app.yml runs the commands below from the version's own vX.Y.Z tag, so
+# the schema and scripts deployed always match the image.
 #
 # Needs, per repository: the variable AWS_STUDIO_PUBLISH_ROLE_ARN (the app's
 # publish role), and the environments studio-<server> each holding the
