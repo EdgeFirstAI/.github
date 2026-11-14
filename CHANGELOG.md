@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.1.1] - 2026-11-13
+
 ### Fixed
 
 - **`studio-app.yml` deploys a version with the scripts and schema of its own tag.** It checked out the ref the run was dispatched from, so a deploy to dev, test or stage dispatched from `main` registered an older image with `main`'s scripts and published `main`'s schema: an SDK added on `main` was offered for an image that does not contain it, and one removed on `main` was hidden though the image has it. The job now checks out `vX.Y.Z` and stops before touching a credential when that tag does not exist. The caller's commands still come from the dispatch ref, so the tag must hold the files they run, and its scripts must register by the digests in `STUDIO_IMAGES`; a tag whose scripts predate that contract can no longer be deployed through it.
@@ -606,6 +608,7 @@ Everything here is exercised by a real release: `EdgeFirstAI/ara2-rs` v0.18.0 wa
   precedence over `ci:hardware`. PyPI publish requires the reusable release
   job to succeed.
 
+[5.1.1]: https://github.com/EdgeFirstAI/.github/compare/v5.1.0...v5.1.1
 [5.1.0]: https://github.com/EdgeFirstAI/.github/compare/v5.0.0...v5.1.0
 [5.0.0]: https://github.com/EdgeFirstAI/.github/compare/v4.0.0...v5.0.0
 [4.0.0]: https://github.com/EdgeFirstAI/.github/compare/v3.1.0...v4.0.0
