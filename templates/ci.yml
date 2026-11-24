@@ -91,7 +91,7 @@ jobs:
       python: false
       # Optional: caller setup after checkout (OpenCV, ANGLE, testdata).
       # pre-command: bash .github/scripts/ci-setup.sh
-      # nextest-args: --workspace --locked -j 1
+      # nextest-args: --workspace --locked
 
   full:
     needs: changes
@@ -106,7 +106,7 @@ jobs:
       # these for the self-hosted fleet either way.
       runner-class-linux: larger
       # board-pre-command: SKIP_PACKAGES=1 bash .github/scripts/ci-setup.sh
-      # board-extra-args: -j 1 --profile ci
+      # board-extra-args: --profile ci
       # archive-args: --locked --package your-on-target-crate
     secrets: inherit
 

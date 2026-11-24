@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Board binaries run at libtest's default thread count.** `board-run` no longer passes `--test-threads=1` to each `binaries` entry. A repository whose tests can't share a process sets the new `binary-args` input (`board-binary-args` in `rust-full.yml`), for example `--test-threads=1`, and states why at the call site.
+
 ## [5.1.1] - 2026-11-13
 
 ### Fixed
