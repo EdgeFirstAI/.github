@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`templates/actionlint.yaml` lists the organisation's larger-runner labels.** actionlint does not know `ubuntu-24.04-xlarge`, `ubuntu-24.04-arm-xlarge`, `ubuntu-22.04-arm-xlarge` or `windows-latest-16-cores`, the labels the `larger` runner class resolves to, and reports them as unknown. A repository copies the template to `.github/actionlint.yaml` and adds its own self-hosted labels. The macOS larger runners, such as `macos-latest-xlarge`, are built into actionlint and need no entry.
+- **`templates/actionlint.yaml` lists the organisation's larger-runner labels.** actionlint does not know the organisation's larger runners (`ubuntu-22.04-large`, `ubuntu-22.04-xlarge`, `ubuntu-22.04-arm-private`, `ubuntu-22.04-arm-large`, `ubuntu-22.04-arm-xlarge`, `ubuntu-24.04-xlarge`, `ubuntu-24.04-arm-xlarge` and `windows-latest-16-cores`) and reports them as unknown. A repository copies the template to `.github/actionlint.yaml` and adds its own self-hosted labels. The macOS larger runners, such as `macos-latest-xlarge`, are built into actionlint and need no entry.
 
 ### Changed
 
