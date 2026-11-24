@@ -1,0 +1,7 @@
+self-hosted-runner:
+  labels:
+    # Organisation larger runners
+    - ubuntu-24.04-xlarge
+    - ubuntu-24.04-arm-xlarge
+    - ubuntu-22.04-arm-xlarge
+    - windows-latest-16-cores

@@ -30,7 +30,7 @@ The organisation profile README lives in [`profile/`](profile/README.md).
 | `.github/scripts/` | license policy, the SHA-pin check, the workspace version check, lane resolution, wheel data staging, the runner-fleet converger (single copy each) |
 | `.github/rulesets/` | `protect-main` (reviews; org-admin PR bypass), `protect-main-ci` (ci-gate, no bypass), `protect-release-tags` |
 | `.github/rulesets/runners.json` | declarative runner *group settings* only (visibility, public-repository access) — no runner names; see `runner-groups.md` |
-| `templates/` | per-repo `ci.yml` (`ci-python.yml` for a pure-Python repository), `nightly.yml`, `release.yml`, `tag-release.yml`, `publish.yml`, the container set `release-image.yml` (one Dockerfile) or `release-container.yml` (several images) / `publish-container.yml` / `studio.yml`, plus `CODEOWNERS` and `dependabot.yml` |
+| `templates/` | per-repo `ci.yml` (`ci-python.yml` for a pure-Python repository), `nightly.yml`, `release.yml`, `tag-release.yml`, `publish.yml`, the container set `release-image.yml` (one Dockerfile) or `release-container.yml` (several images) / `publish-container.yml` / `studio.yml`, plus `CODEOWNERS`, `dependabot.yml` and `actionlint.yaml` |
 
 ## Pinning
 

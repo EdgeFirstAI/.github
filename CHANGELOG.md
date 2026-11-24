@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`templates/actionlint.yaml` lists the organisation's larger-runner labels.** actionlint does not know `ubuntu-24.04-xlarge`, `ubuntu-24.04-arm-xlarge`, `ubuntu-22.04-arm-xlarge` or `windows-latest-16-cores`, the labels the `larger` runner class resolves to, and reports them as unknown. A repository copies the template to `.github/actionlint.yaml` and adds its own self-hosted labels. The macOS larger runners, such as `macos-latest-xlarge`, are built into actionlint and need no entry.
+
 ### Changed
 
 - **Board binaries run at libtest's default thread count.** `board-run` no longer passes `--test-threads=1` to each `binaries` entry. A repository whose tests can't share a process sets the new `binary-args` input (`board-binary-args` in `rust-full.yml`), for example `--test-threads=1`, and states why at the call site.
