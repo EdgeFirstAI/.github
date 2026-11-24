@@ -128,11 +128,19 @@ on:
         type: string
         default: "0"
       board-extra-args:
-        description: Extra args for cargo nextest run on the board (e.g. -j 1). Not used for archive.
+        description: Extra args for cargo nextest run on the board. Not used for archive or board-binaries.
+        type: string
+        default: ""
+      board-binary-args:
+        description: >-
+          Extra libtest arguments for each board-binaries entry, such as
+          `--test-threads=1`. Empty runs each binary at libtest's default
+          thread count. A caller that limits threads states why at the call
+          site.
         type: string
         default: ""
       archive-args:
-        description: Args for cargo nextest archive. Empty uses nextest-args (do not put -j 1 here).
+        description: Args for cargo nextest archive. Empty uses nextest-args. Takes no run options such as -j.
         type: string
         default: ""
       archive-profile:
@@ -839,6 +847,7 @@ jobs:
           command: ${{ inputs.board-command }}
           extra-args: ${{ inputs.board-extra-args }}
           binaries: ${{ inputs.board-binaries }}
+          binary-args: ${{ inputs.board-binary-args }}
           min-tests: ${{ inputs.board-min-tests }}
           archive-artifact: nextest-archive-aarch64
           profraw-artifact: coverage-hardware-${{ matrix.runner }}

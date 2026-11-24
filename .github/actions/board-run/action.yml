@@ -36,6 +36,13 @@ inputs:
       empty to run the archive through nextest instead.
     required: false
     default: ""
+  binary-args:
+    description: >-
+      Extra libtest arguments for each binary in `binaries`, such as
+      `--test-threads=1`. Empty runs each binary at libtest's default thread
+      count.
+    required: false
+    default: ""
   min-tests:
     description: >-
       Fail if fewer than this many tests were executed. Guards against a
@@ -112,6 +119,7 @@ runs:
         PROFRAW_DIR: ${{ inputs.profraw-dir }}
         NEXTEST_BIN: ${{ steps.probe.outputs.runner }}
         BINARIES: ${{ inputs.binaries }}
+        BINARY_ARGS: ${{ inputs.binary-args }}
         MIN_TESTS: ${{ inputs.min-tests }}
         TMPDIR: ${{ github.workspace }}/board-tmp
         TMP: ${{ github.workspace }}/board-tmp
@@ -169,10 +177,11 @@ runs:
           # errexit comes off around the pipeline instead, because a failing
           # test binary is an expected outcome here, not a script error.
           set +e
+          # shellcheck disable=SC2086  # BINARY_ARGS is an argument list and must split
           if [[ -n "$filter" ]]; then
-            "$bin" "$filter" --test-threads=1 2>&1 | tee "$log"
+            "$bin" "$filter" $BINARY_ARGS 2>&1 | tee "$log"
           else
-            "$bin" --test-threads=1 2>&1 | tee "$log"
+            "$bin" $BINARY_ARGS 2>&1 | tee "$log"
           fi
           # One assignment: reading ${PIPESTATUS[0]} is itself a command, and
           # that resets PIPESTATUS to a single element, so a second read for
