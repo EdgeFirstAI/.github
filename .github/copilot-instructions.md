@@ -10,6 +10,7 @@ Source of truth: [EdgeFirstAI/.github/.github/copilot-instructions.md](https://g
 - Commits: `EDGEAI-123: Imperative summary` plus DCO (`git commit -s`).
 - Land via pull request. Do not push to `main` or create `v*` tags by hand.
 - Authors who are not organisation admins need one approving review (CODEOWNERS on owned paths). Organisation admins may merge their own PRs without a human approval and may rely on Copilot code review. `ci-gate` is still required for every merge, including admin merges.
+- In repositories with the `review_gate` property, every review comment on a PR into `main` or `develop` must be answered, Copilot's and people's alike. Reply with how you addressed it or why it doesn't apply, then resolve it. The `review-gate` check fails until every thread has a reply, and the merge waits until every thread is resolved. No one bypasses this, admins included. `develop` needs no human approval, so you may merge your own PR there once this is done; `main` keeps the approval rule above. Direct pushes and force-pushes to either branch are rejected.
 - Open long-running work as **draft** PRs. Drafts run no CI. Mark ready when you want the Quick tier.
 
 ## CRITICAL: stay at the repository root
