@@ -26,11 +26,11 @@ The organisation profile README lives in [`profile/`](profile/README.md).
 | `.github/workflows/publish-container.yml` | tag side: promote the release build's recorded image digests, unchanged |
 | `.github/workflows/release-image.yml` | release-branch side for a single-Dockerfile image: build, push the candidate to the app's ECR repository, record its digest |
 | `.github/workflows/studio-app.yml` | on demand: register a published version on one Studio server, by digest, from its `studio-<server>` environment |
-| `.github/actions/` | `setup-rust`, `setup-python-uv`, `codeartifact-login`, `sbom-tools`, `board-run`, `resolve-release-build`, `resolve-lanes`, `verify-workspace-versions`, `maturin-build`, `wheel-data`, `stage-pypi`, `record-image-digests`, `registry-login`, `workflow-lint` |
-| `.github/scripts/` | license policy, the SHA-pin check, the workspace version check, lane resolution, wheel data staging, the runner-fleet converger (single copy each) |
-| `.github/rulesets/` | `protect-main` (reviews; org-admin PR bypass), `protect-main-ci` (ci-gate, no bypass), `protect-release-tags` |
+| `.github/actions/` | `setup-rust`, `setup-python-uv`, `codeartifact-login`, `sbom-tools`, `board-run`, `resolve-release-build`, `resolve-lanes`, `verify-workspace-versions`, `maturin-build`, `wheel-data`, `stage-pypi`, `record-image-digests`, `registry-login`, `workflow-lint`, `review-gate` |
+| `.github/scripts/` | license policy, the SHA-pin check, the workspace version check, lane resolution, wheel data staging, the runner-fleet converger, the review-reply check (single copy each) |
+| `.github/rulesets/` | `protect-main` (reviews; org-admin PR bypass), `protect-main-ci` (ci-gate, no bypass), `protect-release-tags`, `protect-review` (`main` and `develop` in `review_gate` repos: every review comment answered and resolved, `review-gate`; no bypass) |
 | `.github/rulesets/runners.json` | declarative runner *group settings* only (visibility, public-repository access) — no runner names; see `runner-groups.md` |
-| `templates/` | per-repo `ci.yml` (`ci-python.yml` for a pure-Python repository), `nightly.yml`, `release.yml`, `tag-release.yml`, `publish.yml`, the container set `release-image.yml` (one Dockerfile) or `release-container.yml` (several images) / `publish-container.yml` / `studio.yml`, plus `CODEOWNERS`, `dependabot.yml` and `actionlint.yaml` |
+| `templates/` | per-repo `ci.yml` (`ci-python.yml` for a pure-Python repository), `nightly.yml`, `release.yml`, `tag-release.yml`, `publish.yml`, the container set `release-image.yml` (one Dockerfile) or `release-container.yml` (several images) / `publish-container.yml` / `studio.yml`, `review-gate.yml`, plus `CODEOWNERS`, `dependabot.yml` and `actionlint.yaml` |
 
 ## Pinning
 
@@ -123,6 +123,8 @@ Rehearse before the first tag in a repository: `publish.yml` takes a `workflow_d
 Release candidates: `release/X.Y.Z-rcN` builds and tags exactly like a final release, but crates.io and PyPI are used **only when the manifest version is exactly the tag version**. A candidate whose manifests still carry `X.Y.Z` gets a GitHub pre-release with all its artifacts and no registry upload, because publishing `X.Y.Z` from a candidate would consume the immutable version the final release needs. **Re-point the PyPI and crates.io Trusted Publishers to `publish.yml` first** — they match on workflow filename, and a rehearsal cannot catch a stale one because it skips the upload.
 
 Do not tag by hand. Org rulesets in `.github/rulesets/` enforce `ci-gate` on migrated repos and restrict `v*` tag creation. Org admins may merge their own PRs without a human approval; other authors still need a review. `ci-gate` is required for everyone.
+
+In a repository with the `review_gate` property set, every review comment on a PR into `main` or `develop` must be answered before merging, whether Copilot or a person left it. Reply saying how it was addressed or why it doesn't apply, then resolve it. The `review-gate` check (from `templates/review-gate.yml`) requires a Copilot review and a reply on every thread; the ruleset requires every thread resolved. Nobody bypasses it, admins included. `main` still needs a human approval, which admins may skip on their own PRs. `develop` needs none, so authors merge their own PRs there. Copy the template into the repository before setting the property, or merges wait on a check that never reports.
 
 ## Applying org settings
 

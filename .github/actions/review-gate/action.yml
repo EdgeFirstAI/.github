@@ -1,0 +1,17 @@
+name: Review gate
+description: Pass when Copilot has reviewed the pull request and every review comment has a reply
+inputs:
+  token:
+    description: Token with pull-requests read access
+    required: false
+    default: ${{ github.token }}
+runs:
+  using: composite
+  steps:
+    - name: Check review replies
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        SCRIPT_DIR: ${{ github.action_path }}/../../scripts
+      run: python3 "$SCRIPT_DIR/check_review_gate.py"

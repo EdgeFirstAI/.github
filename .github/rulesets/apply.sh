@@ -20,12 +20,28 @@
 # protect-release-tags stays ~ALL so v* tags cannot be created by hand in any
 # repo. That is independent of the ci-gate rollout.
 #
+# protect-review targets the organisation custom property `review_gate`,
+# which this script creates. Onboard a repository with
+#
+#   gh api --method PATCH orgs/EdgeFirstAI/properties/values \
+#     -f 'repository_names[]=<repo>' \
+#     -f 'properties[][property_name]=review_gate' -f 'properties[][value]=true'
+#
+# Set it only once the repository has templates/review-gate.yml as
+# .github/workflows/review-gate.yml, or merges to main and develop wait on a
+# check that never reports.
+#
 # protect-main: reviews. Org admins may merge their own PRs without a human
 # approval (Copilot review is enough for them). Everyone else still needs a
 # review. protect-main-ci: ci-gate, no force-push, no deletion; no bypass.
 # protect-release-tags: block create/move/delete of v* tags. GitHub's built-in
 # Actions app (15368) cannot be a bypass actor at org level; tag-release must
 # use RELEASE_TAG_TOKEN owned by an OrganizationAdmin.
+# protect-review (main and develop): PR required, every conversation
+# resolved, Copilot review on each push, review-gate required, no force-push,
+# no deletion; no bypass. It sets no approval count, so develop needs none and
+# main keeps the approval protect-main and the `main` ruleset require, along
+# with their admin bypass of it.
 
 set -euo pipefail
 ORG="${ORG:-EdgeFirstAI}"
@@ -33,7 +49,11 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 # gh --jq is used throughout rather than a standalone jq binary, which is not
 # present on a stock Git Bash and made this script unrunnable on Windows.
-for spec in protect-main.json protect-main-ci.json protect-release-tags.json; do
+gh api --method PUT "orgs/${ORG}/properties/schema/review_gate" \
+  -f value_type=true_false \
+  -f description='main and develop require Copilot review and a reply to every review comment' > /dev/null
+
+for spec in protect-main.json protect-main-ci.json protect-release-tags.json protect-review.json; do
   name="${spec%.json}"
   existing="$(gh api "orgs/${ORG}/rulesets" --jq ".[] | select(.name==\"${name}\") | .id" | head -1 || true)"
   if [[ -n "$existing" ]]; then

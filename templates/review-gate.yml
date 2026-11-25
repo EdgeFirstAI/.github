@@ -1,0 +1,38 @@
+# Caller skeleton — copy into the product repository as .github/workflows/review-gate.yml
+# Replace the all-zero placeholder in every EdgeFirstAI/.github `uses:` with
+# the commit you intend to pin, then let Dependabot bump it.
+#
+# Reports the `review-gate` check that protect-review requires on `main` and
+# `develop`.
+# Copy it before the repository's `review_gate` property is set to true.
+
+name: Review gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+  pull_request_review:
+    types: [submitted, dismissed]
+  pull_request_review_comment:
+    types: [created, deleted]
+  merge_group:
+
+concurrency:
+  group: review-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  review-gate:
+    if: >-
+      github.event_name == 'merge_group' ||
+      (contains(fromJSON('["main", "develop"]'), github.event.pull_request.base.ref) &&
+       github.event.pull_request.draft != true)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    steps:
+      - if: github.event_name != 'merge_group'
+        uses: EdgeFirstAI/.github/.github/actions/review-gate@0000000000000000000000000000000000000000
