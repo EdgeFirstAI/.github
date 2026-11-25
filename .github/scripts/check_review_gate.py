@@ -3,7 +3,8 @@
 
 Passes when both hold:
 
-- Copilot has submitted a review, or a user other than the author has approved.
+- Copilot has submitted a review, or an organisation member or collaborator
+  other than the author has approved.
 - Every review thread started by Copilot or by a reviewer has a reply from a
   user other than the one who started it. Threads the author starts are exempt.
 
@@ -25,6 +26,7 @@ import urllib.error
 import urllib.request
 
 COPILOT_LOGINS = frozenset({"copilot-pull-request-reviewer", "copilot-pull-request-reviewer[bot]"})
+APPROVER_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 
 REVIEWS_QUERY = """
 query($owner: String!, $name: String!, $number: Int!, $after: String) {
@@ -33,7 +35,7 @@ query($owner: String!, $name: String!, $number: Int!, $after: String) {
       author { login }
       reviews(first: 100, after: $after) {
         pageInfo { hasNextPage endCursor }
-        nodes { state author { __typename login } }
+        nodes { state authorAssociation author { __typename login } }
       }
     }
   }
@@ -83,12 +85,13 @@ def evaluate(pr_author: str, reviews: list[dict], threads: list[dict]) -> tuple[
     copilot_reviewed = any(is_copilot(r.get("author")) for r in reviews)
     approved = any(
         r.get("state") == "APPROVED"
+        and r.get("authorAssociation") in APPROVER_ASSOCIATIONS
         and is_user(r.get("author"))
         and login(r.get("author")) != pr_author
         for r in reviews
     )
     if not (copilot_reviewed or approved):
-        problems.append("Copilot has not reviewed this pull request yet, and no one else has approved it.")
+        problems.append("Copilot has not reviewed this pull request yet, and no member or collaborator has approved it.")
 
     for thread in threads:
         comments = thread.get("comments", {}).get("nodes", [])
